@@ -17,6 +17,7 @@
 		EXPORT_FORMATS,
 		EXPORT_TAB_LABELS,
 		FORMAT_EXTENSION,
+		SHEET_METADATA_FORMATS,
 		animationFrameIndices,
 		downloadBlob,
 		exportBaseName,
@@ -26,11 +27,13 @@
 		exportSpriteSheet,
 		flattenPixels,
 		getSheetGeometry,
+		sheetMetadata,
 		validateExportSize,
 		type ExportBackground,
 		type ExportFormat,
 		type ExportTabId,
 		type SheetLayout,
+		type SheetMetadataChoice,
 	} from "$lib/editor/export.js";
 	import { drawPixels, drawScaled } from "$lib/editor/render.js";
 	import { cn } from "$lib/utils.js";
@@ -73,6 +76,9 @@
 	let sheetBackground = $state<ExportBackground>("transparent");
 	let sheetQuality = $state(90);
 	let sheetFileName = $state("");
+	let sheetMetadataFormat = $state<SheetMetadataChoice>("none");
+	let sheetPivotX = $state(50);
+	let sheetPivotY = $state(50);
 
 	let gifScale = $state(1);
 	let gifFps = $state(12);
@@ -133,7 +139,11 @@
 			return `${format(imageFormat)} · ${imageBackground}`;
 		}
 		if (activeTab === "spritesheet") {
-			return `${format(sheetFormat)} · ${sheetBackground}`;
+			const metadata =
+				SHEET_METADATA_FORMATS.find(
+					(entry) => entry.id === sheetMetadataFormat,
+				)?.summary ?? "";
+			return `${format(sheetFormat)} · ${sheetBackground}${metadata ? ` · ${metadata}` : ""}`;
 		}
 		const range = editor.loopRange;
 		const rangeLabel =
@@ -167,6 +177,9 @@
 			sheetBackground = "transparent";
 			sheetQuality = 90;
 			sheetFileName = `${exportBaseName(editor.name)}-spritesheet.png`;
+			sheetMetadataFormat = "none";
+			sheetPivotX = 50;
+			sheetPivotY = 50;
 
 			gifScale = 1;
 			gifFps = editor.doc.fps;
@@ -374,6 +387,10 @@
 		}
 	}
 
+	function pivotPercent(value: number): number {
+		return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 50;
+	}
+
 	async function exportNow(): Promise<void> {
 		if (exporting || sizeError) return;
 
@@ -393,7 +410,7 @@
 				});
 				downloadBlob(exportFileName(imageFileName, FORMAT_EXTENSION[imageFormat]), blob);
 			} else if (activeTab === "spritesheet") {
-				const blob = await exportSpriteSheet(doc, {
+				const sheetOptions = {
 					scale: sheetScale,
 					layout: sheetLayout,
 					columns: sheetColumns,
@@ -401,8 +418,39 @@
 					format: sheetFormat,
 					background: sheetBackground,
 					quality: sheetQuality,
-				});
-				downloadBlob(exportFileName(sheetFileName, FORMAT_EXTENSION[sheetFormat]), blob);
+				};
+				const blob = await exportSpriteSheet(doc, sheetOptions);
+				const sheetName = exportFileName(
+					sheetFileName,
+					FORMAT_EXTENSION[sheetFormat],
+				);
+				// Build the sidecar before starting the image download so a
+				// metadata error does not leave a half-finished export.
+				const metadataBlob =
+					sheetMetadataFormat === "none"
+						? null
+						: new Blob(
+								[
+									sheetMetadata(doc, sheetOptions, {
+										format: sheetMetadataFormat,
+										image: sheetName,
+										pivotX: pivotPercent(sheetPivotX) / 100,
+										pivotY: pivotPercent(sheetPivotY) / 100,
+									}),
+								],
+								{ type: "application/json" },
+							);
+				downloadBlob(sheetName, blob);
+				if (metadataBlob) {
+					const metadataName = exportFileName(sheetFileName, "json");
+					// Browsers only allow downloads close to the user gesture;
+					// a short delay keeps both files while letting the first
+					// download start cleanly.
+					window.setTimeout(
+						() => downloadBlob(metadataName, metadataBlob),
+						150,
+					);
+				}
 			} else {
 				const blob = exportGif(doc, {
 					scale: gifScale,
@@ -457,6 +505,7 @@
 			<Dialog.Title>Export file</Dialog.Title>
 			<Dialog.Description>
 				Export “{editor.name}” as a single image, a sprite sheet, or an animated GIF.
+				Sheets can include Aseprite, TexturePacker, or Godot JSON metadata.
 			</Dialog.Description>
 		</Dialog.Header>
 
@@ -698,6 +747,62 @@
 							</span>
 						</div>
 						<Slider type="single" min={1} max={100} step={1} bind:value={sheetQuality} />
+					</div>
+				{/if}
+
+				<div class="grid gap-1.5">
+					<Label for="export-sheet-metadata">Metadata</Label>
+					<select
+						id="export-sheet-metadata"
+						class="h-8 w-full cursor-pointer rounded-md border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						value={sheetMetadataFormat}
+						onchange={(event) =>
+							(sheetMetadataFormat = (event.currentTarget as HTMLSelectElement)
+								.value as SheetMetadataChoice)}
+					>
+						{#each SHEET_METADATA_FORMATS as option (option.id)}
+							<option value={option.id}>{option.label}</option>
+						{/each}
+					</select>
+					<p class="text-[10px] text-muted-foreground">
+						{#if sheetMetadataFormat === "none"}
+							Download only the sheet image. Metadata adds frame rects, trimmed
+							bounds, pivot, durations, and tagged animations.
+						{:else}
+							Also downloads
+							<span class="font-mono text-foreground/80"
+								>{exportFileName(sheetFileName, "json")}</span
+							>. Rectangles use output-sheet pixels.
+						{/if}
+					</p>
+				</div>
+
+				{#if sheetMetadataFormat !== "none"}
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div class="grid gap-1.5">
+							<Label for="export-sheet-pivot-x">Pivot X (%)</Label>
+							<Input
+								id="export-sheet-pivot-x"
+								type="number"
+								min={0}
+								max={100}
+								step={1}
+								bind:value={sheetPivotX}
+								class="tabular-nums"
+							/>
+						</div>
+						<div class="grid gap-1.5">
+							<Label for="export-sheet-pivot-y">Pivot Y (%)</Label>
+							<Input
+								id="export-sheet-pivot-y"
+								type="number"
+								min={0}
+								max={100}
+								step={1}
+								bind:value={sheetPivotY}
+								class="tabular-nums"
+							/>
+						</div>
 					</div>
 				{/if}
 			</div>

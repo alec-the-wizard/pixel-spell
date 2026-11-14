@@ -25,7 +25,13 @@ import {
 	plotShape,
 	sprayPixels,
 } from "../src/lib/editor/draw.js";
-import { exportGif } from "../src/lib/editor/export.js";
+import {
+	exportGif,
+	sheetAnimations,
+	sheetFrameInfos,
+	sheetMetadata,
+	sheetTagRanges,
+} from "../src/lib/editor/export.js";
 import { parseProject, serializeProject } from "../src/lib/editor/file.js";
 import {
 	nearestPaletteColor,
@@ -495,10 +501,205 @@ function assertPaletteCycling(): void {
 	}
 }
 
+function assertSheetMetadata(): void {
+	const doc = createDoc(4, 4);
+	doc.frames = [
+		{ id: "frame-0" },
+		{ id: "frame-1", tag: "walk" },
+		{ id: "frame-2", tag: "walk" },
+		{ id: "frame-3", tag: "run" },
+	];
+	const layer = doc.layers[0]!;
+	layer.cels = doc.frames.map(() => new Uint32Array(16));
+	layer.cels[1]!.set([
+		0, 0, 0, 0,
+		0, packColor("#ff0000"), packColor("#ff0000"), 0,
+		0, packColor("#ff0000"), packColor("#ff0000"), 0,
+		0, 0, 0, 0,
+	]);
+	// Reference layers must never affect trim bounds.
+	const reference = createLayer("Reference", 4, 4, 4, "reference");
+	reference.cels[1]!.fill(packColor("#0000ff"));
+	doc.layers.push(reference);
+
+	const sheet = {
+		scale: 2,
+		layout: "horizontal" as const,
+		columns: 1,
+		spacing: 1,
+		format: "png" as const,
+		background: "transparent" as const,
+		quality: 90,
+	};
+
+	const infos = sheetFrameInfos(doc, sheet);
+	if (infos.length !== 4) throw new Error("sheet metadata frame count changed");
+	if (infos[1]!.rect.x !== 9 || infos[1]!.rect.y !== 0) {
+		throw new Error("sheet metadata frame rect changed");
+	}
+	if (
+		infos[1]!.rect.width !== 8 ||
+		infos[1]!.rect.height !== 8 ||
+		infos[1]!.sourceSize.width !== 8
+	) {
+		throw new Error("sheet metadata source size changed");
+	}
+	if (
+		infos[1]!.trim.x !== 2 ||
+		infos[1]!.trim.y !== 2 ||
+		infos[1]!.trim.width !== 4 ||
+		infos[1]!.trim.height !== 4
+	) {
+		throw new Error("sheet metadata trim changed");
+	}
+	if (infos[2]!.trim.width !== 8 || infos[2]!.trim.height !== 8) {
+		throw new Error("sheet metadata transparent frame fallback changed");
+	}
+
+	const ranges = sheetTagRanges(doc);
+	if (
+		ranges.length !== 2 ||
+		ranges[0]!.name !== "walk" ||
+		ranges[0]!.from !== 1 ||
+		ranges[0]!.to !== 2 ||
+		ranges[1]!.name !== "run"
+	) {
+		throw new Error("sheet metadata tag ranges changed");
+	}
+	const animations = sheetAnimations(doc);
+	if (animations.map((animation) => animation.name).join() !== "walk,run") {
+		throw new Error("sheet metadata animations changed");
+	}
+	if (animations[0]!.frames.join() !== "1,2") {
+		throw new Error("sheet metadata animation frames changed");
+	}
+	const untagged = sheetAnimations(createDoc(2, 2));
+	if (
+		untagged.length !== 1 ||
+		untagged[0]!.name !== "default" ||
+		untagged[0]!.frames.join() !== "0"
+	) {
+		throw new Error("sheet metadata default animation changed");
+	}
+
+	const aseprite = JSON.parse(
+		sheetMetadata(doc, sheet, {
+			format: "aseprite",
+			image: "char.png",
+			pivotX: 0.5,
+			pivotY: 0.75,
+		}),
+	) as {
+		frames: Record<
+			string,
+			{
+				frame: { x: number; y: number; w: number; h: number };
+				trim: { x: number; y: number; w: number; h: number };
+				pivot: { x: number; y: number };
+				duration: number;
+			}
+		>;
+		meta: {
+			size: { w: number; h: number };
+			frameTags: { name: string; from: number; to: number }[];
+			slices: { keys: { pivot: { x: number; y: number } }[] }[];
+		};
+	};
+	const asepriteFrame = aseprite.frames["char 1.aseprite"];
+	if (!asepriteFrame) throw new Error("aseprite metadata frame key changed");
+	if (asepriteFrame.frame.x !== 9 || asepriteFrame.frame.w !== 8) {
+		throw new Error("aseprite metadata frame rect changed");
+	}
+	if (asepriteFrame.trim.x !== 2 || asepriteFrame.trim.w !== 4) {
+		throw new Error("aseprite metadata trim changed");
+	}
+	if (asepriteFrame.pivot.x !== 4 || asepriteFrame.pivot.y !== 6) {
+		throw new Error("aseprite metadata pivot changed");
+	}
+	if (asepriteFrame.duration !== Math.round(1000 / doc.fps)) {
+		throw new Error("aseprite metadata duration changed");
+	}
+	if (aseprite.meta.size.w !== 35 || aseprite.meta.size.h !== 8) {
+		throw new Error("aseprite metadata sheet size changed");
+	}
+	if (aseprite.meta.frameTags[0]!.name !== "walk") {
+		throw new Error("aseprite metadata tags changed");
+	}
+	if (aseprite.meta.slices[0]!.keys[1]!.pivot.x !== 4) {
+		throw new Error("aseprite metadata slice pivot changed");
+	}
+
+	const texturePacker = JSON.parse(
+		sheetMetadata(doc, sheet, {
+			format: "texturepacker",
+			image: "char.png",
+			pivotX: 0.5,
+			pivotY: 0.75,
+		}),
+	) as {
+		frames: Record<string, { pivot: { x: number; y: number } }>;
+		animations: Record<string, string[]>;
+	};
+	if (!texturePacker.frames["char_1.png"]) {
+		throw new Error("texturepacker metadata frame key changed");
+	}
+	if (texturePacker.animations.walk!.join() !== "char_1.png,char_2.png") {
+		throw new Error("texturepacker metadata animation changed");
+	}
+	if (texturePacker.animations.run!.join() !== "char_3.png") {
+		throw new Error("texturepacker metadata run animation changed");
+	}
+	if (
+		texturePacker.frames["char_1.png"]!.pivot.x !== 0.5 ||
+		texturePacker.frames["char_1.png"]!.pivot.y !== 0.75
+	) {
+		throw new Error("texturepacker metadata pivot changed");
+	}
+
+	const godot = JSON.parse(
+		sheetMetadata(doc, sheet, {
+			format: "godot",
+			image: "char.png",
+			pivotX: 0.5,
+			pivotY: 0.75,
+		}),
+	) as {
+		frames: {
+			region: { x: number };
+			trim: { w: number };
+			pivot: { x: number; y: number };
+			duration: number;
+		}[];
+		animations: {
+			name: string;
+			frames: number[];
+			speed: number;
+			durations: number[];
+		}[];
+	};
+	if (godot.frames[1]!.region.x !== 9 || godot.frames[1]!.trim.w !== 4) {
+		throw new Error("godot metadata frame changed");
+	}
+	if (godot.frames[1]!.pivot.x !== 4 || godot.frames[1]!.pivot.y !== 6) {
+		throw new Error("godot metadata pivot changed");
+	}
+	if (godot.animations[0]!.name !== "walk" || godot.animations[0]!.frames.join() !== "1,2") {
+		throw new Error("godot metadata animation changed");
+	}
+	if (godot.animations[0]!.speed !== doc.fps) {
+		throw new Error("godot metadata speed changed");
+	}
+	const expectedSeconds = Number((1000 / doc.fps / 1000).toFixed(4));
+	if (godot.animations[0]!.durations[0] !== expectedSeconds) {
+		throw new Error("godot metadata duration changed");
+	}
+}
+
 assertCanvasSizePresets();
 assertPaletteSorting();
 assertPaletteRamps();
 assertPaletteCycling();
+assertSheetMetadata();
 assertProjectRoundtrip(makeDoc(64, 64, 2, 3, 41), "sparse");
 const opaqueDoc = makeDoc(64, 64, 1, 1, 42);
 for (const cel of opaqueDoc.layers[0]!.cels) cel.fill(0xff336699);

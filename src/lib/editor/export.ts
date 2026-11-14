@@ -1,3 +1,4 @@
+import type { PixelBounds } from "./canvas.js";
 import { compositeFrame, frameDurationMs, loopRangeOf } from "./doc.js";
 import { fileBase } from "./file.js";
 import { drawPixels } from "./render.js";
@@ -7,6 +8,8 @@ export type ExportTabId = "image" | "spritesheet" | "gif";
 export type ExportFormat = "png" | "webp" | "jpeg";
 export type ExportBackground = "transparent" | "white" | "black";
 export type SheetLayout = "horizontal" | "vertical" | "grid";
+export type SheetMetadataFormat = "aseprite" | "texturepacker" | "godot";
+export type SheetMetadataChoice = "none" | SheetMetadataFormat;
 
 export interface ImageExportOptions {
 	frame: number;
@@ -46,6 +49,57 @@ export interface SheetGeometry {
 	width: number;
 	height: number;
 }
+
+export interface SheetMetadataOptions {
+	format: SheetMetadataFormat;
+	/** Exported sheet image file name, recorded as the metadata image path. */
+	image: string;
+	/** Normalized pivot inside each frame, 0–1. Defaults to the frame center. */
+	pivotX?: number;
+	pivotY?: number;
+}
+
+export interface SheetFrameInfo {
+	index: number;
+	/** Frame cell in the exported sheet, in output pixels. */
+	rect: PixelBounds;
+	/** Full untrimmed frame size, in output pixels. */
+	sourceSize: { width: number; height: number };
+	/** Tight opaque content bounds inside the frame, in output pixels. */
+	trim: PixelBounds;
+	/** Display duration in milliseconds. */
+	duration: number;
+	tag?: string;
+}
+
+export interface SheetTagRange {
+	name: string;
+	/** Inclusive first frame index. */
+	from: number;
+	/** Inclusive last frame index. */
+	to: number;
+}
+
+export interface SheetAnimation {
+	name: string;
+	frames: number[];
+}
+
+export const SHEET_METADATA_FORMATS: {
+	id: SheetMetadataChoice;
+	label: string;
+	/** Short label shown in the export summary; empty for "none". */
+	summary: string;
+}[] = [
+	{ id: "none", label: "None", summary: "" },
+	{ id: "aseprite", label: "Aseprite JSON", summary: "Aseprite JSON" },
+	{
+		id: "texturepacker",
+		label: "TexturePacker JSON",
+		summary: "TexturePacker JSON",
+	},
+	{ id: "godot", label: "Godot JSON", summary: "Godot JSON" },
+];
 
 export const EXPORT_TAB_LABELS: Record<ExportTabId, string> = {
 	image: "Image",
@@ -336,6 +390,390 @@ export async function exportSpriteSheet(
 	}
 
 	return canvasToBlob(canvas, options.format, options.quality);
+}
+
+/**
+ * Tight opaque bounds of one composited frame, in document pixels. Reference
+ * layers, hidden layers, and fully transparent layers are ignored. A fully
+ * transparent frame falls back to the full canvas.
+ */
+export function frameTrimBounds(
+	doc: PixelDoc,
+	frameIndex: number,
+): PixelBounds {
+	let minX = doc.width;
+	let minY = doc.height;
+	let maxX = -1;
+	let maxY = -1;
+
+	for (const layer of doc.layers) {
+		const opacityByte = Math.round(layer.opacity * 255);
+		if (layer.role === "reference" || !layer.visible || opacityByte <= 0) {
+			continue;
+		}
+		const cel = layer.cels[frameIndex];
+		if (!cel) continue;
+
+		for (let y = 0; y < doc.height; y++) {
+			const rowStart = y * doc.width;
+			for (let x = 0; x < doc.width; x++) {
+				if ((cel[rowStart + x]! >>> 24) === 0) continue;
+				if (x < minX) minX = x;
+				if (x > maxX) maxX = x;
+				if (y < minY) minY = y;
+				if (y > maxY) maxY = y;
+				if (
+					minX === 0 &&
+					minY === 0 &&
+					maxX === doc.width - 1 &&
+					maxY === doc.height - 1
+				) {
+					return { x: 0, y: 0, width: doc.width, height: doc.height };
+				}
+			}
+		}
+	}
+
+	if (maxX < minX || maxY < minY) {
+		return { x: 0, y: 0, width: doc.width, height: doc.height };
+	}
+	return {
+		x: minX,
+		y: minY,
+		width: maxX - minX + 1,
+		height: maxY - minY + 1,
+	};
+}
+
+/** Contiguous runs of equally tagged frames, in timeline order. */
+export function sheetTagRanges(doc: PixelDoc): SheetTagRange[] {
+	const ranges: SheetTagRange[] = [];
+	for (let index = 0; index < doc.frames.length; index++) {
+		const name = doc.frames[index]?.tag?.trim();
+		if (!name) continue;
+		const previous = ranges[ranges.length - 1];
+		if (previous && previous.name === name && previous.to === index - 1) {
+			previous.to = index;
+			continue;
+		}
+		ranges.push({ name, from: index, to: index });
+	}
+	return ranges;
+}
+
+/**
+ * Tag ranges grouped into named animations. Separate ranges with the same tag
+ * are merged so every engine format gets stable animation names. Documents
+ * without tags expose the whole sheet as a single `default` animation.
+ */
+export function sheetAnimations(doc: PixelDoc): SheetAnimation[] {
+	const ranges = sheetTagRanges(doc);
+	if (ranges.length === 0) {
+		return [
+			{
+				name: "default",
+				frames: doc.frames.map((_, index) => index),
+			},
+		];
+	}
+
+	const byName = new Map<string, number[]>();
+	for (const range of ranges) {
+		let frames = byName.get(range.name);
+		if (!frames) {
+			frames = [];
+			byName.set(range.name, frames);
+		}
+		for (let index = range.from; index <= range.to; index++) {
+			frames.push(index);
+		}
+	}
+	return [...byName].map(([name, frames]) => ({ name, frames }));
+}
+
+/**
+ * Sheet geometry and per-frame metadata for the exported image. All rects are
+ * in output pixels so engines can use them directly; `trim` is the opaque
+ * content inside the untrimmed frame cell.
+ */
+export function sheetFrameInfos(
+	doc: PixelDoc,
+	options: SheetExportOptions,
+): SheetFrameInfo[] {
+	const scale = clampInt(options.scale, 1, 10);
+	const geometry = getSheetGeometry(
+		doc.width * scale,
+		doc.height * scale,
+		doc.frames.length,
+		options.layout,
+		options.columns,
+		options.spacing,
+	);
+
+	return doc.frames.map((frame, index) => {
+		const trim = frameTrimBounds(doc, index);
+		const column = index % geometry.columns;
+		const row = Math.floor(index / geometry.columns);
+		const tag = frame.tag?.trim();
+		return {
+			index,
+			rect: {
+				x: column * (geometry.frameWidth + geometry.spacing),
+				y: row * (geometry.frameHeight + geometry.spacing),
+				width: geometry.frameWidth,
+				height: geometry.frameHeight,
+			},
+			sourceSize: {
+				width: geometry.frameWidth,
+				height: geometry.frameHeight,
+			},
+			trim: {
+				x: trim.x * scale,
+				y: trim.y * scale,
+				width: trim.width * scale,
+				height: trim.height * scale,
+			},
+			duration: frameDurationMs(doc, index),
+			...(tag ? { tag } : {}),
+		};
+	});
+}
+
+function normalizedPivot(options: SheetMetadataOptions): {
+	x: number;
+	y: number;
+} {
+	return {
+		x: clamp(
+			Number.isFinite(options.pivotX) ? options.pivotX! : 0.5,
+			0,
+			1,
+		),
+		y: clamp(
+			Number.isFinite(options.pivotY) ? options.pivotY! : 0.5,
+			0,
+			1,
+		),
+	};
+}
+
+function sheetColorFormat(format: ExportFormat): string {
+	return format === "jpeg" ? "RGB8888" : "RGBA8888";
+}
+
+function sheetFrameTags(doc: PixelDoc): {
+	name: string;
+	from: number;
+	to: number;
+	direction: string;
+}[] {
+	return sheetTagRanges(doc).map((range) => ({
+		name: range.name,
+		from: range.from,
+		to: range.to,
+		direction: "forward",
+	}));
+}
+
+/**
+ * Builds a JSON sidecar for an exported sprite sheet. The Aseprite and
+ * TexturePacker payloads follow their usual sprite-sheet JSON hashes; the
+ * Godot payload is a compact SpriteFrames-oriented description with frame
+ * indices and atlas regions. Every rect is in output-sheet pixels.
+ */
+export function sheetMetadata(
+	doc: PixelDoc,
+	sheet: SheetExportOptions,
+	options: SheetMetadataOptions,
+): string {
+	const scale = clampInt(sheet.scale, 1, 10);
+	const geometry = getSheetGeometry(
+		doc.width * scale,
+		doc.height * scale,
+		doc.frames.length,
+		sheet.layout,
+		sheet.columns,
+		sheet.spacing,
+	);
+	const frames = sheetFrameInfos(doc, sheet);
+	const pivot = normalizedPivot(options);
+	const base = exportBaseName(
+		options.image.replace(/\.(png|jpe?g|webp|gif)$/i, ""),
+	);
+	const format = sheetColorFormat(sheet.format);
+	const size = { w: geometry.width, h: geometry.height };
+
+	let payload: unknown;
+
+	if (options.format === "aseprite") {
+		const frameHash: Record<string, unknown> = {};
+		for (const frame of frames) {
+			const pivotX = Math.round(pivot.x * frame.sourceSize.width);
+			const pivotY = Math.round(pivot.y * frame.sourceSize.height);
+			frameHash[`${base} ${frame.index}.aseprite`] = {
+				frame: {
+					x: frame.rect.x,
+					y: frame.rect.y,
+					w: frame.rect.width,
+					h: frame.rect.height,
+				},
+				rotated: false,
+				trimmed: false,
+				spriteSourceSize: {
+					x: 0,
+					y: 0,
+					w: frame.sourceSize.width,
+					h: frame.sourceSize.height,
+				},
+				sourceSize: {
+					w: frame.sourceSize.width,
+					h: frame.sourceSize.height,
+				},
+				duration: Math.round(frame.duration),
+				pivot: { x: pivotX, y: pivotY },
+				trim: {
+					x: frame.trim.x,
+					y: frame.trim.y,
+					w: frame.trim.width,
+					h: frame.trim.height,
+				},
+			};
+		}
+
+		payload = {
+			frames: frameHash,
+			meta: {
+				app: "Pixel Spell",
+				version: "1.0",
+				image: options.image,
+				format,
+				size,
+				scale: String(scale),
+				frameTags: sheetFrameTags(doc),
+				slices: [
+					{
+						name: "pivot",
+						color: "#00000000",
+						keys: frames.map((frame) => ({
+							frame: frame.index,
+							bounds: {
+								x: 0,
+								y: 0,
+								w: frame.sourceSize.width,
+								h: frame.sourceSize.height,
+							},
+							pivot: {
+								x: Math.round(pivot.x * frame.sourceSize.width),
+								y: Math.round(pivot.y * frame.sourceSize.height),
+							},
+						})),
+					},
+				],
+			},
+		};
+	} else if (options.format === "texturepacker") {
+		const frameHash: Record<string, unknown> = {};
+		const frameKeys = new Map<number, string>();
+		for (const frame of frames) {
+			const key = `${base}_${frame.index}.png`;
+			frameKeys.set(frame.index, key);
+			frameHash[key] = {
+				frame: {
+					x: frame.rect.x,
+					y: frame.rect.y,
+					w: frame.rect.width,
+					h: frame.rect.height,
+				},
+				rotated: false,
+				trimmed: false,
+				spriteSourceSize: {
+					x: 0,
+					y: 0,
+					w: frame.sourceSize.width,
+					h: frame.sourceSize.height,
+				},
+				sourceSize: {
+					w: frame.sourceSize.width,
+					h: frame.sourceSize.height,
+				},
+				pivot: { x: pivot.x, y: pivot.y },
+				duration: Math.round(frame.duration),
+				trim: {
+					x: frame.trim.x,
+					y: frame.trim.y,
+					w: frame.trim.width,
+					h: frame.trim.height,
+				},
+			};
+		}
+
+		const animations: Record<string, string[]> = {};
+		for (const animation of sheetAnimations(doc)) {
+			animations[animation.name] = animation.frames
+				.map((index) => frameKeys.get(index))
+				.filter((key): key is string => Boolean(key));
+		}
+
+		payload = {
+			frames: frameHash,
+			animations,
+			meta: {
+				app: "Pixel Spell",
+				version: "1.0",
+				image: options.image,
+				format,
+				size,
+				scale: String(scale),
+				frameTags: sheetFrameTags(doc),
+			},
+		};
+	} else {
+		payload = {
+			generator: "Pixel Spell",
+			version: 1,
+			image: options.image,
+			size,
+			scale,
+			pivot,
+			frames: frames.map((frame) => ({
+				index: frame.index,
+				name: `${base}_${frame.index}`,
+				region: {
+					x: frame.rect.x,
+					y: frame.rect.y,
+					w: frame.rect.width,
+					h: frame.rect.height,
+				},
+				sourceSize: {
+					w: frame.sourceSize.width,
+					h: frame.sourceSize.height,
+				},
+				trim: {
+					x: frame.trim.x,
+					y: frame.trim.y,
+					w: frame.trim.width,
+					h: frame.trim.height,
+				},
+				trimmed: false,
+				pivot: {
+					x: Math.round(pivot.x * frame.sourceSize.width),
+					y: Math.round(pivot.y * frame.sourceSize.height),
+				},
+				duration: Number((frame.duration / 1000).toFixed(4)),
+			})),
+			animations: sheetAnimations(doc).map((animation) => ({
+				name: animation.name,
+				loop: true,
+				speed: Math.max(1, Math.min(60, doc.fps || 12)),
+				frames: animation.frames,
+				durations: animation.frames.map((index) =>
+					Number((frameDurationMs(doc, index) / 1000).toFixed(4)),
+				),
+			})),
+		};
+	}
+
+	return `${JSON.stringify(payload, null, 2)}\n`;
 }
 
 interface ColorCount {
