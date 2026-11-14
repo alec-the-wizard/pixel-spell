@@ -8,6 +8,7 @@ export type CommandGroup =
 	| "Project"
 	| "Animation"
 	| "Layers"
+	| "Palette"
 	| "Tools"
 	| "Help";
 
@@ -402,6 +403,31 @@ const ACTION_COMMANDS: CommandDef[] = [
 		label: "Move layer down",
 		group: "Layers",
 		run: () => editor.moveLayerDown(),
+	},
+	{
+		id: "palette.generate-ramp",
+		label: "Generate palette ramp…",
+		group: "Palette",
+		keywords: "gradient colors interpolate ramp",
+		enabled: () => editor.paletteEditable,
+		run: () => (editor.paletteRampOpen = true),
+	},
+	{
+		id: "palette.toggle-lock",
+		label: "Toggle palette lock",
+		group: "Palette",
+		keywords: "indexed restrict snap",
+		run: () => editor.togglePaletteLock(),
+	},
+	{
+		id: "palette.toggle-cycling",
+		label: "Preview color cycling",
+		group: "Palette",
+		keywords: "animate rotate palette range",
+		ignoreRepeat: true,
+		enabled: () =>
+			editor.paletteCyclePlaying || editor.paletteCycleRange !== null,
+		run: () => editor.togglePaletteCycle(),
 	},
 	{
 		id: "app.command-palette",

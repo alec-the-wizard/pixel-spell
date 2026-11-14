@@ -27,7 +27,16 @@ import {
 } from "../src/lib/editor/draw.js";
 import { exportGif } from "../src/lib/editor/export.js";
 import { parseProject, serializeProject } from "../src/lib/editor/file.js";
-import { sortPaletteColors } from "../src/lib/editor/palette.js";
+import {
+	nearestPaletteColor,
+	sortPaletteColors,
+} from "../src/lib/editor/palette.js";
+import {
+	buildPaletteCycleMap,
+	paletteShiftForStep,
+	remapPalettePixels,
+} from "../src/lib/editor/palette-cycle.js";
+import { generatePaletteRamp } from "../src/lib/editor/palette-ramp.js";
 import {
 	lassoSelectionMask,
 	magicWandMask,
@@ -412,8 +421,84 @@ function assertPaletteSorting(): void {
 	}
 }
 
+function assertPaletteRamps(): void {
+	const endpoint = "#1d2b53";
+	const endColor = "#ff77a8";
+	for (const space of ["rgb", "hsv", "oklab"] as const) {
+		const ramp = generatePaletteRamp(endpoint, endColor, 7, space);
+		if (ramp.length !== 7) {
+			throw new Error(`palette ramp ${space}: step count changed`);
+		}
+		if (ramp[0] !== endpoint || ramp[ramp.length - 1] !== endColor) {
+			throw new Error(`palette ramp ${space}: endpoints changed`);
+		}
+		if (generatePaletteRamp(endpoint, endColor, 2, space).join() !== [endpoint, endColor].join()) {
+			throw new Error(`palette ramp ${space}: two-step ramp changed`);
+		}
+	}
+	const clamped = generatePaletteRamp("#000000", "#ffffff", 999, "rgb");
+	if (clamped.length !== 16) {
+		throw new Error("palette ramp step limit changed");
+	}
+	if (nearestPaletteColor(["#000000", "#ff0000", "#ffffff"], "#fe0102") !== "#ff0000") {
+		throw new Error("palette nearest-color matching changed");
+	}
+}
+
+function assertPaletteCycling(): void {
+	const forward = [0, 1, 2, 3, 4].map((step) =>
+		paletteShiftForStep(step, 4, "forward"),
+	);
+	if (forward.join() !== [0, 1, 2, 3, 0].join()) {
+		throw new Error("palette forward cycling changed");
+	}
+	const reverse = [0, 1, 2, 3, 4].map((step) =>
+		paletteShiftForStep(step, 4, "reverse"),
+	);
+	if (reverse.join() !== [0, 3, 2, 1, 0].join()) {
+		throw new Error("palette reverse cycling changed");
+	}
+	const pingPong = [0, 1, 2, 3, 4, 5, 6].map((step) =>
+		paletteShiftForStep(step, 4, "ping-pong"),
+	);
+	if (pingPong.join() !== [0, 1, 2, 3, 2, 1, 0].join()) {
+		throw new Error("palette ping-pong cycling changed");
+	}
+
+	const colors = ["#000000", "#ff0000", "#00ff00", "#0000ff"];
+	const map = buildPaletteCycleMap(colors, { start: 0, end: 3 }, 1);
+	if (!map || map.size !== 4) throw new Error("palette cycle map changed");
+	if (map.get(packColor("#000000") & 0xffffff) !== (packColor("#ff0000") & 0xffffff)) {
+		throw new Error("palette cycle map forward mapping changed");
+	}
+	if (map.get(packColor("#0000ff") & 0xffffff) !== (packColor("#000000") & 0xffffff)) {
+		throw new Error("palette cycle map wrap changed");
+	}
+
+	const source = new Uint32Array([
+		packColor("#ff0000", 128),
+		packColor("#123456"),
+		0,
+	]);
+	const remapped = remapPalettePixels(source, map);
+	if (remapped[0] !== packColor("#00ff00", 128)) {
+		throw new Error("palette cycle remap lost alpha");
+	}
+	if (remapped[1] !== packColor("#123456")) {
+		throw new Error("palette cycle remap touched an unrelated color");
+	}
+	if (remapped[2] !== 0) {
+		throw new Error("palette cycle remap touched transparency");
+	}
+	if (source[0] !== packColor("#ff0000", 128)) {
+		throw new Error("palette cycle remap mutated the source");
+	}
+}
+
 assertCanvasSizePresets();
 assertPaletteSorting();
+assertPaletteRamps();
+assertPaletteCycling();
 assertProjectRoundtrip(makeDoc(64, 64, 2, 3, 41), "sparse");
 const opaqueDoc = makeDoc(64, 64, 1, 1, 42);
 for (const cel of opaqueDoc.layers[0]!.cels) cel.fill(0xff336699);
@@ -449,6 +534,35 @@ timingDoc.frames[3]!.tag = "run";
 timingDoc.loopStart = 1;
 timingDoc.loopEnd = 2;
 assertProjectRoundtrip(timingDoc, "frame metadata");
+
+// --- Palette ramps and cycling -------------------------------------------
+measure("generatePaletteRamp oklab 16 steps", 2000, 100, () => {
+	generatePaletteRamp("#1d2b53", "#ff77a8", 16, "oklab");
+});
+
+const cyclePalette = [
+	"#000000",
+	"#1d2b53",
+	"#7e2553",
+	"#008751",
+	"#ab5236",
+	"#ff004d",
+	"#29adff",
+	"#ffec27",
+];
+const cycleMap = buildPaletteCycleMap(cyclePalette, { start: 0, end: 7 }, 3);
+if (!cycleMap) throw new Error("palette cycle benchmark map missing");
+const cycleSource = new Uint32Array(512 * 512);
+for (let index = 0; index < cycleSource.length; index++) {
+	cycleSource[index] =
+		index % 3 === 0
+			? packColor(cyclePalette[index % cyclePalette.length]!, 255)
+			: packColor("#123456", 255);
+}
+const cycleTarget = new Uint32Array(cycleSource.length);
+measure("palette cycle remap 512x512", 40, 5, () => {
+	remapPalettePixels(cycleSource, cycleMap, cycleTarget);
+});
 
 // --- GIF export -----------------------------------------------------------
 const gifDoc = makeDoc(128, 128, 3, 12, 31);

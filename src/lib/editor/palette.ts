@@ -1,4 +1,4 @@
-import { hexToRgb, normalizeHex, rgbToHsv } from "./color.js";
+import { hexToRgb, normalizeHex, rgbToHsv, rgbToOklab } from "./color.js";
 import { uid } from "./doc.js";
 
 /**
@@ -43,6 +43,34 @@ export const DEFAULT_PALETTE = [
 export const MAX_PALETTE_COLORS = 256;
 export const DEFAULT_PALETTE_ID = "default";
 const STORAGE_KEY = "pixel-spell-palettes";
+
+/**
+ * Finds the perceptually closest palette entry. Used when the palette is
+ * locked so the color picker can snap to an available color without changing
+ * the hue ordering of the palette itself.
+ */
+export function nearestPaletteColor(
+	colors: string[],
+	hex: string,
+): string | null {
+	if (colors.length === 0) return null;
+	const target = rgbToOklab(hexToRgb(hex));
+	let best: string | null = null;
+	let bestDistance = Infinity;
+
+	for (const color of colors) {
+		const candidate = rgbToOklab(hexToRgb(color));
+		const dl = candidate.l - target.l;
+		const da = candidate.a - target.a;
+		const db = candidate.b - target.b;
+		const distance = dl * dl + da * da + db * db;
+		if (distance < bestDistance) {
+			bestDistance = distance;
+			best = color;
+		}
+	}
+	return best;
+}
 
 /** How the color list is ordered. `original` is the add/import order. */
 export type PaletteSortMode = "original" | "hue" | "saturation" | "lightness";
@@ -132,17 +160,26 @@ function normalizePaletteColors(value: unknown): string[] {
 }
 
 /** Loads custom palettes from localStorage, always including the built-in palette. */
-export function loadPaletteState(): { palettes: Palette[]; activeId: string } {
+export function loadPaletteState(): {
+	palettes: Palette[];
+	activeId: string;
+	locked: boolean;
+} {
 	const defaultPalette = createDefaultPalette();
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
 		if (!raw) {
-			return { palettes: [defaultPalette], activeId: DEFAULT_PALETTE_ID };
+			return {
+				palettes: [defaultPalette],
+				activeId: DEFAULT_PALETTE_ID,
+				locked: false,
+			};
 		}
 
 		const parsed = JSON.parse(raw) as {
 			palettes?: unknown;
 			activeId?: unknown;
+			locked?: unknown;
 		};
 		const palettes: Palette[] = [defaultPalette];
 		const usedIds = new Set([DEFAULT_PALETTE_ID]);
@@ -190,14 +227,26 @@ export function loadPaletteState(): { palettes: Palette[]; activeId: string } {
 			palettes.some((palette) => palette.id === parsed.activeId)
 				? parsed.activeId
 				: DEFAULT_PALETTE_ID;
-		return { palettes, activeId };
+		return {
+			palettes,
+			activeId,
+			locked: parsed.locked === true,
+		};
 	} catch {
-		return { palettes: [defaultPalette], activeId: DEFAULT_PALETTE_ID };
+		return {
+			palettes: [defaultPalette],
+			activeId: DEFAULT_PALETTE_ID,
+			locked: false,
+		};
 	}
 }
 
 /** Persists custom palettes (the built-in palette is recreated on load). */
-export function savePaletteState(palettes: Palette[], activeId: string): void {
+export function savePaletteState(
+	palettes: Palette[],
+	activeId: string,
+	locked = false,
+): void {
 	try {
 		const custom = palettes
 			.filter((palette) => !palette.builtin)
@@ -208,7 +257,10 @@ export function savePaletteState(palettes: Palette[], activeId: string): void {
 				originalColors: [...(palette.originalColors ?? palette.colors)],
 				sortMode: palette.sortMode ?? "original",
 			}));
-		localStorage.setItem(STORAGE_KEY, JSON.stringify({ palettes: custom, activeId }));
+		localStorage.setItem(
+			STORAGE_KEY,
+			JSON.stringify({ palettes: custom, activeId, locked }),
+		);
 	} catch {
 		// Storage can be unavailable in private browsing contexts.
 	}
