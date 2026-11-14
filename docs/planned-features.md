@@ -1,6 +1,6 @@
-# Planned features
+# Feature roadmap
 
-This is a prioritized backlog for Pixel Spell. Ratings are deliberately simple:
+This document tracks completed work and the prioritized backlog for Pixel Spell. Ratings are deliberately simple:
 
 - **Appeal (1–10)** — how much a typical pixel artist or game artist would want the feature. 10 means “I would switch editors for this”; 5 means “nice to have”; 1 means niche.
 - **Difficulty (1–10)** — design + implementation + testing + file-format/performance risk. 1 is a small UI change; 10 is a multi-week architectural change.
@@ -8,57 +8,64 @@ This is a prioritized backlog for Pixel Spell. Ratings are deliberately simple:
 
 “Strategic” marks features that could become unique selling points rather than catch-up features.
 
-## Priority table
+## Completed features
 
 | # | Feature | Appeal | Difficulty | Score | Strategic | Why / implementation notes |
 | ---: | --- | ---: | ---: | ---: | :---: | --- |
-| 1 | Reference image / tracing layer ✓ | 9 | 2 | 4.50 | | Implemented as two complementary features: **Reference Layer** (timeline-integrated, per-frame cels, locked, non-exported, fitted to canvas) and **Reference Board** (project-level images independent of layers/frames, movable outside the canvas, non-exported). The import dialog also supports Layer and Frames destinations. |
-| 2 | Radial / N-fold symmetry ✓ | 7 | 2 | 3.50 | | Implemented: rotational copies around a draggable center with a 2–16 symmetry count. Axis mirrors can be combined with radial symmetry; the red spoke guides and draggable center handle share the mirror overlay. Disabling radial symmetry resets its center. |
-| 3 | Pixel-perfect line/shape/curve modes ✓ | 7 | 2 | 3.50 | | Implemented as a per-tool option for pencil, eraser, curve, and shape outlines. Freehand and curve paths reuse the existing pixel-perfect filter; outlines use a set-based corner filter that preserves solid blocks and leaves rectangles untouched. The Line tool hides the switch because Bresenham lines already avoid redundant corner pixels. The switch lives in the tool options panel. |
-| 4 | Autosave and crash recovery ✓ | 9 | 3 | 3.00 | | Implemented: dirty project tabs are serialized with the normal project encoder into IndexedDB after drawing pauses and on a fixed interval. The next launch previews recovered tabs on a checkerboard stage and offers **Restore** or **Discard**. Saving or closing a dirty tab removes its snapshot, and restored tabs reopen as unsaved projects. |
-| 5 | Onion skinning ✓ | 9 | 3 | 3.00 | | Implemented: previous/next frames render behind the active frame on a dedicated canvas with a 1–3 frame range, 15/30/50% opacity, previous/next visibility, and tint presets. Toggle with the ghost button or `O`; onion skins are hidden during playback and never exported. |
-| 6 | Project templates / presets | 6 | 2 | 3.00 | | Presets for canvas size, palette, background, starter layers, and grid. Store in `localStorage` and expose in New Project. Useful for game-jam and platform-specific workflows. |
-| 7 | Command palette + shortcut editor | 6 | 2 | 3.00 | | Searchable action list (`Ctrl+K`), plus a keybinding editor with conflict detection and persistence. Low risk, improves discoverability and accessibility. |
-| 8 | Palette tools: sort, dedupe, ramps, lock, cycling | 8 | 3 | 2.67 | | Sort by hue/lightness, remove duplicates, generate ramps between two colors, lock the active palette for indexed-style work, and preview color cycling. Builds on the existing palette collection. |
-| 9 | Sprite sheet metadata export | 8 | 3 | 2.67 | | Export JSON alongside sheets in Aseprite, TexturePacker, and Godot formats. Include frame rects, trim, pivot, and tags. No model change; high value for game developers. |
-| 10 | Dithering patterns and pattern brushes | 8 | 3 | 2.67 | | Add selectable dither masks (Bayer, checker, custom) to pencil/fill, and let a small pattern be stamped as a brush. Reuse the gradient Bayer code and selection masks. |
-| 11 | Frame reordering drag-and-drop ✓ | 8 | 3 | 2.67 | | Implemented: drag frame headers to reorder a single frame or a multi-frame range. The frame order and every layer's cels are permuted together. Right-click move-left/right and `Alt+←`/`Alt+→` provide non-drag alternatives. |
-| 12 | Color-blindness simulation and palette preview | 5 | 2 | 2.50 | | Preview deuteranopia/protanopia/tritanopia and grayscale in the canvas without changing pixels. Useful for accessibility checks and palette design. |
-| 13 | ICO / favicon export | 5 | 2 | 2.50 | | Multi-size ICO encoder on top of the existing PNG export. Small, self-contained, and useful for web/game UI artists. |
-| 14 | Frame tags, per-frame durations, loop range ✓ | 9 | 4 | 2.25 | | Implemented: `Frame` carries optional `duration` and `tag`; `PixelDoc` carries an inclusive loop range. Tag ranges render above the frame headers, custom durations override the project FPS, playback uses per-frame timers, and GIF export honors durations and can export only the loop range. |
-| 15 | Canvas resize, crop, and nearest-neighbor scale ✓ | 9 | 4 | 2.25 | | Implemented as a Project menu: **Scale Canvas** resamples every cel with nearest-neighbor and offers a preview, aspect lock, and ½×/1×/2×/3× presets; **Resize Canvas** crops or extends around a 3×3 anchor with transparent new pixels and a preview; **Crop to Content** trims transparent borders across all normal layers and frames; **Crop to Selection** uses the selection bounds. Crop to Content and Crop to Selection are disabled when they would not change the canvas; Crop to Content is also disabled when no pixels are painted. All operations are undoable and clear the selection. |
-| 16 | Multi-frame selection, copy/paste, and duplicate ✓ | 8 | 4 | 2.00 | | Implemented: shift-click selects a range and Ctrl/Cmd-click toggles frames. Copy/paste moves whole frames across layers, duplicate inserts copies with optional X/Y cel offsets, and the right-click menu exposes the same actions. |
-| 17 | Outline, drop shadow, and color-replace filters | 8 | 4 | 2.00 | | Selection-aware filters that operate on the active cel or all visible layers. Add a preview and an undoable apply step. High value for quick sprite cleanup. |
-| 18 | Rulers and draggable guides | 6 | 3 | 2.00 | | Horizontal/vertical guides with snapping, persisted per project. Reuse the mirror-guide overlay and pointer mapping. |
-| 19 | Split view / second zoom window | 6 | 3 | 2.00 | | A second viewport showing the same document at another zoom, or a detached 1× preview. Reuse `drawScaled` and the preview component. |
-| 20 | Custom grid offsets and isometric grid | 6 | 3 | 2.00 | | Offset the grid origin and add isometric/diagonal grid modes. Mostly rendering/UI work; useful for tiles and isometric art. |
-| 21 | APNG and animated WebP export | 7 | 4 | 1.75 | | Add encoders/decoders alongside GIF. APNG can reuse PNG frames; animated WebP may need a small library or `ImageEncoder` support. Better quality and alpha than GIF. |
-| 22 | Undo history panel | 7 | 4 | 1.75 | | Show named history entries, allow jumping to a point, and keep the cel-patch history compact. Requires history labels and a non-linear apply path. |
-| 23 | Accessibility and localization pass | 5 | 3 | 1.67 | | Full keyboard navigation, screen-reader labels for canvas actions, reduced-motion support, and i18n extraction. Good for reach and polish. |
-| 24 | Custom brushes (shapes, patterns, textured) | 8 | 5 | 1.60 | | A brush mask editor, saved brush library, and stamping pipeline. Build on `paintBrush` and `paintPixel`; add a brush preview and per-brush size/opacity. |
-| 25 | Nine-slice / UI asset export | 6 | 4 | 1.50 | | Define nine-slice borders and export stretchable UI assets with metadata. Niche but valuable for game UI artists. |
-| 26 | Recent files / project library | 6 | 4 | 1.50 | | A local project browser backed by IndexedDB/File System Access API, with thumbnails and recent projects. Complements autosave. |
-| 27 | Isometric / seamless tiled drawing | 7 | 5 | 1.40 | | Wrap drawing across canvas edges and add an isometric tile mode. Requires careful coordinate wrapping in every drawing tool and preview. |
-| 28 | Sprite atlas packing (MaxRects) | 7 | 5 | 1.40 | | Pack frames or tagged animations into an atlas with padding, trim, and rotation options. Build on the sprite-sheet geometry code. |
-| 29 | Layer groups, blend modes, clipping masks | 8 | 6 | 1.33 | | Change the layer model to a tree, add blend modes (multiply, screen, overlay, etc.), and composite groups. High artist value but touches compositing, UI, undo, and file format. |
-| 30 | Selection transform (scale/rotate/flip) | 8 | 6 | 1.33 | | Add transform handles to floating selections with nearest-neighbor scaling and 90° rotation. Reuse the floating-selection pipeline; add a transform matrix and commit path. |
-| 31 | Version snapshots / named checkpoints | 6 | 5 | 1.20 | | Save named project snapshots locally with thumbnails and restore/diff. Complements undo and autosave without a backend. |
-| 32 | Grayscale mode (1/2/4/8-bit, dithering) | 7 | 6 | 1.17 | | A document color mode with single-channel cels and a ramp palette, plus dithering and conversion to/from RGBA. Medium model change; valuable for Game Boy/1-bit and grayscale art. |
-| 33 | Non-destructive adjustments (hue/sat/levels/curves) | 7 | 6 | 1.17 | | Per-layer adjustment stacks with live preview and export. Requires a layer-effect model and compositing changes; can be destructive first, then non-destructive. |
-| 34 | Brush pressure / velocity and tablet support | 7 | 6 | 1.17 | | Pointer pressure API, pressure-to-size/opacity curves, and tablet-friendly UI. Requires a brush engine change and careful pixel snapping. |
-| 35 | AI palette, cleanup, and generation assist | 8 | 7 | 1.14 | ★ | Optional, explicit AI actions: generate a palette from a prompt, clean up stray pixels, suggest outlines/shadows, or generate a base sprite. Needs a provider abstraction, privacy controls, and a review step. |
-| 36 | Desktop app (Tauri/Electron) | 8 | 7 | 1.14 | ★ | Native menus, file-system access, auto-save, drag-and-drop, and offline project library. Reuses the Svelte UI; the main work is packaging, file APIs, and updates. |
-| 37 | Indexed color mode | 9 | 8 | 1.13 | | Store palette indices instead of RGBA, enforce a document palette, support transparency index, palette swap, color cycling, and indexed PNG/GIF export. A major model/file-format change, but the classic pixel-art workflow and a strong differentiator. |
-| 38 | Aseprite `.aseprite` import/export | 9 | 8 | 1.13 | | Parse/write the Aseprite binary format (layers, frames, tags, palettes, cels). High interoperability value; requires careful binary parsing and test fixtures. |
-| 39 | MCP server | 8 | 8 | 1.00 | ★ | Expose Pixel Spell projects and operations to AI agents through MCP tools: inspect document/layers/frames/palette, draw/fill/select, add/remove frames and layers, export PNG/GIF/sheet, save project. A local Node bridge can talk to the browser app over WebSocket, or run the same TypeScript core headlessly. Security must be opt-in, localhost-only, and project-scoped. This is a genuinely uncommon selling point. |
-| 40 | Tilemap / tileset mode | 9 | 9 | 1.00 | ★ | Tile size, tile palette document, tile layers storing indices, tile picker, auto-tiling rules, and tilemap JSON export. A large model change but extremely valuable for game artists and level design. |
-| 41 | Mobile / touch UI and Apple Pencil | 7 | 7 | 1.00 | | Touch gestures, larger hit targets, pressure support, and a responsive layout. The canvas pointer pipeline is a good base; the UI needs a mobile pass. |
-| 42 | Scripting / plugin API | 7 | 8 | 0.88 | | A safe JS plugin API for custom tools, filters, and exporters, with a sandbox and permission model. Powerful but risky; needs a stable API and documentation. |
-| 43 | PSD import/export | 7 | 9 | 0.78 | | Read/write layered PSDs. High effort and large test surface; only worth it if the app targets artists who exchange files with Photoshop. |
-| 44 | Cloud sync / project library | 6 | 9 | 0.67 | | Accounts, storage, conflict resolution, and sharing. Contradicts the current client-only architecture and adds operational cost. |
-| 45 | Color management (ICC/sRGB/linear) | 4 | 6 | 0.67 | | Color-space-aware compositing and export. Most pixel artists work in sRGB, so this is mostly relevant for professional pipelines. |
-| 46 | Audio / animation sync | 4 | 6 | 0.67 | | Attach audio tracks to animations and scrub/play in sync. Niche; useful for cutscenes and rhythm games. |
-| 47 | Real-time collaboration | 5 | 10 | 0.50 | | Multiplayer editing, presence, conflict resolution, and permissions. Very high complexity and operational cost for a client-only editor. |
+| 1 | Reference image / tracing layer | 9 | 2 | 4.50 | | Implemented as two complementary features: **Reference Layer** (timeline-integrated, per-frame cels, locked, non-exported, fitted to canvas) and **Reference Board** (project-level images independent of layers/frames, movable outside the canvas, non-exported). The import dialog also supports Layer and Frames destinations. |
+| 2 | Radial / N-fold symmetry | 7 | 2 | 3.50 | | Implemented: rotational copies around a draggable center with a 2–16 symmetry count. Axis mirrors can be combined with radial symmetry; the red spoke guides and draggable center handle share the mirror overlay. Disabling radial symmetry resets its center. |
+| 3 | Pixel-perfect line/shape/curve modes | 7 | 2 | 3.50 | | Implemented as a per-tool option for pencil, eraser, curve, and shape outlines. Freehand and curve paths reuse the existing pixel-perfect filter; outlines use a set-based corner filter that preserves solid blocks and leaves rectangles untouched. The Line tool hides the switch because Bresenham lines already avoid redundant corner pixels. The switch lives in the tool options panel. |
+| 4 | Autosave and crash recovery | 9 | 3 | 3.00 | | Implemented: dirty project tabs are serialized with the normal project encoder into IndexedDB after drawing pauses and on a fixed interval. The next launch previews recovered tabs on a checkerboard stage and offers **Restore** or **Discard**. Saving or closing a dirty tab removes its snapshot, and restored tabs reopen as unsaved projects. |
+| 5 | Onion skinning | 9 | 3 | 3.00 | | Implemented: previous/next frames render behind the active frame on a dedicated canvas with a 1–3 frame range, 15/30/50% opacity, previous/next visibility, and tint presets. Toggle with the ghost button or `O`; onion skins are hidden during playback and never exported. |
+| 6 | Project templates / presets | 6 | 2 | 3.00 | | Implemented as the New Project canvas-size preset list: every power-of-two square from 8×8 to 1024×1024 plus a deduplicated catalog of retro hardware resolutions. Each row shows the size on the left and the hardware name on the right. The canvas limit is now 2048×2048; larger-than-preset sizes are entered manually. Advanced template features were intentionally descoped. |
+| 7 | Command palette + shortcut editor | 6 | 2 | 3.00 | | Implemented: `Ctrl+K` opens a searchable, grouped action list for every command, including menu actions and tools. **Help → Keyboard shortcuts** edits the same catalog with click-to-capture rebinding, alternate bindings, inline conflict detection, and **Restore defaults**. Bindings persist in `localStorage` and immediately update the menu bar, tool tooltips, and palette. |
+| 8 | Palette tools: sort, dedupe, palette library | 8 | 3 | 2.67 | | Implemented: a palette tools menu with sorting by original add/import order, hue, saturation, or lightness (the original order is preserved and persisted), duplicate removal, and a searchable Palette Library dialog. Library entries show a name, color preview, and optional author/legal notes; each Add creates an independent editable workspace copy. |
+| 9 | Frame reordering drag-and-drop | 8 | 3 | 2.67 | | Implemented: drag frame headers to reorder a single frame or a multi-frame range. The frame order and every layer's cels are permuted together. Right-click move-left/right and `Alt+←`/`Alt+→` provide non-drag alternatives. |
+| 10 | Frame tags, per-frame durations, loop range | 9 | 4 | 2.25 | | Implemented: `Frame` carries optional `duration` and `tag`; `PixelDoc` carries an inclusive loop range. Tag ranges render above the frame headers, custom durations override the project FPS, playback uses per-frame timers, and GIF export honors durations and can export only the loop range. |
+| 11 | Canvas resize, crop, and nearest-neighbor scale | 9 | 4 | 2.25 | | Implemented as a Project menu: **Scale Canvas** resamples every cel with nearest-neighbor and offers a preview, aspect lock, and ½×/1×/2×/3× presets; **Resize Canvas** crops or extends around a 3×3 anchor with transparent new pixels and a preview; **Crop to Content** trims transparent borders across all normal layers and frames; **Crop to Selection** uses the selection bounds. Crop to Content and Crop to Selection are disabled when they would not change the canvas; Crop to Content is also disabled when no pixels are painted. All operations are undoable and clear the selection. |
+| 12 | Multi-frame selection, copy/paste, and duplicate | 8 | 4 | 2.00 | | Implemented: shift-click selects a range and Ctrl/Cmd-click toggles frames. Copy/paste moves whole frames across layers, duplicate inserts copies with optional X/Y cel offsets, and the right-click menu exposes the same actions. |
+| 13 | Palette ramps, lock, and color cycling | 8 | 3 | 2.67 | | Implemented: ramps interpolate between two colors in RGB, HSV, or OKLab and append to any editable palette (the built-in palette stays read-only), with step count, live preview, duplicate skipping, and an optional post-generation lock. Locking snaps the picker and eyedropper to the nearest palette entry when the picker is released, disables palette edits, and persists in `localStorage`. Shift-click selects a swatch range; a compact strip previews forward, reverse, or ping-pong cycling at 50–500 ms through a non-destructive canvas remap, animating the matched swatches and showing a reusable blue-bordered canvas message pill. |
+| 14 | Sprite sheet metadata export | 8 | 3 | 2.67 | | Implemented: the Spritesheet tab can download a JSON sidecar in Aseprite, TexturePacker (JSON Hash), or Godot format. It stores each frame's output-pixel rect, untrimmed source size, opaque trim bounds, duration, tag ranges as animations, and a configurable normalized pivot. Trim is computed per composited frame from visible normal layers; reference layers are ignored. All rectangles use the export scale and spacing. |
+
+## Planned features
+
+| # | Feature | Appeal | Difficulty | Score | Strategic | Why / implementation notes |
+| ---: | --- | ---: | ---: | ---: | :---: | --- |
+| 1 | Dithering patterns and pattern brushes | 8 | 3 | 2.67 | | Add selectable dither masks (Bayer, checker, custom) to pencil/fill, and let a small pattern be stamped as a brush. Reuse the gradient Bayer code and selection masks. |
+| 2 | Color-blindness simulation and palette preview | 5 | 2 | 2.50 | | Preview deuteranopia/protanopia/tritanopia and grayscale in the canvas without changing pixels. Useful for accessibility checks and palette design. |
+| 3 | ICO / favicon export | 5 | 2 | 2.50 | | Multi-size ICO encoder on top of the existing PNG export. Small, self-contained, and useful for web/game UI artists. |
+| 4 | Outline, drop shadow, and color-replace filters | 8 | 4 | 2.00 | | Selection-aware filters that operate on the active cel or all visible layers. Add a preview and an undoable apply step. High value for quick sprite cleanup. |
+| 5 | Rulers and draggable guides | 6 | 3 | 2.00 | | Horizontal/vertical guides with snapping, persisted per project. Reuse the mirror-guide overlay and pointer mapping. |
+| 6 | Split view / second zoom window | 6 | 3 | 2.00 | | A second viewport showing the same document at another zoom, or a detached 1× preview. Reuse `drawScaled` and the preview component. |
+| 7 | Custom grid offsets and isometric grid | 6 | 3 | 2.00 | | Offset the grid origin and add isometric/diagonal grid modes. Mostly rendering/UI work; useful for tiles and isometric art. |
+| 8 | APNG and animated WebP export | 7 | 4 | 1.75 | | Add encoders/decoders alongside GIF. APNG can reuse PNG frames; animated WebP may need a small library or `ImageEncoder` support. Better quality and alpha than GIF. |
+| 9 | Advanced color cycling (bake cycles, animation export) | 7 | 4 | 1.75 | | Bake a cycled palette range into frames, generate a loopable animation from one cycle pass, store cycling ranges in project files, and honor them in indexed and GIF export. Builds on the preview-only cycling mode. |
+| 10 | Undo history panel | 7 | 4 | 1.75 | | Show named history entries, allow jumping to a point, and keep the cel-patch history compact. Requires history labels and a non-linear apply path. |
+| 11 | Accessibility and localization pass | 5 | 3 | 1.67 | | Full keyboard navigation, screen-reader labels for canvas actions, reduced-motion support, and i18n extraction. Good for reach and polish. |
+| 12 | Custom brushes (shapes, patterns, textured) | 8 | 5 | 1.60 | | A brush mask editor, saved brush library, and stamping pipeline. Build on `paintBrush` and `paintPixel`; add a brush preview and per-brush size/opacity. |
+| 13 | Nine-slice / UI asset export | 6 | 4 | 1.50 | | Define nine-slice borders and export stretchable UI assets with metadata. Niche but valuable for game UI artists. |
+| 14 | Recent files / project library | 6 | 4 | 1.50 | | A local project browser backed by IndexedDB/File System Access API, with thumbnails and recent projects. Complements autosave. |
+| 15 | Isometric / seamless tiled drawing | 7 | 5 | 1.40 | | Wrap drawing across canvas edges and add an isometric tile mode. Requires careful coordinate wrapping in every drawing tool and preview. |
+| 16 | Sprite atlas packing (MaxRects) | 7 | 5 | 1.40 | | Pack frames or tagged animations into an atlas with padding, trim, and rotation options. Build on the sprite-sheet geometry code. |
+| 17 | Layer groups, blend modes, clipping masks | 8 | 6 | 1.33 | | Change the layer model to a tree, add blend modes (multiply, screen, overlay, etc.), and composite groups. High artist value but touches compositing, UI, undo, and file format. |
+| 18 | Selection transform (scale/rotate/flip) | 8 | 6 | 1.33 | | Add transform handles to floating selections with nearest-neighbor scaling and 90° rotation. Reuse the floating-selection pipeline; add a transform matrix and commit path. |
+| 19 | Version snapshots / named checkpoints | 6 | 5 | 1.20 | | Save named project snapshots locally with thumbnails and restore/diff. Complements undo and autosave without a backend. |
+| 20 | Grayscale mode (1/2/4/8-bit, dithering) | 7 | 6 | 1.17 | | A document color mode with single-channel cels and a ramp palette, plus dithering and conversion to/from RGBA. Medium model change; valuable for Game Boy/1-bit and grayscale art. |
+| 21 | Non-destructive adjustments (hue/sat/levels/curves) | 7 | 6 | 1.17 | | Per-layer adjustment stacks with live preview and export. Requires a layer-effect model and compositing changes; can be destructive first, then non-destructive. |
+| 22 | Brush pressure / velocity and tablet support | 7 | 6 | 1.17 | | Pointer pressure API, pressure-to-size/opacity curves, and tablet-friendly UI. Requires a brush engine change and careful pixel snapping. |
+| 23 | AI palette, cleanup, and generation assist | 8 | 7 | 1.14 | ★ | Optional, explicit AI actions: generate a palette from a prompt, clean up stray pixels, suggest outlines/shadows, or generate a base sprite. Needs a provider abstraction, privacy controls, and a review step. |
+| 24 | Desktop app (Tauri/Electron) | 8 | 7 | 1.14 | ★ | Native menus, file-system access, auto-save, drag-and-drop, and offline project library. Reuses the Svelte UI; the main work is packaging, file APIs, and updates. |
+| 25 | Indexed color mode | 9 | 8 | 1.13 | | Store palette indices instead of RGBA, enforce a document palette, support transparency index, palette swap, color cycling, and indexed PNG/GIF export. A major model/file-format change, but the classic pixel-art workflow and a strong differentiator. |
+| 26 | Aseprite `.aseprite` import/export | 9 | 8 | 1.13 | | Parse/write the Aseprite binary format (layers, frames, tags, palettes, cels). High interoperability value; requires careful binary parsing and test fixtures. |
+| 27 | MCP server | 8 | 8 | 1.00 | ★ | Expose Pixel Spell projects and operations to AI agents through MCP tools: inspect document/layers/frames/palette, draw/fill/select, add/remove frames and layers, export PNG/GIF/sheet, save project. A local Node bridge can talk to the browser app over WebSocket, or run the same TypeScript core headlessly. Security must be opt-in, localhost-only, and project-scoped. This is a genuinely uncommon selling point. |
+| 28 | Tilemap / tileset mode | 9 | 9 | 1.00 | ★ | Tile size, tile palette document, tile layers storing indices, tile picker, auto-tiling rules, and tilemap JSON export. A large model change but extremely valuable for game artists and level design. |
+| 29 | Mobile / touch UI and Apple Pencil | 7 | 7 | 1.00 | | Touch gestures, larger hit targets, pressure support, and a responsive layout. The canvas pointer pipeline is a good base; the UI needs a mobile pass. |
+| 30 | Scripting / plugin API | 7 | 8 | 0.88 | | A safe JS plugin API for custom tools, filters, and exporters, with a sandbox and permission model. Powerful but risky; needs a stable API and documentation. |
+| 31 | PSD import/export | 7 | 9 | 0.78 | | Read/write layered PSDs. High effort and large test surface; only worth it if the app targets artists who exchange files with Photoshop. |
+| 32 | Cloud sync / project library | 6 | 9 | 0.67 | | Accounts, storage, conflict resolution, and sharing. Contradicts the current client-only architecture and adds operational cost. |
+| 33 | Color management (ICC/sRGB/linear) | 4 | 6 | 0.67 | | Color-space-aware compositing and export. Most pixel artists work in sRGB, so this is mostly relevant for professional pipelines. |
+| 34 | Audio / animation sync | 4 | 6 | 0.67 | | Attach audio tracks to animations and scrub/play in sync. Niche; useful for cutscenes and rhythm games. |
+| 35 | Real-time collaboration | 5 | 10 | 0.50 | | Multiplayer editing, presence, conflict resolution, and permissions. Very high complexity and operational cost for a client-only editor. |
 
 ## Recommended roadmap
 
@@ -69,8 +76,8 @@ This is a prioritized backlog for Pixel Spell. Ratings are deliberately simple:
 3. Autosave and crash recovery — done
 4. Frame tags, per-frame durations, and loop range — done
 5. Canvas resize/crop/scale — done
-6. Palette tools (sort, ramps, lock)
-7. Sprite-sheet metadata export
+6. Palette tools (sort, dedupe, palette library) — done
+7. Sprite-sheet metadata export — done
 8. Frame reordering and multi-frame selection — done
 
 These add the most day-to-day value per unit of risk. Onion skinning and reference layers in particular are table stakes for animation and tracing workflows.
@@ -84,6 +91,7 @@ These add the most day-to-day value per unit of risk. Onion skinning and referen
 5. Grayscale mode
 6. APNG/animated WebP export
 7. Undo history panel
+8. Palette ramps, lock, and color cycling — done
 
 This phase closes the biggest gaps versus Aseprite and Photoshop-style workflows without changing the core document format too radically.
 
@@ -131,6 +139,15 @@ Grayscale is a smaller model change than indexed color but still needs its own p
 - Add a document conversion command that maps the current RGBA image to the nearest ramp value with optional dithering.
 
 This is a good fit for Game Boy, 1-bit, and monochrome art. It is less invasive than indexed color because there is no palette table, but it still touches tools, compositing, undo, and the file format.
+
+### Advanced color cycling
+
+The current cycling mode is a preview: it remaps palette colors on screen without touching cels. The next step is authoring:
+
+- Bake one cycle pass into frames (or a tagged range) with a configurable step count, so the effect survives PNG, sprite-sheet, and GIF export.
+- Store cycle ranges, speeds, and directions in the project file so a document reopens with its animation intent intact.
+- Add a **Generate cycle animation** action that inserts N frames by rotating the selected palette range, reusing the existing frame duration and tag fields.
+- In indexed color mode, cycling becomes palette metadata rather than a display remap, which is what indexed GIF and game-engine palette animation need.
 
 ### MCP server
 

@@ -40,6 +40,8 @@ Key files:
 | File | Responsibility |
 | --- | --- |
 | `lib/editor/editor.svelte.ts` | Singleton `editor` state, history, layer/frame operations, zoom/theme |
+| `lib/editor/commands.ts` | Command catalog shared by the command palette and shortcut editor |
+| `lib/editor/keybindings.svelte.ts` | Reactive keybindings, combo normalization, conflict checks, localStorage persistence |
 | `lib/editor/types.ts` | `PixelDoc`, `Layer`, `Frame`, `ToolId`, `Point` |
 | `lib/editor/doc.ts` | Document creation/cloning, layer compositing |
 | `lib/editor/draw.ts` | Brush, line, shapes (rectangle, ellipse, star, heart), flood fill, gradients |
@@ -50,12 +52,22 @@ Key files:
 | `lib/editor/canvas.ts` | Nearest-neighbor scale, anchored resize, crop, and content bounds |
 | `lib/editor/import.ts` | Image decoding, palette parsing, and import analysis |
 | `lib/editor/reference.ts` | Reference-layer fitting and reference-board placement helpers |
-| `lib/editor/export.ts` | Image, sprite sheet, and GIF export encoding |
+| `lib/editor/export.ts` | Image, sprite sheet, GIF, and sprite-sheet metadata encoding |
 | `lib/editor/tools.ts` | Tool metadata, labels, shortcuts |
-| `lib/editor/palette.ts` | Built-in palette, palette type, and localStorage persistence |
+| `lib/editor/palette.ts` | Built-in palette, palette type, sorting helpers, nearest-color matching, and localStorage persistence |
+| `lib/editor/palette-ramp.ts` | RGB, HSV, and OKLab ramp generation between two colors |
+| `lib/editor/palette-cycle.ts` | Palette cycle ranges, direction offsets, color maps, and preview remapping |
+| `lib/editor/palette-library.ts` | Built-in palette library entries with optional author/legal metadata |
+| `lib/editor/canvas-presets.ts` | Canvas-size presets used by the New Project dialog |
+| `lib/components/editor/ColorPanel.svelte` | Color picker, primary/secondary slots, palette selector, range selection, lock, cycling strip, and palette tools menu |
+| `lib/components/editor/PaletteRampDialog.svelte` | Ramp endpoints, step count, blend space, preview, and append/lock options |
+| `lib/components/editor/CanvasMessagePill.svelte` | Reusable blue-accent status pill for canvas viewport modes |
+| `lib/components/editor/PaletteLibraryDialog.svelte` | Searchable built-in palette library with previews and author/legal notes |
 | `lib/components/editor/TimelinePanel.svelte` | Timeline toolbar, tag ranges, frame×layer table, frame context menu, onion/loop controls, opacity footer |
+| `lib/components/editor/CommandPalette.svelte` | `Ctrl+K` searchable command runner |
+| `lib/components/editor/ShortcutsDialog.svelte` | Keybinding editor with capture, conflict detection, and restore defaults |
 | `lib/components/editor/Preview.svelte` | Closed scan-eye button and 1× floating frame preview |
-| `lib/components/editor/CanvasStage.svelte` | Canvas viewport, drawing pointer handling, reference-board placement, mirror/radial guides, zoom pill |
+| `lib/components/editor/CanvasStage.svelte` | Canvas viewport, drawing pointer handling, reference-board placement, mirror/radial guides, cycling preview, zoom pill |
 | `lib/components/editor/ReferenceBoardPanel.svelte` | Floating project-level reference board manager |
 | `lib/components/editor/ReferenceBoardImage.svelte` | Stage rendering for one board reference |
 | `lib/components/editor/ReferenceThumb.svelte` | Board reference thumbnail |
@@ -95,6 +107,17 @@ Key files:
 - Frames own one cel per layer: `layer.cels[frameIndex]`. Adding/removing frames must update every layer's `cels` array in lockstep with `doc.frames`. Frame order changes must apply the same permutation to `doc.frames` and every layer's `cels`.
 - `Frame` also carries optional `duration` (ms) and `tag`; `PixelDoc` carries optional `loopStart`/`loopEnd`. Contiguous equal tags render as a tag range in the timeline. Keep these fields in `cloneDoc`, history, project files, and autosaves.
 - `frameSelection` and the shift-click anchor are per-project and must be included in `ProjectSnapshot`, `#syncActiveProject`, and `#activateProject`. Restored ids are filtered against the active document.
+
+## Commands and shortcuts
+
+- `lib/editor/commands.ts` is the single source of truth for global actions. Add a `CommandDef` there when introducing a user-facing action; the command palette, shortcut editor, and keyboard handler all read it.
+- Commands may have `enabled()` (hidden from the palette and skipped by the key handler when false), `ignoreRepeat` (for toggles such as playback), and extra `keywords` for search.
+- `lib/editor/keybindings.svelte.ts` owns the reactive `bindings` map, combo normalization (`mod` matches Ctrl or Cmd), formatting, conflict detection, and localStorage persistence under `pixel-spell-keybindings`.
+- Defaults live on the command definition as normalized combos (`"mod+shift+z"`, `"shift+g"`, `"alt+left"`, `"["`, `"space"`). A command can have several defaults (redo uses `Ctrl+Shift+Z` and `Ctrl+Y`).
+- `App.svelte` resolves every global keydown through `keybindings.commandForCombo`; do not add hardcoded shortcut branches there. Tool shortcuts are commands too (`tool.<id>`).
+- The shortcut editor captures keys on `window` in the capture phase and stops immediate propagation so the app handler and dialog Escape handling do not run while rebinding. It rejects conflicts and supports up to three bindings per command.
+- Restoring defaults replaces the map and removes the localStorage record.
+- `App.svelte` prevents the browser context menu globally with `oncontextmenucapture`. App-specific context menus still receive the event; they just must not rely on the native menu.
 
 ## Projects and tabs
 
@@ -209,10 +232,10 @@ Preserve these regions and their relative placement when making changes.
 - Project files use the `.pixelspell` extension and the current binary `PXSP` container (version 2). The header stores dimensions, fps, frame/layer counts, and a UTF-8 metadata block (name, palette, active frame/layer, per-frame duration/tag records, loop range, layer flags including `role`). Each cel is stored as raw little-endian RGBA or RLE, whichever is smaller. A self-describing reference-board section follows the cels: metadata JSON plus each image's original compressed bytes.
 - `serializeProject` returns a `Uint8Array`; `parseProject` accepts a `Uint8Array`/`ArrayBuffer`. `readProjectFile` reads `arrayBuffer()`. Invalid files return `null` and the UI alerts the user. Opening a project does not replace the workspace palette collection.
 - Older unreleased `PXSP` versions are intentionally rejected; bump `FORMAT_VERSION` whenever the container changes. Reference-board images are limited to 64 MB each, 64 images per project, and 256 MB total.
-- Parsing enforces 1–1024 px per side, at most 1024 layers, at most 1000 frames, a 512 MB cel budget, and a 256-color palette. Duplicate layer ids are regenerated so lookups stay unambiguous. Saving throws if a project exceeds the layer/frame limits.
+- Parsing enforces 1–2048 px per side, at most 1024 layers, at most 1000 frames, a 512 MB cel budget, and a 256-color palette. Duplicate layer ids are regenerated so lookups stay unambiguous. Saving throws if a project exceeds the layer/frame limits.
 - Layer visibility, opacity, and lock state are serialized with each layer. Missing boolean fields default to visible and unlocked.
 - Opening a project file creates a new tab; saving applies to the active project only.
-- Image export uses `canvas.toBlob`; sprite sheets support horizontal, vertical, and grid layouts.
+- Image export uses `canvas.toBlob`; sprite sheets support horizontal, vertical, and grid layouts. Sprite-sheet metadata is generated by the pure `sheetMetadata()` path in `export.ts` (Aseprite, TexturePacker JSON Hash, or Godot JSON) from the same geometry as the image, so frame rects, spacing, scale, trim, pivot, and tag animations stay in sync. All metadata rectangles are in output-sheet pixels. Trim scans visible normal layers and ignores reference layers. The export dialog downloads the JSON sidecar as a second file shortly after the sheet.
 - `editor.saveToFile()` triggers a browser download and clears the dirty flag.
 - Dirty projects are also serialized to IndexedDB by `autosave.ts` (database `pixel-spell-autosave`, store `projects`) so a crash can be recovered. `editor.autosaveNow()` snapshots the active tab; `#syncActiveProject` snapshots the outgoing tab on switch, and `autosaveAll()` covers inactive tabs after a restore. Saving or closing a dirty tab deletes its record. The recovery dialog parses the stored `PXSP` bytes and previews the active frame.
 
@@ -240,7 +263,11 @@ Preserve these regions and their relative placement when making changes.
 - Onion-skin state is not part of project files or history. `CanvasStage` hides onion skins while playing and redraws them on `activeFrame`, `structureRevision`, `historyActionRevision`, `layerAppearanceRevision`, and zoom—but not on every `revision` bump.
 - The timeline table uses sticky `<th>` cells inside an `overflow-auto` container. Keep `border-separate border-spacing-0`, explicit column widths, and opaque header backgrounds; otherwise scrolling content shows through or columns shift.
 - Timeline height is a UI preference stored in `localStorage`, not part of project files.
-- Custom palettes are workspace preferences stored in `localStorage` under `pixel-spell-palettes`; the built-in palette always has id `default` and is never persisted or editable. Custom palettes are capped at 256 colors and new ones start empty.
+- Custom palettes are workspace preferences stored in `localStorage` under `pixel-spell-palettes`; the built-in palette always has id `default` and is never persisted or editable. Custom palettes are capped at 256 colors and new ones start empty. Each custom palette stores its original add/import order and last sort mode so the palette tools menu can restore **Original order** after sorting by hue, saturation, or lightness. The Palette Library dialog adds library entries through `importPalette`, which creates a normal editable palette; adding the same entry again creates an independent copy with a suffixed name.
+- `editor.paletteLocked` and the active palette id are persisted with the palette collection. `paletteEditable` means the active palette is custom and unlocked; use it for add/remove/rename/delete/sort/dedupe/ramp controls. Locking constrains color choice only: `snapColorToPalette` runs on picker release (SV pointer up, hue `change`, hex commit) and `setColorFromPacked` snaps eyedropper picks to the nearest palette entry using OKLab distance. Existing pixels are never rewritten.
+- `editor.paletteSelection` holds swatch indices. Plain clicks reset the range to one swatch; shift/Ctrl/Cmd-click extends from the last plain-click anchor. `paletteSelectionRange` returns the min–max span, and that span is the cycling range. `ColorPanel` displays 1-based positions in its status strip and the canvas pill. Switching palettes/projects, editing palette colors, or changing the selection stops cycling and clears the range where appropriate.
+- Color cycling is a preview-only display mode. `paletteCyclePlaying` drives a recursive `setTimeout` that advances `paletteCycleStep` and bumps `paletteCycleRevision`; it never increments `revision` or touches cels/history. `paletteCycleRemap` is built from exact palette RGB matches in the selected range and applied after `compositeFrameCached()` into a reusable buffer in `CanvasStage` and `Preview`. Keep it out of export, thumbnails, and onion skins. The swatch grid mirrors the same shift, and the bottom-center `CanvasMessagePill` is the reusable status surface for viewport modes.
+- Ramp generation is pure (`palette-ramp.ts`) and appends through `editor.addPaletteRamp(colors, lockAfter)`. Ramps always target the active palette, skip duplicates and the 256-color cap, reset `sortMode` to `original` so the ramp stays contiguous, and may set `paletteLocked` when done. The built-in palette remains read-only.
 - Layer visibility/opacity are document-wide. Per-frame visibility would require a model change and UI work.
 - Reference layers cannot be unlocked or drawn on. `selectLayer` allows selecting them for visibility/opacity/rename/reorder/delete, but `editor.activeLayerDrawable` returns false. `clearLayer` and `clearFrame` skip them. `addFrame` and `importImageFrame` copy the current reference-layer cel so a static reference persists.
 - Reference-board images are separate from the cel composite. Do not add them to `compositeFrame`; `ReferenceBoardImage.svelte` draws each one with a component-local blob URL and applies position/size/opacity/rotation. The panel's active reference is the only one that can be dragged on the stage, and only while unlocked.

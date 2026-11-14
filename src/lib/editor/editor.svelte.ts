@@ -4,6 +4,8 @@ import {
 	writeAutosave,
 } from "./autosave.js";
 import {
+	MAX_CANVAS_SIZE,
+	MIN_CANVAS_SIZE,
 	type PixelBounds,
 	contentBoundsOf,
 	resizePixels,
@@ -40,9 +42,19 @@ import {
 	MAX_PALETTE_COLORS,
 	createDefaultPalette,
 	loadPaletteState,
+	nearestPaletteColor,
 	savePaletteState,
+	sortPaletteColors,
 	type Palette,
+	type PaletteSortMode,
 } from "./palette.js";
+import {
+	DEFAULT_PALETTE_CYCLE_MS,
+	buildPaletteCycleMap,
+	paletteShiftForStep,
+	type PaletteCycleDirection,
+	type PaletteCycleRange,
+} from "./palette-cycle.js";
 import type {
 	BackgroundKind,
 	ColorSlot,
@@ -65,8 +77,6 @@ import type {
 const HISTORY_LIMIT = 80;
 /** Keep undo history bounded even for very large documents. */
 const HISTORY_BYTE_LIMIT = 128 * 1024 * 1024;
-const MIN_SIZE = 1;
-const MAX_SIZE = 1024;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 64;
 
@@ -172,6 +182,17 @@ export class EditorState {
 	activeColorSlot = $state<ColorSlot>("primary");
 	palettes = $state<Palette[]>([createDefaultPalette()]);
 	activePaletteId = $state<string>(DEFAULT_PALETTE_ID);
+	/** Restricts color picking to the active palette and blocks palette edits. */
+	paletteLocked = $state(false);
+	/** Selected swatch indices; ramps and cycling use their min–max span. */
+	paletteSelection = $state<number[]>([]);
+	paletteRampOpen = $state(false);
+	paletteCyclePlaying = $state(false);
+	paletteCycleMs = $state(DEFAULT_PALETTE_CYCLE_MS);
+	paletteCycleDirection = $state<PaletteCycleDirection>("forward");
+	paletteCycleStep = $state(0);
+	/** Redraw signal for the cycling preview; never invalidates the composite. */
+	paletteCycleRevision = $state(0);
 
 	brushSize = $state(1);
 	sprayRadius = $state(6);
@@ -271,6 +292,8 @@ export class EditorState {
 	#clipboard: SelectionClipboard | null = null;
 	#frameClipboard: FrameClipboard | null = null;
 	#frameAnchorId: string | null = this.doc.frames[0]!.id;
+	#paletteAnchor: number | null = null;
+	#cycleTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor() {
 		const id = uid("project");
@@ -304,6 +327,7 @@ export class EditorState {
 		const paletteState = loadPaletteState();
 		this.palettes = paletteState.palettes;
 		this.activePaletteId = paletteState.activeId;
+		this.paletteLocked = paletteState.locked;
 	}
 
 	get activeLayer(): Layer {
@@ -339,6 +363,60 @@ export class EditorState {
 		return (
 			this.palettes.find((palette) => palette.id === this.activePaletteId) ??
 			this.palettes[0]!
+		);
+	}
+
+	/** The active palette can be edited when it is custom and unlocked. */
+	get paletteEditable(): boolean {
+		return !this.activePalette.builtin && !this.paletteLocked;
+	}
+
+	/**
+	 * The contiguous span covered by the swatch selection. Ctrl/shift clicks
+	 * always build a span, so this is also the range used by color cycling.
+	 */
+	get paletteSelectionRange(): {
+		start: number;
+		end: number;
+		count: number;
+	} | null {
+		const total = this.activePalette.colors.length;
+		if (total === 0 || this.paletteSelection.length === 0) return null;
+		const indices = this.paletteSelection.filter(
+			(index) => index >= 0 && index < total,
+		);
+		if (indices.length === 0) return null;
+		const start = Math.min(...indices);
+		const end = Math.max(...indices);
+		return { start, end, count: end - start + 1 };
+	}
+
+	/** Cycling needs at least two adjacent palette entries. */
+	get paletteCycleRange(): PaletteCycleRange | null {
+		const range = this.paletteSelectionRange;
+		if (!range || range.count < 2) return null;
+		return { start: range.start, end: range.end };
+	}
+
+	get paletteCycleShift(): number {
+		const range = this.paletteCycleRange;
+		if (!range) return 0;
+		return paletteShiftForStep(
+			this.paletteCycleStep,
+			range.end - range.start + 1,
+			this.paletteCycleDirection,
+		);
+	}
+
+	/** Preview-only color mapping for the current cycling tick. */
+	get paletteCycleRemap(): Map<number, number> | null {
+		if (!this.paletteCyclePlaying) return null;
+		const range = this.paletteCycleRange;
+		if (!range) return null;
+		return buildPaletteCycleMap(
+			this.activePalette.colors,
+			range,
+			this.paletteCycleShift,
 		);
 	}
 
@@ -888,7 +966,11 @@ export class EditorState {
 	setColorFromPacked(value: number, slot: ColorSlot = "primary"): void {
 		const { r, g, b, a } = unpackColor(value);
 		if (a === 0) return;
-		this.setColor(slot, rgbToHex(r, g, b));
+		const picked = rgbToHex(r, g, b);
+		const hex = this.paletteLocked
+			? (nearestPaletteColor(this.activePalette.colors, picked) ?? picked)
+			: picked;
+		this.setColor(slot, hex);
 		this.setColorAlpha(slot, a);
 		this.activeColorSlot = slot;
 	}
@@ -903,7 +985,154 @@ export class EditorState {
 	}
 
 	#persistPalettes(): void {
-		savePaletteState(this.palettes, this.activePaletteId);
+		savePaletteState(
+			this.palettes,
+			this.activePaletteId,
+			this.paletteLocked,
+		);
+	}
+
+	/** Locks color picking to the active palette and blocks palette edits. */
+	togglePaletteLock(): void {
+		this.paletteLocked = !this.paletteLocked;
+		this.#persistPalettes();
+	}
+
+	/**
+	 * Snaps a color slot to the nearest palette entry. Called when a picker is
+	 * released (or an eyedropper click lands), not while the user is dragging.
+	 */
+	snapColorToPalette(slot: ColorSlot = this.activeColorSlot): void {
+		if (!this.paletteLocked) return;
+		const current =
+			slot === "secondary" ? this.secondaryColor : this.primaryColor;
+		const nearest = nearestPaletteColor(
+			this.activePalette.colors,
+			current,
+		);
+		if (nearest && nearest !== current) this.setColor(slot, nearest);
+	}
+
+	#resetPaletteSelection(): void {
+		this.paletteSelection = [];
+		this.#paletteAnchor = null;
+		this.stopPaletteCycle();
+	}
+
+	/**
+	 * Selects a swatch for ramp and cycling ranges. Plain clicks start a new
+	 * single-swatch range; shift/ctrl/cmd clicks extend from the anchor.
+	 */
+	selectPaletteIndex(index: number, extend = false): void {
+		const total = this.activePalette.colors.length;
+		if (index < 0 || index >= total) return;
+
+		if (extend && this.#paletteAnchor !== null && this.#paletteAnchor < total) {
+			const start = Math.min(this.#paletteAnchor, index);
+			const end = Math.max(this.#paletteAnchor, index);
+			this.paletteSelection = Array.from(
+				{ length: end - start + 1 },
+				(_, offset) => start + offset,
+			);
+		} else {
+			this.#paletteAnchor = index;
+			this.paletteSelection = [index];
+		}
+		this.stopPaletteCycle();
+	}
+
+	clearPaletteSelection(): void {
+		this.#resetPaletteSelection();
+	}
+
+	#clearPaletteCycleTimer(): void {
+		if (this.#cycleTimer === null) return;
+		clearTimeout(this.#cycleTimer);
+		this.#cycleTimer = null;
+	}
+
+	#schedulePaletteCycle(): void {
+		this.#clearPaletteCycleTimer();
+		if (!this.paletteCyclePlaying) return;
+		this.#cycleTimer = setTimeout(() => {
+			this.#cycleTimer = null;
+			if (!this.paletteCyclePlaying) return;
+			this.paletteCycleStep++;
+			this.paletteCycleRevision++;
+			this.#schedulePaletteCycle();
+		}, this.paletteCycleMs);
+	}
+
+	startPaletteCycle(): void {
+		if (!this.paletteCycleRange) return;
+		this.#clearPaletteCycleTimer();
+		this.paletteCycleStep = 0;
+		this.paletteCyclePlaying = true;
+		this.paletteCycleRevision++;
+		this.#schedulePaletteCycle();
+	}
+
+	stopPaletteCycle(): void {
+		if (!this.paletteCyclePlaying) {
+			this.#clearPaletteCycleTimer();
+			return;
+		}
+		this.paletteCyclePlaying = false;
+		this.paletteCycleStep = 0;
+		this.#clearPaletteCycleTimer();
+		this.paletteCycleRevision++;
+	}
+
+	togglePaletteCycle(): void {
+		if (this.paletteCyclePlaying) this.stopPaletteCycle();
+		else this.startPaletteCycle();
+	}
+
+	setPaletteCycleMs(value: number): void {
+		if (!Number.isFinite(value)) return;
+		const next = Math.max(40, Math.min(2000, Math.round(value)));
+		if (this.paletteCycleMs === next) return;
+		this.paletteCycleMs = next;
+		if (this.paletteCyclePlaying) this.#schedulePaletteCycle();
+	}
+
+	setPaletteCycleDirection(direction: PaletteCycleDirection): void {
+		if (this.paletteCycleDirection === direction) return;
+		this.paletteCycleDirection = direction;
+		this.paletteCycleStep = 0;
+		this.paletteCycleRevision++;
+		if (this.paletteCyclePlaying) this.#schedulePaletteCycle();
+	}
+
+	/**
+	 * Appends a generated ramp to the active palette. Existing colors are
+	 * skipped, the sort mode resets to the add/import order so the ramp stays
+	 * contiguous, and the palette can optionally be locked afterwards.
+	 */
+	addPaletteRamp(colors: string[], lockAfter = false): number {
+		const palette = this.activePalette;
+		if (!this.paletteEditable) return 0;
+
+		const next = [...(palette.originalColors ?? palette.colors)];
+		let added = 0;
+		for (const color of colors) {
+			const normalized = normalizeHex(color);
+			if (!normalized) continue;
+			if (next.includes(normalized)) continue;
+			if (next.length >= MAX_PALETTE_COLORS) break;
+			next.push(normalized);
+			added++;
+		}
+
+		if (added > 0) {
+			palette.originalColors = next;
+			palette.colors = [...next];
+			palette.sortMode = "original";
+		}
+		if (lockAfter) this.paletteLocked = true;
+		if (added > 0 || lockAfter) this.#persistPalettes();
+		this.#resetPaletteSelection();
+		return added;
 	}
 
 	#nextPaletteName(): string {
@@ -917,6 +1146,7 @@ export class EditorState {
 		if (!this.palettes.some((palette) => palette.id === id)) return;
 		if (this.activePaletteId === id) return;
 		this.activePaletteId = id;
+		this.#resetPaletteSelection();
 		this.#persistPalettes();
 	}
 
@@ -925,9 +1155,12 @@ export class EditorState {
 			id: uid("palette"),
 			name: this.#nextPaletteName(),
 			colors: [],
+			originalColors: [],
+			sortMode: "original",
 		};
 		this.palettes.push(palette);
 		this.activePaletteId = palette.id;
+		this.#resetPaletteSelection();
 		this.#persistPalettes();
 		return palette.id;
 	}
@@ -936,18 +1169,19 @@ export class EditorState {
 		const index = this.palettes.findIndex((palette) => palette.id === id);
 		if (index < 0) return;
 		const palette = this.palettes[index]!;
-		if (palette.builtin) return;
+		if (palette.builtin || this.paletteLocked) return;
 
 		this.palettes.splice(index, 1);
 		if (this.activePaletteId === id) {
 			this.activePaletteId = DEFAULT_PALETTE_ID;
+			this.#resetPaletteSelection();
 		}
 		this.#persistPalettes();
 	}
 
 	renamePalette(id: string, name: string): void {
 		const palette = this.palettes.find((item) => item.id === id);
-		if (!palette || palette.builtin) return;
+		if (!palette || palette.builtin || this.paletteLocked) return;
 		const trimmed = name.trim();
 		if (!trimmed) return;
 		palette.name = trimmed.slice(0, 40);
@@ -956,28 +1190,90 @@ export class EditorState {
 
 	addPaletteColor(slot: ColorSlot = this.activeColorSlot): void {
 		const palette = this.activePalette;
-		if (palette.builtin) return;
+		if (!this.paletteEditable) return;
 
+		this.stopPaletteCycle();
 		const color = slot === "secondary" ? this.secondaryColor : this.primaryColor;
 		if (palette.colors.includes(color)) return;
 		if (palette.colors.length >= MAX_PALETTE_COLORS) return;
 
 		palette.colors.push(color);
+		palette.originalColors ??= [...palette.colors];
+		if (!palette.originalColors.includes(color)) {
+			palette.originalColors.push(color);
+		}
+		if (palette.sortMode && palette.sortMode !== "original") {
+			palette.colors = sortPaletteColors(
+				palette.originalColors,
+				palette.sortMode,
+			);
+		}
 		this.#persistPalettes();
 	}
 
 	removePaletteColor(index: number): void {
 		const palette = this.activePalette;
-		if (palette.builtin) return;
+		if (!this.paletteEditable) return;
 		if (index < 0 || index >= palette.colors.length) return;
-		palette.colors.splice(index, 1);
-		this.#persistPalettes();
+		this.#removePaletteColorAt(palette, index);
 	}
 
 	removeLastPaletteColor(): void {
 		const palette = this.activePalette;
-		if (palette.builtin || palette.colors.length === 0) return;
-		palette.colors.pop();
+		if (!this.paletteEditable || palette.colors.length === 0) return;
+		this.#removePaletteColorAt(palette, palette.colors.length - 1);
+	}
+
+	#removePaletteColorAt(palette: Palette, index: number): void {
+		this.stopPaletteCycle();
+		const [removed] = palette.colors.splice(index, 1);
+		if (removed === undefined) return;
+
+		const originalColors = palette.originalColors ?? [...palette.colors];
+		const originalIndex = originalColors.indexOf(removed);
+		if (originalIndex >= 0) originalColors.splice(originalIndex, 1);
+		palette.originalColors = originalColors;
+
+		if (palette.sortMode && palette.sortMode !== "original") {
+			palette.colors = sortPaletteColors(originalColors, palette.sortMode);
+		}
+		this.#persistPalettes();
+	}
+
+	/** Sorts a custom palette without losing its original add/import order. */
+	sortPalette(id: string, mode: PaletteSortMode): void {
+		const palette = this.palettes.find((item) => item.id === id);
+		if (!palette || palette.builtin || this.paletteLocked) return;
+
+		this.#resetPaletteSelection();
+		const original = palette.originalColors ?? palette.colors;
+		palette.originalColors = [...original];
+		palette.colors = sortPaletteColors(original, mode);
+		palette.sortMode = mode;
+		this.#persistPalettes();
+	}
+
+	/** Removes duplicate colors from a custom palette and its original order. */
+	dedupePalette(id: string): void {
+		const palette = this.palettes.find((item) => item.id === id);
+		if (!palette || palette.builtin || this.paletteLocked) return;
+
+		this.#resetPaletteSelection();
+		const colors = [...new Set(palette.colors)];
+		const originalColors = [
+			...new Set(palette.originalColors ?? palette.colors),
+		];
+		const unchanged =
+			colors.length === palette.colors.length &&
+			originalColors.length ===
+				(palette.originalColors?.length ?? palette.colors.length);
+		if (unchanged) return;
+
+		palette.originalColors = originalColors;
+		palette.colors =
+			palette.sortMode && palette.sortMode !== "original"
+				? sortPaletteColors(originalColors, palette.sortMode)
+				: colors;
 		this.#persistPalettes();
 	}
 
@@ -1006,9 +1302,12 @@ export class EditorState {
 			id: uid("palette"),
 			name: paletteName,
 			colors: unique,
+			originalColors: [...unique],
+			sortMode: "original",
 		};
 		this.palettes.push(palette);
 		this.activePaletteId = palette.id;
+		this.#resetPaletteSelection();
 		this.#persistPalettes();
 		return palette.id;
 	}
@@ -1369,6 +1668,7 @@ export class EditorState {
 		const snapshot = this.#states.get(id);
 		if (!tab || !snapshot) return;
 
+		this.stopPaletteCycle();
 		this.activeProjectId = id;
 		this.doc = snapshot.doc;
 		this.activeLayerId = snapshot.activeLayerId;
@@ -1480,8 +1780,8 @@ export class EditorState {
 		height: number,
 		options: { name?: string; background?: BackgroundKind } = {},
 	): void {
-		const w = clamp(Math.round(width) || 32, MIN_SIZE, MAX_SIZE);
-		const h = clamp(Math.round(height) || 32, MIN_SIZE, MAX_SIZE);
+		const w = clamp(Math.round(width) || 32, MIN_CANVAS_SIZE, MAX_CANVAS_SIZE);
+		const h = clamp(Math.round(height) || 32, MIN_CANVAS_SIZE, MAX_CANVAS_SIZE);
 		const doc = createDoc(w, h, options.background ?? "transparent");
 		const requestedName = options.name?.trim().slice(0, 60);
 		const name = requestedName || this.#nextUntitledName();
@@ -1556,8 +1856,8 @@ export class EditorState {
 		height: number;
 		pixels: Uint32Array;
 	}): void {
-		const width = clamp(Math.round(image.width) || 1, MIN_SIZE, MAX_SIZE);
-		const height = clamp(Math.round(image.height) || 1, MIN_SIZE, MAX_SIZE);
+		const width = clamp(Math.round(image.width) || 1, MIN_CANVAS_SIZE, MAX_CANVAS_SIZE);
+		const height = clamp(Math.round(image.height) || 1, MIN_CANVAS_SIZE, MAX_CANVAS_SIZE);
 		const pixels = new Uint32Array(width * height);
 		pixels.set(image.pixels.subarray(0, Math.min(image.pixels.length, pixels.length)));
 
@@ -2205,14 +2505,14 @@ export class EditorState {
 	/** Resamples every cel to the new dimensions with nearest-neighbor scaling. */
 	scaleCanvas(width: number, height: number): boolean {
 		const nextWidth = clamp(
-			Number.isFinite(width) ? Math.round(width) : MIN_SIZE,
-			MIN_SIZE,
-			MAX_SIZE,
+			Number.isFinite(width) ? Math.round(width) : MIN_CANVAS_SIZE,
+			MIN_CANVAS_SIZE,
+			MAX_CANVAS_SIZE,
 		);
 		const nextHeight = clamp(
-			Number.isFinite(height) ? Math.round(height) : MIN_SIZE,
-			MIN_SIZE,
-			MAX_SIZE,
+			Number.isFinite(height) ? Math.round(height) : MIN_CANVAS_SIZE,
+			MIN_CANVAS_SIZE,
+			MAX_CANVAS_SIZE,
 		);
 		if (nextWidth === this.doc.width && nextHeight === this.doc.height) {
 			return false;
@@ -2237,14 +2537,14 @@ export class EditorState {
 		anchorY = 0.5,
 	): boolean {
 		const nextWidth = clamp(
-			Number.isFinite(width) ? Math.round(width) : MIN_SIZE,
-			MIN_SIZE,
-			MAX_SIZE,
+			Number.isFinite(width) ? Math.round(width) : MIN_CANVAS_SIZE,
+			MIN_CANVAS_SIZE,
+			MAX_CANVAS_SIZE,
 		);
 		const nextHeight = clamp(
-			Number.isFinite(height) ? Math.round(height) : MIN_SIZE,
-			MIN_SIZE,
-			MAX_SIZE,
+			Number.isFinite(height) ? Math.round(height) : MIN_CANVAS_SIZE,
+			MIN_CANVAS_SIZE,
+			MAX_CANVAS_SIZE,
 		);
 		if (nextWidth === this.doc.width && nextHeight === this.doc.height) {
 			return false;
@@ -2919,3 +3219,9 @@ export class EditorState {
 }
 
 export const editor = new EditorState();
+
+if (import.meta.hot) {
+	// A dev reload replaces the singleton; stop the old preview timer so it
+	// cannot keep ticking against a discarded state object.
+	import.meta.hot.dispose(() => editor.stopPaletteCycle());
+}

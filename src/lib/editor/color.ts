@@ -85,6 +85,84 @@ export function rgbToHsv({ r, g, b }: Rgb): Hsv {
 	return { h, s: max === 0 ? 0 : delta / max, v: max };
 }
 
+export interface Oklab {
+	/** Perceptual lightness, 0..1. */
+	l: number;
+	/** Green/red axis. */
+	a: number;
+	/** Blue/yellow axis. */
+	b: number;
+}
+
+function srgbToLinear(channel: number): number {
+	const value = channel / 255;
+	return value <= 0.04045
+		? value / 12.92
+		: ((value + 0.055) / 1.055) ** 2.4;
+}
+
+function linearToSrgb(channel: number): number {
+	const value = Math.max(0, Math.min(1, channel));
+	return (
+		255 *
+		(value <= 0.0031308
+			? value * 12.92
+			: 1.055 * value ** (1 / 2.4) - 0.055)
+	);
+}
+
+/** Converts sRGB to OKLab for perceptual interpolation and color matching. */
+export function rgbToOklab({ r, g, b }: Rgb): Oklab {
+	const red = srgbToLinear(r);
+	const green = srgbToLinear(g);
+	const blue = srgbToLinear(b);
+
+	const l = Math.cbrt(
+		0.4122214708 * red + 0.5363325363 * green + 0.0514459929 * blue,
+	);
+	const m = Math.cbrt(
+		0.2119034982 * red + 0.6806995451 * green + 0.1073969566 * blue,
+	);
+	const s = Math.cbrt(
+		0.0883024619 * red + 0.2817188376 * green + 0.6299787005 * blue,
+	);
+
+	return {
+		l: 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+		a: 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+		b: 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+	};
+}
+
+/** Converts an OKLab color back to sRGB. */
+export function oklabToRgb({ l, a, b }: Oklab): Rgb {
+	const lRoot = l + 0.3963377774 * a + 0.2158037573 * b;
+	const mRoot = l - 0.1055613458 * a - 0.0638541728 * b;
+	const sRoot = l - 0.0894841775 * a - 1.291485548 * b;
+
+	const lCube = lRoot ** 3;
+	const mCube = mRoot ** 3;
+	const sCube = sRoot ** 3;
+
+	return {
+		r: linearToSrgb(
+			4.0767416621 * lCube -
+				3.3077115913 * mCube +
+				0.2309699292 * sCube,
+		),
+		g: linearToSrgb(
+			-1.2684380046 * lCube +
+				2.6097574011 * mCube -
+				0.3413193965 * sCube,
+		),
+		b: linearToSrgb(
+			-0.0041960863 * lCube -
+				0.7034186147 * mCube +
+				1.707614701 * sCube,
+		),
+	};
+}
+
 export function hsvToRgb(h: number, s: number, v: number): Rgb {
 	const hue = ((h % 360) + 360) % 360;
 	const saturation = Math.max(0, Math.min(1, s));

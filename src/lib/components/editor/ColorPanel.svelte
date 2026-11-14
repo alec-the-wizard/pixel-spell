@@ -1,11 +1,24 @@
 <script lang="ts">
 	import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
+	import ArrowLeft from "@lucide/svelte/icons/arrow-left";
+	import ArrowRight from "@lucide/svelte/icons/arrow-right";
+	import Lock from "@lucide/svelte/icons/lock";
+	import LockOpen from "@lucide/svelte/icons/lock-open";
 	import Minus from "@lucide/svelte/icons/minus";
 	import PaletteIcon from "@lucide/svelte/icons/palette";
+	import Pause from "@lucide/svelte/icons/pause";
 	import Pencil from "@lucide/svelte/icons/pencil";
+	import Play from "@lucide/svelte/icons/play";
 	import Plus from "@lucide/svelte/icons/plus";
+	import Settings2 from "@lucide/svelte/icons/settings-2";
 	import Trash2 from "@lucide/svelte/icons/trash-2";
-	import { Button } from "$lib/components/ui/button/index.js";
+	import PaletteLibraryDialog from "$lib/components/editor/PaletteLibraryDialog.svelte";
+	import PaletteRampDialog from "$lib/components/editor/PaletteRampDialog.svelte";
+	import {
+		Button,
+		buttonVariants,
+	} from "$lib/components/ui/button/index.js";
+	import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Separator } from "$lib/components/ui/separator/index.js";
 	import {
@@ -17,7 +30,14 @@
 		rgbToHsv,
 	} from "$lib/editor/color.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
-	import { MAX_PALETTE_COLORS } from "$lib/editor/palette.js";
+	import {
+		MAX_PALETTE_COLORS,
+		type PaletteSortMode,
+	} from "$lib/editor/palette.js";
+	import {
+		PALETTE_CYCLE_SPEEDS,
+		type PaletteCycleDirection,
+	} from "$lib/editor/palette-cycle.js";
 	import type { ColorSlot } from "$lib/editor/types.js";
 	import { cn } from "$lib/utils.js";
 
@@ -25,6 +45,13 @@
 
 	const HUE_TRACK =
 		"linear-gradient(to right, #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%)";
+
+	const SORT_OPTIONS: { id: PaletteSortMode; label: string }[] = [
+		{ id: "original", label: "Original order" },
+		{ id: "hue", label: "Hue" },
+		{ id: "saturation", label: "Saturation" },
+		{ id: "lightness", label: "Lightness" },
+	];
 
 	let svArea: HTMLDivElement | undefined;
 	let draggingSv = false;
@@ -92,6 +119,7 @@
 
 	function commitHex(): void {
 		setActiveHex(hexDraft);
+		editor.snapColorToPalette(slot);
 		hexDraft = activeHex;
 		hexFocused = false;
 	}
@@ -136,6 +164,9 @@
 		if (svArea?.hasPointerCapture(event.pointerId)) {
 			svArea.releasePointerCapture(event.pointerId);
 		}
+		// Palette lock snaps only when the picker is released, so dragging
+		// remains smooth and still previews intermediate colors.
+		editor.snapColorToPalette(slot);
 	}
 
 	function onSvKeydown(event: KeyboardEvent): void {
@@ -148,14 +179,22 @@
 		event.preventDefault();
 	}
 
-	function choosePaletteColor(color: string, target: ColorSlot): void {
+	function choosePaletteColor(
+		color: string,
+		target: ColorSlot,
+		extend = false,
+		select = true,
+	): void {
+		const index = activePalette.colors.indexOf(color);
+		if (select && index >= 0) editor.selectPaletteIndex(index, extend);
+		if (extend) return;
 		editor.setColor(target, color);
 		editor.setColorAlpha(target, 255);
 		editor.activeColorSlot = target;
 	}
 
 	let activePalette = $derived(editor.activePalette);
-	let paletteEditable = $derived(!activePalette.builtin);
+	let paletteEditable = $derived(editor.paletteEditable);
 	let paletteColorCount = $derived(activePalette.colors.length);
 	let currentPaletteColor = $derived(
 		slot === "secondary" ? editor.secondaryColor : editor.primaryColor,
@@ -167,7 +206,9 @@
 	);
 	let addPaletteColorTitle = $derived(
 		!paletteEditable
-			? "The default palette cannot be modified"
+			? activePalette.builtin
+				? "The default palette cannot be modified"
+				: "Unlock the palette to edit colors"
 			: paletteColorCount >= MAX_PALETTE_COLORS
 				? "Palette is full"
 				: activePalette.colors.includes(currentPaletteColor)
@@ -177,11 +218,92 @@
 	let canRemovePaletteColor = $derived(paletteEditable && paletteColorCount > 0);
 	let removePaletteColorTitle = $derived(
 		!paletteEditable
-			? "The default palette cannot be modified"
+			? activePalette.builtin
+				? "The default palette cannot be modified"
+				: "Unlock the palette to edit colors"
 			: paletteColorCount === 0
 				? "Palette is empty"
 				: "Remove last color from palette",
 	);
+
+	let paletteLibraryOpen = $state(false);
+	let paletteSortMode = $derived(activePalette.sortMode ?? "original");
+	let hasPaletteDuplicates = $derived(
+		new Set(activePalette.colors).size !== activePalette.colors.length,
+	);
+	let canSortPalette = $derived(paletteEditable && paletteColorCount > 1);
+	let canDedupePalette = $derived(paletteEditable && hasPaletteDuplicates);
+
+	let selectionRange = $derived(editor.paletteSelectionRange);
+	let selectionLabel = $derived.by(() => {
+		const range = selectionRange;
+		if (!range) return "Shift-click for a range";
+		if (range.start === range.end) return `Color ${range.start + 1} selected`;
+		return `${range.start + 1}–${range.end + 1} · ${range.count} colors`;
+	});
+	let canCycle = $derived(
+		editor.paletteCyclePlaying || editor.paletteCycleRange !== null,
+	);
+	let canGenerateRamp = $derived(
+		paletteEditable && paletteColorCount < MAX_PALETTE_COLORS,
+	);
+	let generateRampTitle = $derived(
+		activePalette.builtin
+			? "The default palette is read-only"
+			: editor.paletteLocked
+				? "Unlock the palette to generate ramps"
+				: paletteColorCount >= MAX_PALETTE_COLORS
+					? "Palette is full"
+					: "Generate a ramp of colors",
+	);
+	let generateRampLabel = $derived(
+		activePalette.builtin
+			? "Generate ramp… (read-only)"
+			: editor.paletteLocked
+				? "Generate ramp… (locked)"
+				: paletteColorCount >= MAX_PALETTE_COLORS
+					? "Generate ramp… (palette full)"
+					: "Generate ramp…",
+	);
+	let cycleDirectionTitle = $derived(
+		editor.paletteCycleDirection === "forward"
+			? "Direction: forward"
+			: editor.paletteCycleDirection === "reverse"
+				? "Direction: reverse"
+				: "Direction: ping-pong",
+	);
+
+	function cycleDirectionNext(): void {
+		const order: PaletteCycleDirection[] = [
+			"forward",
+			"reverse",
+			"ping-pong",
+		];
+		const index = order.indexOf(editor.paletteCycleDirection);
+		editor.setPaletteCycleDirection(order[(index + 1) % order.length]!);
+	}
+
+	function isPaletteIndexSelected(index: number): boolean {
+		const range = selectionRange;
+		return !!range && index >= range.start && index <= range.end;
+	}
+
+	/** Swatches follow the preview so the palette mirrors the canvas. */
+	function paletteSwatchColor(index: number): string {
+		const range = editor.paletteCycleRange;
+		if (!range || !editor.paletteCyclePlaying) {
+			return activePalette.colors[index]!;
+		}
+		const length = range.end - range.start + 1;
+		const shift = editor.paletteCycleShift;
+		const offset =
+			(((index - range.start + shift) % length) + length) % length;
+		return activePalette.colors[range.start + offset]!;
+	}
+
+	function onPaletteSortChange(value: string): void {
+		editor.sortPalette(activePalette.id, value as PaletteSortMode);
+	}
 
 	let renamingPalette = $state(false);
 	let renameDraft = $state("");
@@ -336,6 +458,7 @@
 				step={1}
 				value={Math.round(hue)}
 				oninput={onHueInput}
+				onchange={() => editor.snapColorToPalette(slot)}
 				class="color-range"
 				style={`background: ${HUE_TRACK}`}
 				aria-label="Hue"
@@ -382,9 +505,19 @@
 
 		<div class="space-y-2 pt-1">
 			<div class="flex items-center justify-between">
-				<span class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-					Palette
-				</span>
+				<div class="flex items-center gap-1.5">
+					<span class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+						Palette
+					</span>
+					{#if editor.paletteLocked}
+						<span
+							class="flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium text-primary"
+						>
+							<Lock class="size-2.5" />
+							Locked
+						</span>
+					{/if}
+				</div>
 				<div class="flex items-center gap-0.5">
 					<Button
 						variant="ghost"
@@ -419,6 +552,62 @@
 					>
 						<PaletteIcon class="size-3.5" />
 					</Button>
+					<Separator orientation="vertical" class="mx-1 h-4" />
+					<DropdownMenu.Root>
+						<DropdownMenu.Trigger
+							class={cn(
+								buttonVariants({ variant: "ghost", size: "icon-xs" }),
+								"text-muted-foreground",
+							)}
+							title="Palette tools"
+							aria-label="Palette tools"
+						>
+							<Settings2 class="size-3.5" />
+						</DropdownMenu.Trigger>
+						<DropdownMenu.Content class="w-56" align="start">
+							<DropdownMenu.Item
+								disabled={!canGenerateRamp}
+								title={canGenerateRamp
+									? "Generate a ramp of colors"
+									: generateRampTitle}
+								onSelect={() => (editor.paletteRampOpen = true)}
+							>
+								{generateRampLabel}
+							</DropdownMenu.Item>
+							<DropdownMenu.Separator />
+							<DropdownMenu.Label>Sort by</DropdownMenu.Label>
+							<DropdownMenu.RadioGroup
+								value={paletteSortMode}
+								onValueChange={onPaletteSortChange}
+							>
+								{#each SORT_OPTIONS as option (option.id)}
+									<DropdownMenu.RadioItem
+										value={option.id}
+										disabled={!canSortPalette}
+										closeOnSelect
+									>
+										{option.label}
+									</DropdownMenu.RadioItem>
+								{/each}
+							</DropdownMenu.RadioGroup>
+							<DropdownMenu.Separator />
+							<DropdownMenu.Item
+								disabled={!canDedupePalette}
+								title={canDedupePalette
+									? "Remove duplicate colors"
+									: "No duplicate colors"}
+								onSelect={() => editor.dedupePalette(activePalette.id)}
+							>
+								Remove duplicates
+							</DropdownMenu.Item>
+							<DropdownMenu.Separator />
+							<DropdownMenu.Item
+								onSelect={() => (paletteLibraryOpen = true)}
+							>
+								Palette library…
+							</DropdownMenu.Item>
+						</DropdownMenu.Content>
+					</DropdownMenu.Root>
 				</div>
 			</div>
 
@@ -453,12 +642,36 @@
 					</select>
 				{/if}
 				<Button
+					variant={editor.paletteLocked ? "secondary" : "ghost"}
+					size="icon-xs"
+					class={cn(
+						"shrink-0",
+						!editor.paletteLocked && "text-muted-foreground",
+					)}
+					onclick={() => editor.togglePaletteLock()}
+					title={editor.paletteLocked
+						? "Palette locked — colors snap to the nearest swatch. Click to unlock."
+						: "Lock the palette for indexed-style work"}
+					aria-label={editor.paletteLocked ? "Unlock palette" : "Lock palette"}
+					aria-pressed={editor.paletteLocked}
+				>
+					{#if editor.paletteLocked}
+						<Lock class="size-3.5" />
+					{:else}
+						<LockOpen class="size-3.5" />
+					{/if}
+				</Button>
+				<Button
 					variant="ghost"
 					size="icon-xs"
 					class="shrink-0 text-muted-foreground"
 					onclick={startPaletteRename}
 					disabled={!paletteEditable}
-					title={paletteEditable ? "Rename palette" : "The default palette cannot be renamed"}
+					title={activePalette.builtin
+						? "The default palette cannot be renamed"
+						: paletteEditable
+							? "Rename palette"
+							: "Unlock the palette to rename it"}
 					aria-label="Rename palette"
 				>
 					<Pencil class="size-3.5" />
@@ -469,11 +682,78 @@
 					class="shrink-0 text-muted-foreground"
 					onclick={deletePalette}
 					disabled={!paletteEditable}
-					title={paletteEditable ? "Delete palette" : "The default palette cannot be deleted"}
+					title={activePalette.builtin
+						? "The default palette cannot be deleted"
+						: paletteEditable
+							? "Delete palette"
+							: "Unlock the palette to delete it"}
 					aria-label="Delete palette"
 				>
 					<Trash2 class="size-3.5" />
 				</Button>
+			</div>
+
+			<div class="flex items-center justify-between gap-1">
+				<span
+					class="min-w-0 truncate text-[10px] tabular-nums text-muted-foreground"
+					aria-live="polite"
+				>
+					{selectionLabel}
+				</span>
+				<div class="flex shrink-0 items-center gap-0.5">
+					<Button
+						variant="ghost"
+						size="icon-xs"
+						class="text-muted-foreground"
+						onclick={() => editor.togglePaletteCycle()}
+						disabled={!canCycle}
+						title={editor.paletteCyclePlaying
+							? "Stop color cycling preview"
+							: canCycle
+								? "Preview color cycling on the selected range"
+								: "Select two or more swatches to cycle colors"}
+						aria-label={editor.paletteCyclePlaying
+							? "Stop color cycling preview"
+							: "Preview color cycling"}
+						aria-pressed={editor.paletteCyclePlaying}
+					>
+						{#if editor.paletteCyclePlaying}
+							<Pause class="size-3.5" />
+						{:else}
+							<Play class="size-3.5" />
+						{/if}
+					</Button>
+					<select
+						class="h-6 cursor-pointer rounded-full bg-transparent px-1 font-mono text-[10px] tabular-nums text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+						value={editor.paletteCycleMs}
+						onchange={(event) =>
+							editor.setPaletteCycleMs(
+								Number((event.currentTarget as HTMLSelectElement).value),
+							)}
+						title="Color cycling speed"
+						aria-label="Color cycling speed"
+					>
+						{#each PALETTE_CYCLE_SPEEDS as speed (speed)}
+							<option value={speed}>{speed} ms</option>
+						{/each}
+					</select>
+					<Button
+						variant="ghost"
+						size="icon-xs"
+						class="text-muted-foreground"
+						onclick={cycleDirectionNext}
+						title={`${cycleDirectionTitle} — click to change`}
+						aria-label={`${cycleDirectionTitle}. Click to change.`}
+					>
+						{#if editor.paletteCycleDirection === "forward"}
+							<ArrowRight class="size-3.5" />
+						{:else if editor.paletteCycleDirection === "reverse"}
+							<ArrowLeft class="size-3.5" />
+						{:else}
+							<ArrowLeftRight class="size-3.5" />
+						{/if}
+					</Button>
+				</div>
 			</div>
 
 			<div class="max-h-44 overflow-y-auto pr-1">
@@ -481,22 +761,37 @@
 					<p
 						class="rounded-md border border-dashed px-2 py-3 text-center text-[10px] text-muted-foreground"
 					>
-						No colors yet. Use + to add the current color.
+						{#if editor.paletteLocked}
+							This palette is locked and empty. Unlock it to add colors.
+						{:else}
+							No colors yet. Use + to add the current color.
+						{/if}
 					</p>
 				{:else}
 					<div class="grid grid-cols-8 gap-1.5">
-						{#each activePalette.colors as color (color)}
+						{#each activePalette.colors as color, index (color)}
 							<div class="group relative aspect-square">
 								<button
 									type="button"
-									class="relative size-full rounded-[5px] ring-1 ring-black/10 transition-transform group-hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-									style={`background-color: ${color}`}
-									title={`${color} — left click: primary, right click: secondary`}
-									aria-label={`Use color ${color}`}
-									onclick={() => choosePaletteColor(color, "primary")}
+									class={cn(
+										"relative size-full rounded-[5px] transition-transform group-hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+										isPaletteIndexSelected(index)
+											? "ring-2 ring-primary ring-offset-1 ring-offset-background"
+											: "ring-1 ring-black/10",
+									)}
+									style={`background-color: ${paletteSwatchColor(index)}`}
+									title={`${color} — color ${index + 1}. Left click: primary, right click: secondary, shift-click: select range.`}
+									aria-label={`Use color ${color}, color ${index + 1}`}
+									aria-pressed={isPaletteIndexSelected(index)}
+									onclick={(event) =>
+										choosePaletteColor(
+											color,
+											"primary",
+											event.shiftKey || event.metaKey || event.ctrlKey,
+										)}
 									oncontextmenu={(event) => {
 										event.preventDefault();
-										choosePaletteColor(color, "secondary");
+										choosePaletteColor(color, "secondary", false, false);
 									}}
 								>
 									{#if editor.primaryColor === color && editor.alpha === 255}
@@ -517,4 +812,7 @@
 			</div>
 		</div>
 	</div>
+
+	<PaletteLibraryDialog bind:open={paletteLibraryOpen} />
+	<PaletteRampDialog bind:open={editor.paletteRampOpen} />
 </section>
