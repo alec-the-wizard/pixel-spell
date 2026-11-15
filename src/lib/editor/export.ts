@@ -4,12 +4,26 @@ import { fileBase } from "./file.js";
 import { drawPixels } from "./render.js";
 import type { PixelDoc } from "./types.js";
 
-export type ExportTabId = "image" | "spritesheet" | "gif";
+export type ExportTabId = "image" | "spritesheet" | "video" | "icon";
 export type ExportFormat = "png" | "webp" | "jpeg";
 export type ExportBackground = "transparent" | "white" | "black";
 export type SheetLayout = "horizontal" | "vertical" | "grid";
 export type SheetMetadataFormat = "aseprite" | "texturepacker" | "godot";
 export type SheetMetadataChoice = "none" | SheetMetadataFormat;
+
+/** Animation and video formats offered by the Video export tab. */
+export type VideoFormat =
+	| "gif"
+	| "apng"
+	| "webp"
+	| "webm"
+	| "mp4"
+	| "mov"
+	| "avi"
+	| "mkv";
+
+/** Icon container formats offered by the Icon export tab. */
+export type IconFormat = "ico" | "icns";
 
 export interface ImageExportOptions {
 	frame: number;
@@ -104,8 +118,59 @@ export const SHEET_METADATA_FORMATS: {
 export const EXPORT_TAB_LABELS: Record<ExportTabId, string> = {
 	image: "Image",
 	spritesheet: "Spritesheet",
-	gif: "GIF",
+	video: "Video",
+	icon: "Icon",
 };
+
+export interface VideoFormatInfo {
+	id: VideoFormat;
+	label: string;
+	extension: string;
+	mime: string;
+	/** True when the format can carry per-pixel transparency. */
+	alpha: boolean;
+	/** True when the format exposes a frame-rate control. */
+	frameRate: boolean;
+	/** True when the format stores an in-file loop flag. */
+	loop: boolean;
+	/** True when the format exposes a lossy quality control. */
+	quality: boolean;
+	/** True when the format is captured by MediaRecorder in real time. */
+	realtime: boolean;
+}
+
+export const VIDEO_FORMATS: VideoFormatInfo[] = [
+	{ id: "gif", label: "GIF", extension: "gif", mime: "image/gif", alpha: true, frameRate: true, loop: true, quality: false, realtime: false },
+	{ id: "apng", label: "APNG", extension: "apng", mime: "image/apng", alpha: true, frameRate: false, loop: true, quality: false, realtime: false },
+	{ id: "webp", label: "Animated WebP", extension: "webp", mime: "image/webp", alpha: true, frameRate: false, loop: true, quality: true, realtime: false },
+	{ id: "webm", label: "WebM", extension: "webm", mime: "video/webm", alpha: false, frameRate: false, loop: false, quality: true, realtime: true },
+	{ id: "mp4", label: "MP4", extension: "mp4", mime: "video/mp4", alpha: false, frameRate: false, loop: false, quality: true, realtime: true },
+	{ id: "mov", label: "MOV", extension: "mov", mime: "video/quicktime", alpha: false, frameRate: false, loop: false, quality: true, realtime: false },
+	{ id: "avi", label: "AVI", extension: "avi", mime: "video/x-msvideo", alpha: false, frameRate: true, loop: false, quality: true, realtime: false },
+	{ id: "mkv", label: "MKV", extension: "mkv", mime: "video/x-matroska", alpha: false, frameRate: false, loop: false, quality: true, realtime: false },
+];
+
+export interface IconFormatInfo {
+	id: IconFormat;
+	label: string;
+	extension: string;
+	mime: string;
+}
+
+export const ICON_FORMATS: IconFormatInfo[] = [
+	{ id: "ico", label: "ICO (Windows / favicon)", extension: "ico", mime: "image/x-icon" },
+	{ id: "icns", label: "ICNS (macOS)", extension: "icns", mime: "image/x-icns" },
+];
+
+/** Looks up a video format by id. */
+export function videoFormatInfo(id: VideoFormat): VideoFormatInfo {
+	return VIDEO_FORMATS.find((entry) => entry.id === id) ?? VIDEO_FORMATS[0]!;
+}
+
+/** Looks up an icon format by id. */
+export function iconFormatInfo(id: IconFormat): IconFormatInfo {
+	return ICON_FORMATS.find((entry) => entry.id === id) ?? ICON_FORMATS[0]!;
+}
 
 export const EXPORT_FORMATS: { id: ExportFormat; label: string }[] = [
 	{ id: "png", label: "PNG" },
@@ -148,7 +213,10 @@ export function exportFileName(name: string, extension: string): string {
 		.replace(/[\\/:*?"<>|]+/g, "-")
 		.replace(/\s+/g, " ")
 		.slice(0, 120);
-	const base = (safe || "pixel-spell").replace(/\.(png|jpe?g|webp|gif)$/i, "");
+	const base = (safe || "pixel-spell").replace(
+		/\.(png|apng|jpe?g|webp|gif|webm|mp4|mov|avi|mkv|ico|icns)$/i,
+		"",
+	);
 	return `${base || "pixel-spell"}.${extension}`;
 }
 
