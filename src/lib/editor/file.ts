@@ -290,8 +290,10 @@ export function serializeProject(
 	for (const cel of cels) total += 1 + 4 + cel.bytes.length;
 	total += 4 + referenceMetaBytes.length;
 	for (const reference of doc.references) total += 4 + reference.bytes.length;
-	if (total > 2_000_000_000) {
-		throw new Error("This project is too large to save as a single file.");
+	if (total > MAX_PROJECT_FILE_BYTES) {
+		throw new Error(
+			`This project is too large to save (${Math.round(MAX_PROJECT_FILE_BYTES / (1024 * 1024))} MB limit).`,
+		);
 	}
 
 	const buffer = new ArrayBuffer(total);
@@ -357,7 +359,7 @@ export function saveProjectFile(
 	const blob = new Blob([bytes], { type: "application/octet-stream" });
 	const url = URL.createObjectURL(blob);
 	download(`${fileBase(name)}.pixelspell`, url);
-	setTimeout(() => URL.revokeObjectURL(url), 1000);
+	setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 function normalizePalette(value: unknown): string[] | undefined {

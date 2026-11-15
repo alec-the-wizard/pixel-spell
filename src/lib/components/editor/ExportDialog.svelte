@@ -68,6 +68,7 @@
 	let previewCanvas = $state<HTMLCanvasElement>();
 	let previewTimer: number | undefined;
 	let wasOpen = false;
+	let sheetSourceCanvas: HTMLCanvasElement | null = null;
 
 	let imageFrame = $state(0);
 	let imageScale = $state(1);
@@ -308,7 +309,8 @@
 		context.scale(backingWidth / geometry.width, backingHeight / geometry.height);
 		context.imageSmoothingEnabled = false;
 
-		const source = document.createElement("canvas");
+		if (!sheetSourceCanvas) sheetSourceCanvas = document.createElement("canvas");
+		const source = sheetSourceCanvas;
 
 		for (let frameIndex = 0; frameIndex < doc.frames.length; frameIndex++) {
 			drawPixels(

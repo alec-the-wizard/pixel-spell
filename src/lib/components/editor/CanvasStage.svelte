@@ -279,6 +279,8 @@
 		return () => cancelAnimationFrame(id);
 	});
 
+	let onionTintBuffer: Uint32Array | null = null;
+
 	/** Recolors an onion frame so previous and next frames stay distinguishable. */
 	function tintOnionPixels(
 		source: Uint32Array,
@@ -287,11 +289,18 @@
 	): Uint32Array {
 		const color = unpackColor(packColor(tint));
 		const mix = 0.82;
-		const output = new Uint32Array(source.length);
+		if (!onionTintBuffer || onionTintBuffer.length < source.length) {
+			onionTintBuffer = new Uint32Array(source.length);
+		}
+		const output = onionTintBuffer;
 		for (let index = 0; index < source.length; index++) {
 			const value = source[index]!;
 			const alpha = value >>> 24;
-			if (alpha === 0) continue;
+			if (alpha === 0) {
+				// Reused buffer: clear any stale pixel left by the previous skin.
+				output[index] = 0;
+				continue;
+			}
 			const r = value & 0xff;
 			const g = (value >>> 8) & 0xff;
 			const b = (value >>> 16) & 0xff;

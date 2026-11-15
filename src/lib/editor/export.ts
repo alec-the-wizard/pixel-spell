@@ -229,7 +229,7 @@ export function downloadBlob(filename: string, blob: Blob): void {
 	document.body.appendChild(link);
 	link.click();
 	link.remove();
-	window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+	window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 export function getSheetGeometry(

@@ -125,11 +125,11 @@ CanvasRenderingContext2D.prototype.putImageData = original;
 
 ## Remaining performance work
 
-These were intentionally left out of this pass because they are larger changes:
+These were intentionally left out of this pass because they are larger changes. Re-verified against the current source (see the `Remaining performance work` items): every item below is still accurate and unimplemented as of the last review. The only stale figure was the bundle size in the **Code splitting** item, which has been updated.
 
 - **Timeline virtualization.** Adding a frame still redraws every thumbnail (169 `putImageData` calls for the 8 × 21 benchmark document). For very large layer × frame counts, virtualize off-screen rows/columns or draw thumbnails from a shared atlas.
 - **Incremental compositing.** `compositeFrame` still blends every visible layer. Cache the composite below each layer and recomposite only the edited layer and the layers above it.
-- **Code splitting.** The production bundle is ~515 kB (~153 kB gzip) and Vite warns about the chunk size. Lazy-load the export/import dialogs and the GIF/PNG encoders so the initial editor shell loads sooner.
+- **Code splitting.** The production bundle is ~710 kB (~205 kB gzip) and Vite warns about the chunk size. Lazy-load the export/import dialogs and the GIF/PNG encoders so the initial editor shell loads sooner.
 - **Worker-based export.** GIF encoding and large sprite-sheet exports run on the main thread. Move them to a worker to keep the UI responsive on large animations.
 - **Faster GIF palette lookup.** `buildGifPalette` builds a 32,768-entry nearest-color table by scanning every palette color. Compute entries only for 5-bit buckets that actually occur in the source frames.
 - **Pixel-perfect stroke repaint.** Corner removal currently restores the backup cel and repaints the whole stroke. Repaint only the local neighborhood of the removed corner.
