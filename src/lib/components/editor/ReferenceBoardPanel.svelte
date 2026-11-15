@@ -283,7 +283,7 @@
 						type="single"
 						min={-180}
 						max={180}
-						step={1}
+						step={5}
 						bind:value={rotation}
 						onValueChange={changeRotation}
 						class="flex-1"

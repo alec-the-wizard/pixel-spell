@@ -1,9 +1,11 @@
 <script lang="ts">
+	import Check from "@lucide/svelte/icons/check";
 	import Pause from "@lucide/svelte/icons/pause";
 	import Play from "@lucide/svelte/icons/play";
 	import Sparkles from "@lucide/svelte/icons/sparkles";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import * as Dialog from "$lib/components/ui/dialog/index.js";
+	import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { Slider } from "$lib/components/ui/slider/index.js";
@@ -207,6 +209,50 @@
 	}
 </script>
 
+{#snippet colorPicker(
+	selected: number,
+	label: string,
+	onPick: (index: number) => void,
+)}
+	<DropdownMenu.Root>
+		<DropdownMenu.Trigger
+			class="flex h-8 w-full cursor-pointer items-center justify-between gap-2 rounded-md border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+			aria-label={label}
+		>
+			<span class="truncate tabular-nums">
+				{selected + 1} · {palette.colors[selected]}
+			</span>
+			<span
+				class="size-3.5 shrink-0 rounded-[3px] ring-1 ring-black/10"
+				style:background={palette.colors[selected]}
+			></span>
+		</DropdownMenu.Trigger>
+		<DropdownMenu.Content class="max-h-72">
+			{#each palette.colors as color, index (index)}
+				<DropdownMenu.Item class="min-w-0" onSelect={() => onPick(index)}>
+					<span class="w-3.5 shrink-0">
+						{#if index === selected}
+							<Check class="size-3.5" />
+						{/if}
+					</span>
+					<span
+						class={cn(
+							"flex-1 truncate tabular-nums",
+							index === selected && "font-medium",
+						)}
+					>
+						{index + 1} · {color}
+					</span>
+					<span
+						class="size-3.5 shrink-0 rounded-[3px] ring-1 ring-black/10"
+						style:background={color}
+					></span>
+				</DropdownMenu.Item>
+			{/each}
+		</DropdownMenu.Content>
+	</DropdownMenu.Root>
+{/snippet}
+
 <Dialog.Root bind:open>
 	<Dialog.Content class="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-3xl">
 		<Dialog.Header>
@@ -235,37 +281,17 @@
 							</span>
 						</div>
 						<div class="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-							<select
-								id="cycle-start"
-								class="h-8 w-full cursor-pointer rounded-md border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
-								value={range.start}
-								aria-label="First color in the cycle range"
-								onchange={(event) =>
-									changeRange(
-										Number((event.currentTarget as HTMLSelectElement).value),
-										range.end,
-									)}
-							>
-								{#each palette.colors as color, index (index)}
-									<option value={index}>{index + 1} · {color}</option>
-								{/each}
-							</select>
+							{@render colorPicker(
+								range.start,
+								"First color in the cycle range",
+								(index) => changeRange(index, range.end),
+							)}
 							<span class="text-[10px] text-muted-foreground">to</span>
-							<select
-								id="cycle-end"
-								class="h-8 w-full cursor-pointer rounded-md border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
-								value={range.end}
-								aria-label="Last color in the cycle range"
-								onchange={(event) =>
-									changeRange(
-										range.start,
-										Number((event.currentTarget as HTMLSelectElement).value),
-									)}
-							>
-								{#each palette.colors as color, index (index)}
-									<option value={index}>{index + 1} · {color}</option>
-								{/each}
-							</select>
+							{@render colorPicker(
+								range.end,
+								"Last color in the cycle range",
+								(index) => changeRange(range.start, index),
+							)}
 						</div>
 						<!-- The strip mirrors the canvas remap, so its colors rotate in place. -->
 						<div class="flex h-6 overflow-hidden rounded-md ring-1 ring-border">

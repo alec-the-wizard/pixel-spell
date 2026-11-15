@@ -638,17 +638,7 @@
 				</Button>
 			</div>
 
-			<div class="flex items-center justify-between gap-1">
-				<span
-					class="min-w-0 truncate text-[10px] tabular-nums text-muted-foreground"
-					aria-live="polite"
-				>
-					{paletteColorCount}
-					{paletteColorCount === 1 ? "color" : "colors"}
-				</span>
-			</div>
-
-			<div class="max-h-44 overflow-y-auto pr-1">
+			<div class="max-h-44 overflow-y-auto p-1">
 				{#if paletteColorCount === 0}
 					<p
 						class="rounded-md border border-dashed px-2 py-3 text-center text-[10px] text-muted-foreground"
