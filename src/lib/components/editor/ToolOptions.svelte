@@ -173,7 +173,7 @@
 					</div>
 					<Slider type="single" min={1} max={100} step={1} bind:value={editor.blurPower} />
 					<p class="text-[10px] leading-snug text-muted-foreground">
-						Each click applies one pass. Click again to soften the area further.
+						Pass over an area repeatedly to soften it further.
 					</p>
 				</div>
 			{:else if editor.tool === "jumble"}

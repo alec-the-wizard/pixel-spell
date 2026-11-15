@@ -894,8 +894,8 @@ function lerp(from: number, to: number, amount: number): number {
 
 /**
  * Blurs every pixel inside a disk using a 3×3 Gaussian kernel. `power` (0–100)
- * controls how much of the blurred result replaces each pixel. The UI applies a
- * single pass per pointer hold, so soften further with separate clicks.
+ * controls how much of the blurred result replaces each pixel, so repeated
+ * passes over the same spot soften it further.
  */
 export function blurPixels(
 	cel: Uint32Array,

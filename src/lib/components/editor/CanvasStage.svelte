@@ -1991,11 +1991,7 @@
 		} else if (editor.tool === "spray") {
 			// The spray timer paints while the pointer is held still.
 			last = point;
-		} else if (editor.tool === "blur") {
-			// Blur applies exactly one pass per pointer hold; dragging over the
-			// same stroke must not stack additional passes.
-			last = point;
-		} else if (editor.tool === "jumble") {
+		} else if (editor.tool === "blur" || editor.tool === "jumble") {
 			if (!last || last.x !== point.x || last.y !== point.y) {
 				last = point;
 				changed = applyAreaTool(cel, point);
