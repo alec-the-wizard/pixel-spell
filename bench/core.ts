@@ -39,6 +39,8 @@ import {
 } from "../src/lib/editor/palette.js";
 import {
 	buildPaletteCycleMap,
+	paletteCycleColors,
+	paletteCyclePeriod,
 	paletteShiftForStep,
 	remapPalettePixels,
 } from "../src/lib/editor/palette-cycle.js";
@@ -469,6 +471,23 @@ function assertPaletteCycling(): void {
 	);
 	if (pingPong.join() !== [0, 1, 2, 3, 2, 1, 0].join()) {
 		throw new Error("palette ping-pong cycling changed");
+	}
+	if (paletteCyclePeriod(4, "forward") !== 4) {
+		throw new Error("palette cycle period changed");
+	}
+	if (paletteCyclePeriod(4, "ping-pong") !== 6) {
+		throw new Error("palette ping-pong period changed");
+	}
+	if (paletteCyclePeriod(1, "forward") !== 0) {
+		throw new Error("palette cycle period accepted a single color");
+	}
+	const rotated = paletteCycleColors(
+		["#000000", "#ff0000", "#00ff00", "#0000ff"],
+		{ start: 1, end: 3 },
+		1,
+	);
+	if (rotated.join() !== ["#00ff00", "#0000ff", "#ff0000"].join()) {
+		throw new Error("palette cycle display order changed");
 	}
 
 	const colors = ["#000000", "#ff0000", "#00ff00", "#0000ff"];

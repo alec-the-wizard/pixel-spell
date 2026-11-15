@@ -51,7 +51,9 @@ import {
 import {
 	DEFAULT_PALETTE_CYCLE_MS,
 	buildPaletteCycleMap,
+	paletteCyclePeriod,
 	paletteShiftForStep,
+	remapPalettePixels,
 	type PaletteCycleDirection,
 	type PaletteCycleRange,
 } from "./palette-cycle.js";
@@ -184,15 +186,16 @@ export class EditorState {
 	activePaletteId = $state<string>(DEFAULT_PALETTE_ID);
 	/** Restricts color picking to the active palette and blocks palette edits. */
 	paletteLocked = $state(false);
-	/** Selected swatch indices; ramps and cycling use their min–max span. */
-	paletteSelection = $state<number[]>([]);
 	paletteRampOpen = $state(false);
-	paletteCyclePlaying = $state(false);
+	paletteCyclesOpen = $state(false);
+	/**
+	 * Inclusive palette range used by the Color Cycles dialog. Cycling is a
+	 * workspace preference and is intentionally not stored in project files.
+	 */
+	paletteCycleStart = $state(0);
+	paletteCycleEnd = $state(3);
 	paletteCycleMs = $state(DEFAULT_PALETTE_CYCLE_MS);
 	paletteCycleDirection = $state<PaletteCycleDirection>("forward");
-	paletteCycleStep = $state(0);
-	/** Redraw signal for the cycling preview; never invalidates the composite. */
-	paletteCycleRevision = $state(0);
 
 	brushSize = $state(1);
 	sprayRadius = $state(6);
@@ -292,8 +295,6 @@ export class EditorState {
 	#clipboard: SelectionClipboard | null = null;
 	#frameClipboard: FrameClipboard | null = null;
 	#frameAnchorId: string | null = this.doc.frames[0]!.id;
-	#paletteAnchor: number | null = null;
-	#cycleTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor() {
 		const id = uid("project");
@@ -372,52 +373,29 @@ export class EditorState {
 	}
 
 	/**
-	 * The contiguous span covered by the swatch selection. Ctrl/shift clicks
-	 * always build a span, so this is also the range used by color cycling.
+	 * The inclusive palette range used by the Color Cycles dialog. Single-swatch
+	 * or out-of-date values are widened to the nearest valid two-color span so
+	 * the dialog always has a usable range.
 	 */
-	get paletteSelectionRange(): {
-		start: number;
-		end: number;
-		count: number;
-	} | null {
-		const total = this.activePalette.colors.length;
-		if (total === 0 || this.paletteSelection.length === 0) return null;
-		const indices = this.paletteSelection.filter(
-			(index) => index >= 0 && index < total,
-		);
-		if (indices.length === 0) return null;
-		const start = Math.min(...indices);
-		const end = Math.max(...indices);
-		return { start, end, count: end - start + 1 };
-	}
-
-	/** Cycling needs at least two adjacent palette entries. */
 	get paletteCycleRange(): PaletteCycleRange | null {
-		const range = this.paletteSelectionRange;
-		if (!range || range.count < 2) return null;
-		return { start: range.start, end: range.end };
-	}
+		const total = this.activePalette.colors.length;
+		if (total < 2) return null;
 
-	get paletteCycleShift(): number {
-		const range = this.paletteCycleRange;
-		if (!range) return 0;
-		return paletteShiftForStep(
-			this.paletteCycleStep,
-			range.end - range.start + 1,
-			this.paletteCycleDirection,
+		let start = clamp(
+			Math.min(this.paletteCycleStart, this.paletteCycleEnd),
+			0,
+			total - 1,
 		);
-	}
-
-	/** Preview-only color mapping for the current cycling tick. */
-	get paletteCycleRemap(): Map<number, number> | null {
-		if (!this.paletteCyclePlaying) return null;
-		const range = this.paletteCycleRange;
-		if (!range) return null;
-		return buildPaletteCycleMap(
-			this.activePalette.colors,
-			range,
-			this.paletteCycleShift,
+		let end = clamp(
+			Math.max(this.paletteCycleStart, this.paletteCycleEnd),
+			0,
+			total - 1,
 		);
+		if (start === end) {
+			if (end < total - 1) end++;
+			else start--;
+		}
+		return { start, end };
 	}
 
 	get canUndo(): boolean {
@@ -1013,95 +991,153 @@ export class EditorState {
 		if (nearest && nearest !== current) this.setColor(slot, nearest);
 	}
 
-	#resetPaletteSelection(): void {
-		this.paletteSelection = [];
-		this.#paletteAnchor = null;
-		this.stopPaletteCycle();
-	}
-
-	/**
-	 * Selects a swatch for ramp and cycling ranges. Plain clicks start a new
-	 * single-swatch range; shift/ctrl/cmd clicks extend from the anchor.
-	 */
-	selectPaletteIndex(index: number, extend = false): void {
+	/** Normalizes and stores the palette range used by the Color Cycles dialog. */
+	setPaletteCycleRange(start: number, end: number): void {
 		const total = this.activePalette.colors.length;
-		if (index < 0 || index >= total) return;
-
-		if (extend && this.#paletteAnchor !== null && this.#paletteAnchor < total) {
-			const start = Math.min(this.#paletteAnchor, index);
-			const end = Math.max(this.#paletteAnchor, index);
-			this.paletteSelection = Array.from(
-				{ length: end - start + 1 },
-				(_, offset) => start + offset,
-			);
-		} else {
-			this.#paletteAnchor = index;
-			this.paletteSelection = [index];
+		if (total < 2) return;
+		if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+		let lo = clamp(Math.round(start), 0, total - 1);
+		let hi = clamp(Math.round(end), 0, total - 1);
+		if (lo > hi) [lo, hi] = [hi, lo];
+		if (lo === hi) {
+			if (hi < total - 1) hi++;
+			else lo--;
 		}
-		this.stopPaletteCycle();
-	}
-
-	clearPaletteSelection(): void {
-		this.#resetPaletteSelection();
-	}
-
-	#clearPaletteCycleTimer(): void {
-		if (this.#cycleTimer === null) return;
-		clearTimeout(this.#cycleTimer);
-		this.#cycleTimer = null;
-	}
-
-	#schedulePaletteCycle(): void {
-		this.#clearPaletteCycleTimer();
-		if (!this.paletteCyclePlaying) return;
-		this.#cycleTimer = setTimeout(() => {
-			this.#cycleTimer = null;
-			if (!this.paletteCyclePlaying) return;
-			this.paletteCycleStep++;
-			this.paletteCycleRevision++;
-			this.#schedulePaletteCycle();
-		}, this.paletteCycleMs);
-	}
-
-	startPaletteCycle(): void {
-		if (!this.paletteCycleRange) return;
-		this.#clearPaletteCycleTimer();
-		this.paletteCycleStep = 0;
-		this.paletteCyclePlaying = true;
-		this.paletteCycleRevision++;
-		this.#schedulePaletteCycle();
-	}
-
-	stopPaletteCycle(): void {
-		if (!this.paletteCyclePlaying) {
-			this.#clearPaletteCycleTimer();
-			return;
-		}
-		this.paletteCyclePlaying = false;
-		this.paletteCycleStep = 0;
-		this.#clearPaletteCycleTimer();
-		this.paletteCycleRevision++;
-	}
-
-	togglePaletteCycle(): void {
-		if (this.paletteCyclePlaying) this.stopPaletteCycle();
-		else this.startPaletteCycle();
+		this.paletteCycleStart = lo;
+		this.paletteCycleEnd = hi;
 	}
 
 	setPaletteCycleMs(value: number): void {
 		if (!Number.isFinite(value)) return;
-		const next = Math.max(40, Math.min(2000, Math.round(value)));
-		if (this.paletteCycleMs === next) return;
-		this.paletteCycleMs = next;
-		if (this.paletteCyclePlaying) this.#schedulePaletteCycle();
+		this.paletteCycleMs = clamp(Math.round(value), 40, 2000);
 	}
 
 	setPaletteCycleDirection(direction: PaletteCycleDirection): void {
-		if (this.paletteCycleDirection === direction) return;
 		this.paletteCycleDirection = direction;
-		this.paletteCycleStep = 0;
-		this.paletteCycleRevision++;
-		if (this.paletteCyclePlaying) this.#schedulePaletteCycle();
+	}
+
+	/**
+	 * Writes one cycle phase into the visible normal layers of the active frame.
+	 * Reference layers are left untouched. Returns the frame count.
+	 */
+	bakePaletteCycle(
+		shift: number,
+		frames: readonly number[] = [this.activeFrame],
+	): number {
+		const range = this.paletteCycleRange;
+		if (!range) return 0;
+		const length = range.end - range.start + 1;
+		const resolved = ((Math.round(shift) % length) + length) % length;
+		const map = buildPaletteCycleMap(
+			this.activePalette.colors,
+			range,
+			resolved,
+		);
+		if (!map) return 0;
+
+		const targets = frames.filter(
+			(index) => index >= 0 && index < this.doc.frames.length,
+		);
+		const layers = this.doc.layers.filter(
+			(layer) => layer.role !== "reference" && layer.visible,
+		);
+		if (targets.length === 0 || layers.length === 0) return 0;
+
+		const patches: { layerId: string; frame: number }[] = [];
+		for (const frame of targets) {
+			for (const layer of layers) patches.push({ layerId: layer.id, frame });
+		}
+		this.pushHistoryCels(patches);
+
+		for (const frame of targets) {
+			for (const layer of layers) {
+				const cel = layer.cels[frame];
+				if (cel) layer.cels[frame] = remapPalettePixels(cel, map);
+			}
+		}
+		this.revision++;
+		return targets.length;
+	}
+
+	/**
+	 * Inserts one full palette-cycle pass as new frames after the active frame.
+	 * Every frame gets its own rotated copy of the active frame's cels, plus the
+	 * requested duration and tag, so PNG, spritesheet, and GIF export animate
+	 * without needing to store cycling metadata. Returns the inserted count.
+	 */
+	generatePaletteCycleAnimation(options: {
+		steps: number;
+		durationMs?: number;
+		tag?: string;
+		/** Restrict the document loop range to the generated frames. */
+		loop?: boolean;
+	}): number {
+		const range = this.paletteCycleRange;
+		if (!range) return 0;
+		const colors = this.activePalette.colors;
+		const length = range.end - range.start + 1;
+		const period = paletteCyclePeriod(length, this.paletteCycleDirection);
+		if (period < 2) return 0;
+
+		const count = clamp(Math.round(options.steps), 2, period);
+		if (this.doc.frames.length + count > MAX_PROJECT_FRAMES) return 0;
+
+		const sourceIndex = this.activeFrame;
+		const insertAt = sourceIndex + 1;
+		const duration = clamp(
+			Math.round(options.durationMs ?? this.paletteCycleMs),
+			MIN_FRAME_DURATION,
+			MAX_FRAME_DURATION,
+		);
+		const tag = options.tag?.trim().slice(0, 40) || undefined;
+		const width = this.doc.width;
+		const height = this.doc.height;
+
+		this.pushHistory();
+		this.#shiftLoopForInsert(insertAt, count);
+
+		const inserted: Frame[] = [];
+		for (let step = 0; step < count; step++) {
+			const frame: Frame = {
+				id: uid("frame"),
+				duration,
+				...(tag ? { tag } : {}),
+			};
+			inserted.push(frame);
+			const target = insertAt + step;
+			const shift = paletteShiftForStep(
+				step,
+				length,
+				this.paletteCycleDirection,
+			);
+			const map = buildPaletteCycleMap(colors, range, shift);
+
+			this.doc.frames.splice(target, 0, frame);
+			for (const layer of this.doc.layers) {
+				const source = layer.cels[sourceIndex];
+				let pixels: Uint32Array;
+				if (!source) {
+					pixels = new Uint32Array(width * height);
+				} else if (layer.role === "reference" || !map) {
+					pixels = new Uint32Array(source);
+				} else {
+					pixels = remapPalettePixels(source, map);
+				}
+				layer.cels.splice(target, 0, pixels);
+			}
+		}
+
+		if (options.loop) {
+			this.doc.loopStart = insertAt;
+			this.doc.loopEnd = insertAt + count - 1;
+		}
+
+		this.activeFrame = insertAt;
+		this.frameSelection = inserted.map((frame) => frame.id);
+		this.#frameAnchorId = inserted[0]!.id;
+		this.structureRevision++;
+		this.revision++;
+		return count;
 	}
 
 	/**
@@ -1131,7 +1167,6 @@ export class EditorState {
 		}
 		if (lockAfter) this.paletteLocked = true;
 		if (added > 0 || lockAfter) this.#persistPalettes();
-		this.#resetPaletteSelection();
 		return added;
 	}
 
@@ -1146,7 +1181,6 @@ export class EditorState {
 		if (!this.palettes.some((palette) => palette.id === id)) return;
 		if (this.activePaletteId === id) return;
 		this.activePaletteId = id;
-		this.#resetPaletteSelection();
 		this.#persistPalettes();
 	}
 
@@ -1160,7 +1194,6 @@ export class EditorState {
 		};
 		this.palettes.push(palette);
 		this.activePaletteId = palette.id;
-		this.#resetPaletteSelection();
 		this.#persistPalettes();
 		return palette.id;
 	}
@@ -1174,7 +1207,6 @@ export class EditorState {
 		this.palettes.splice(index, 1);
 		if (this.activePaletteId === id) {
 			this.activePaletteId = DEFAULT_PALETTE_ID;
-			this.#resetPaletteSelection();
 		}
 		this.#persistPalettes();
 	}
@@ -1192,7 +1224,6 @@ export class EditorState {
 		const palette = this.activePalette;
 		if (!this.paletteEditable) return;
 
-		this.stopPaletteCycle();
 		const color = slot === "secondary" ? this.secondaryColor : this.primaryColor;
 		if (palette.colors.includes(color)) return;
 		if (palette.colors.length >= MAX_PALETTE_COLORS) return;
@@ -1225,7 +1256,6 @@ export class EditorState {
 	}
 
 	#removePaletteColorAt(palette: Palette, index: number): void {
-		this.stopPaletteCycle();
 		const [removed] = palette.colors.splice(index, 1);
 		if (removed === undefined) return;
 
@@ -1245,7 +1275,6 @@ export class EditorState {
 		const palette = this.palettes.find((item) => item.id === id);
 		if (!palette || palette.builtin || this.paletteLocked) return;
 
-		this.#resetPaletteSelection();
 		const original = palette.originalColors ?? palette.colors;
 		palette.originalColors = [...original];
 		palette.colors = sortPaletteColors(original, mode);
@@ -1258,7 +1287,6 @@ export class EditorState {
 		const palette = this.palettes.find((item) => item.id === id);
 		if (!palette || palette.builtin || this.paletteLocked) return;
 
-		this.#resetPaletteSelection();
 		const colors = [...new Set(palette.colors)];
 		const originalColors = [
 			...new Set(palette.originalColors ?? palette.colors),
@@ -1307,7 +1335,6 @@ export class EditorState {
 		};
 		this.palettes.push(palette);
 		this.activePaletteId = palette.id;
-		this.#resetPaletteSelection();
 		this.#persistPalettes();
 		return palette.id;
 	}
@@ -1668,7 +1695,6 @@ export class EditorState {
 		const snapshot = this.#states.get(id);
 		if (!tab || !snapshot) return;
 
-		this.stopPaletteCycle();
 		this.activeProjectId = id;
 		this.doc = snapshot.doc;
 		this.activeLayerId = snapshot.activeLayerId;
@@ -3219,9 +3245,3 @@ export class EditorState {
 }
 
 export const editor = new EditorState();
-
-if (import.meta.hot) {
-	// A dev reload replaces the singleton; stop the old preview timer so it
-	// cannot keep ticking against a discarded state object.
-	import.meta.hot.dispose(() => editor.stopPaletteCycle());
-}

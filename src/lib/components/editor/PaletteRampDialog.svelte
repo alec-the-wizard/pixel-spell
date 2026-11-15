@@ -67,14 +67,8 @@
 
 	$effect(() => {
 		if (open && !wasOpen) {
-			const range = editor.paletteSelectionRange;
-			if (range && range.count === 2) {
-				startColor = palette.colors[range.start] ?? editor.primaryColor;
-				endColor = palette.colors[range.end] ?? editor.secondaryColor;
-			} else {
-				startColor = editor.primaryColor;
-				endColor = editor.secondaryColor;
-			}
+			startColor = editor.primaryColor;
+			endColor = editor.secondaryColor;
 			stepsText = "6";
 			space = "rgb";
 			lockAfter = false;

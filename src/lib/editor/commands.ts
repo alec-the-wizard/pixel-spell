@@ -420,14 +420,11 @@ const ACTION_COMMANDS: CommandDef[] = [
 		run: () => editor.togglePaletteLock(),
 	},
 	{
-		id: "palette.toggle-cycling",
-		label: "Preview color cycling",
+		id: "palette.color-cycles",
+		label: "Color cycles…",
 		group: "Palette",
-		keywords: "animate rotate palette range",
-		ignoreRepeat: true,
-		enabled: () =>
-			editor.paletteCyclePlaying || editor.paletteCycleRange !== null,
-		run: () => editor.togglePaletteCycle(),
+		keywords: "animate rotate palette range bake frames gif",
+		run: () => (editor.paletteCyclesOpen = true),
 	},
 	{
 		id: "app.command-palette",

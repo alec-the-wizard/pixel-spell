@@ -2,7 +2,6 @@
 	import Grid3x3 from "@lucide/svelte/icons/grid-3x3";
 	import Maximize2 from "@lucide/svelte/icons/maximize-2";
 	import Minus from "@lucide/svelte/icons/minus";
-	import Pause from "@lucide/svelte/icons/pause";
 	import Plus from "@lucide/svelte/icons/plus";
 	import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
 	import RotateCw from "@lucide/svelte/icons/rotate-cw";
@@ -33,7 +32,6 @@
 		unionSelectionMasks,
 	} from "$lib/editor/selection.js";
 	import { drawPixels, drawScaled } from "$lib/editor/render.js";
-	import { remapPalettePixels } from "$lib/editor/palette-cycle.js";
 	import { editor, type FloatingSelection } from "$lib/editor/editor.svelte.js";
 	import { isSelectionTool } from "$lib/editor/tools.js";
 	import type {
@@ -45,7 +43,6 @@
 	} from "$lib/editor/types.js";
 	import { cn } from "$lib/utils.js";
 	import Preview from "./Preview.svelte";
-	import CanvasMessagePill from "./CanvasMessagePill.svelte";
 	import ReferenceBoardImage from "./ReferenceBoardImage.svelte";
 	import ReferenceBoardPanel from "./ReferenceBoardPanel.svelte";
 
@@ -77,8 +74,6 @@
 	let mirrorCanvas: HTMLCanvasElement | undefined;
 	let floatingCanvas: HTMLCanvasElement | null = null;
 	let mirrorCanvasHasContent = false;
-	/** Reused output buffer for the non-destructive color cycling preview. */
-	let cycleBuffer: Uint32Array | null = null;
 	/** Cached stage bounds; refreshed by the ResizeObserver. */
 	let stageRect = { left: 0, top: 0, width: 0, height: 0 };
 
@@ -266,23 +261,12 @@
 		const frame = editor.activeFrame;
 		const currentZoom = editor.effectiveZoom;
 		const revision = editor.revision;
-		// Color cycling is a display-only preview: it bumps its own revision
-		// without invalidating the composite cache.
-		editor.paletteCycleRevision;
-		editor.paletteCyclePlaying;
 
 		if (!canvas) return;
 		// Coalesce rapid pointer moves into one draw per animation frame.
 		const id = requestAnimationFrame(() => {
 			if (!canvas) return;
-			let pixels = compositeFrameCached(doc, frame, revision, true);
-			const cycleMap = editor.paletteCycleRemap;
-			if (cycleMap) {
-				if (!cycleBuffer || cycleBuffer.length < pixels.length) {
-					cycleBuffer = new Uint32Array(pixels.length);
-				}
-				pixels = remapPalettePixels(pixels, cycleMap, cycleBuffer);
-			}
+			const pixels = compositeFrameCached(doc, frame, revision, true);
 			drawScaled(
 				canvas,
 				pixels,
@@ -2306,28 +2290,6 @@
 
 	<Preview />
 	<ReferenceBoardPanel />
-
-	{#if editor.paletteCyclePlaying && editor.paletteCycleRange}
-		<div class="absolute bottom-3 left-1/2 z-10 -translate-x-1/2">
-			<CanvasMessagePill
-				label={`Cycling ${editor.paletteCycleRange.start + 1}–${editor.paletteCycleRange.end + 1}`}
-			>
-				<span class="text-[10px] tabular-nums text-muted-foreground">
-					{editor.paletteCycleMs} ms
-				</span>
-				<Button
-					variant="ghost"
-					size="icon-xs"
-					class="rounded-full text-muted-foreground"
-					onclick={() => editor.stopPaletteCycle()}
-					title="Stop color cycling preview"
-					aria-label="Stop color cycling preview"
-				>
-					<Pause class="size-3" />
-				</Button>
-			</CanvasMessagePill>
-		</div>
-	{/if}
 
 	<div
 		class="absolute bottom-3 left-3 flex items-center gap-0.5 rounded-full border bg-background/90 p-1 shadow-sm backdrop-blur"

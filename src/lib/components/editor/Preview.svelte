@@ -3,32 +3,20 @@
 	import X from "@lucide/svelte/icons/x";
 	import { compositeFrameCached } from "$lib/editor/doc.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
-	import { remapPalettePixels } from "$lib/editor/palette-cycle.js";
 	import { drawScaled } from "$lib/editor/render.js";
 
 	let canvas = $state<HTMLCanvasElement>();
-	/** Reused output buffer for the color cycling preview at 1x. */
-	let cycleBuffer: Uint32Array | null = null;
 
 	$effect(() => {
 		if (!editor.showPreview) return;
 		const doc = editor.doc;
 		const frame = editor.activeFrame;
 		const revision = editor.revision;
-		editor.paletteCycleRevision;
-		editor.paletteCyclePlaying;
 
 		if (!canvas) return;
 		const id = requestAnimationFrame(() => {
 			if (!canvas || !editor.showPreview) return;
-			let pixels = compositeFrameCached(doc, frame, revision);
-			const cycleMap = editor.paletteCycleRemap;
-			if (cycleMap) {
-				if (!cycleBuffer || cycleBuffer.length < pixels.length) {
-					cycleBuffer = new Uint32Array(pixels.length);
-				}
-				pixels = remapPalettePixels(pixels, cycleMap, cycleBuffer);
-			}
+			const pixels = compositeFrameCached(doc, frame, revision);
 			drawScaled(canvas, pixels, doc.width, doc.height, doc.width, doc.height);
 		});
 		return () => cancelAnimationFrame(id);
