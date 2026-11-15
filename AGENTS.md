@@ -56,18 +56,18 @@ Key files:
 | `lib/editor/tools.ts` | Tool metadata, labels, shortcuts |
 | `lib/editor/palette.ts` | Built-in palette, palette type, sorting helpers, nearest-color matching, and localStorage persistence |
 | `lib/editor/palette-ramp.ts` | RGB, HSV, and OKLab ramp generation between two colors |
-| `lib/editor/palette-cycle.ts` | Palette cycle ranges, direction offsets, color maps, and preview remapping |
+| `lib/editor/palette-cycle.ts` | Palette cycle ranges, direction offsets, display order, color maps, and pixel remapping |
 | `lib/editor/palette-library.ts` | Built-in palette library entries with optional author/legal metadata |
 | `lib/editor/canvas-presets.ts` | Canvas-size presets used by the New Project dialog |
-| `lib/components/editor/ColorPanel.svelte` | Color picker, primary/secondary slots, palette selector, range selection, lock, cycling strip, and palette tools menu |
+| `lib/components/editor/ColorPanel.svelte` | Color picker, primary/secondary slots, palette selector, lock, and palette tools menu |
 | `lib/components/editor/PaletteRampDialog.svelte` | Ramp endpoints, step count, blend space, preview, and append/lock options |
-| `lib/components/editor/CanvasMessagePill.svelte` | Reusable blue-accent status pill for canvas viewport modes |
+| `lib/components/editor/ColorCyclesDialog.svelte` | Palette cycle range, direction/speed, in-dialog preview, phase bake, and generated animation frames |
 | `lib/components/editor/PaletteLibraryDialog.svelte` | Searchable built-in palette library with previews and author/legal notes |
 | `lib/components/editor/TimelinePanel.svelte` | Timeline toolbar, tag ranges, frame×layer table, frame context menu, onion/loop controls, opacity footer |
 | `lib/components/editor/CommandPalette.svelte` | `Ctrl+K` searchable command runner |
 | `lib/components/editor/ShortcutsDialog.svelte` | Keybinding editor with capture, conflict detection, and restore defaults |
 | `lib/components/editor/Preview.svelte` | Closed scan-eye button and 1× floating frame preview |
-| `lib/components/editor/CanvasStage.svelte` | Canvas viewport, drawing pointer handling, reference-board placement, mirror/radial guides, cycling preview, zoom pill |
+| `lib/components/editor/CanvasStage.svelte` | Canvas viewport, drawing pointer handling, reference-board placement, mirror/radial guides, zoom pill |
 | `lib/components/editor/ReferenceBoardPanel.svelte` | Floating project-level reference board manager |
 | `lib/components/editor/ReferenceBoardImage.svelte` | Stage rendering for one board reference |
 | `lib/components/editor/ReferenceThumb.svelte` | Board reference thumbnail |
@@ -265,8 +265,10 @@ Preserve these regions and their relative placement when making changes.
 - Timeline height is a UI preference stored in `localStorage`, not part of project files.
 - Custom palettes are workspace preferences stored in `localStorage` under `pixel-spell-palettes`; the built-in palette always has id `default` and is never persisted or editable. Custom palettes are capped at 256 colors and new ones start empty. Each custom palette stores its original add/import order and last sort mode so the palette tools menu can restore **Original order** after sorting by hue, saturation, or lightness. The Palette Library dialog adds library entries through `importPalette`, which creates a normal editable palette; adding the same entry again creates an independent copy with a suffixed name.
 - `editor.paletteLocked` and the active palette id are persisted with the palette collection. `paletteEditable` means the active palette is custom and unlocked; use it for add/remove/rename/delete/sort/dedupe/ramp controls. Locking constrains color choice only: `snapColorToPalette` runs on picker release (SV pointer up, hue `change`, hex commit) and `setColorFromPacked` snaps eyedropper picks to the nearest palette entry using OKLab distance. Existing pixels are never rewritten.
-- `editor.paletteSelection` holds swatch indices. Plain clicks reset the range to one swatch; shift/Ctrl/Cmd-click extends from the last plain-click anchor. `paletteSelectionRange` returns the min–max span, and that span is the cycling range. `ColorPanel` displays 1-based positions in its status strip and the canvas pill. Switching palettes/projects, editing palette colors, or changing the selection stops cycling and clears the range where appropriate.
-- Color cycling is a preview-only display mode. `paletteCyclePlaying` drives a recursive `setTimeout` that advances `paletteCycleStep` and bumps `paletteCycleRevision`; it never increments `revision` or touches cels/history. `paletteCycleRemap` is built from exact palette RGB matches in the selected range and applied after `compositeFrameCached()` into a reusable buffer in `CanvasStage` and `Preview`. Keep it out of export, thumbnails, and onion skins. The swatch grid mirrors the same shift, and the bottom-center `CanvasMessagePill` is the reusable status surface for viewport modes.
+- `editor.paletteCycleStart`, `paletteCycleEnd`, `paletteCycleMs`, and `paletteCycleDirection` describe the workspace-level Color Cycles range and motion. They are intentionally **not** stored in project files, history, or autosaves; opening a project keeps the current workspace cycle settings. Swatch clicks only set colors and never select a range.
+- Color cycling lives entirely in `ColorCyclesDialog.svelte`, opened from the palette tools menu or the **Color cycles…** command. The dialog owns the preview phase and timer, renders its own composited frame preview with `buildPaletteCycleMap` + `remapPalettePixels`, and shows the rotated range strip. `CanvasStage`, `Preview`, thumbnails, onion skins, and export never apply a cycle remap.
+- `editor.bakePaletteCycle(shift)` writes one phase into the active frame's visible normal layers (reference layers are skipped) and is undoable via `pushHistoryCels`. `editor.generatePaletteCycleAnimation({ steps, durationMs, tag, loop })` inserts one full pass after the active frame, rotates each copy, then optionally sets the document loop range to the new frames. Generated frames are ordinary frames with `duration`/`tag`, so GIF and sprite-sheet export animate them without any fresh file-format fields.
+- `paletteCyclePeriod(length, direction)` is the number of steps in one pass (`2 × length - 2` for ping-pong). Clamp generated step counts and phase sliders to it.
 - Ramp generation is pure (`palette-ramp.ts`) and appends through `editor.addPaletteRamp(colors, lockAfter)`. Ramps always target the active palette, skip duplicates and the 256-color cap, reset `sortMode` to `original` so the ramp stays contiguous, and may set `paletteLocked` when done. The built-in palette remains read-only.
 - Layer visibility/opacity are document-wide. Per-frame visibility would require a model change and UI work.
 - Reference layers cannot be unlocked or drawn on. `selectLayer` allows selecting them for visibility/opacity/rename/reorder/delete, but `editor.activeLayerDrawable` returns false. `clearLayer` and `clearFrame` skip them. `addFrame` and `importImageFrame` copy the current reference-layer cel so a static reference persists.
@@ -287,6 +289,7 @@ Preserve these regions and their relative placement when making changes.
 - Frame tags render as ranges, durations override the project FPS, loop ranges drive playback, and GIF export honors both. Frame reordering, multi-frame selection, copy/paste, duplicate-with-offset, and the right-click menu all update every layer's cels in lockstep.
 - Scale Canvas resamples every cel nearest-neighbor, Resize Canvas crops/extends around the chosen anchor with transparent new pixels, Crop to Content trims all transparent borders across layers and frames, and Crop to Selection uses the selection bounds. Each operation is undoable and clears the selection.
 - Autosave recovery survives a reload: a dirty project is offered with a preview, Restore reopens it as an unsaved tab, and Discard removes the snapshot. Saving a project removes its autosave.
+- Color cycles open from the palette tools menu, preview only inside the dialog, bake one phase into the active frame, and generate a full loop of tagged frames with explicit durations that GIF/sprite-sheet export honors. Cycle settings are not written to project files.
 - Closing the last project creates a new `Untitled` project, and the only never-modified project's close button is disabled.
 - The timeline table keeps its sticky header row and layer column while scrolling, and the divider respects its min/max bounds.
 - New UI matches the existing modern shadcn aesthetic and respects the layout contract.

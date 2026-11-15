@@ -1,5 +1,6 @@
 <script lang="ts">
 	import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
+	import AppWindow from "@lucide/svelte/icons/app-window";
 	import Download from "@lucide/svelte/icons/download";
 	import Film from "@lucide/svelte/icons/film";
 	import ImageIcon from "@lucide/svelte/icons/image";
@@ -13,34 +14,41 @@
 	import { Switch } from "$lib/components/ui/switch/index.js";
 	import { compositeFrameCached, frameDurationMs } from "$lib/editor/doc.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
+	import { exportIcon } from "$lib/editor/export-icon.js";
+	import { exportVideo } from "$lib/editor/export-video.js";
 	import {
 		EXPORT_FORMATS,
 		EXPORT_TAB_LABELS,
 		FORMAT_EXTENSION,
+		ICON_FORMATS,
 		SHEET_METADATA_FORMATS,
+		VIDEO_FORMATS,
 		animationFrameIndices,
 		downloadBlob,
 		exportBaseName,
 		exportFileName,
 		exportFrameImage,
-		exportGif,
 		exportSpriteSheet,
 		flattenPixels,
 		getSheetGeometry,
+		iconFormatInfo,
 		sheetMetadata,
 		validateExportSize,
+		videoFormatInfo,
 		type ExportBackground,
 		type ExportFormat,
 		type ExportTabId,
+		type IconFormat,
 		type SheetLayout,
 		type SheetMetadataChoice,
+		type VideoFormat,
 	} from "$lib/editor/export.js";
 	import { drawPixels, drawScaled } from "$lib/editor/render.js";
 	import { cn } from "$lib/utils.js";
 
 	let { open = $bindable(false) } = $props();
 
-	const TABS: ExportTabId[] = ["image", "spritesheet", "gif"];
+	const TABS: ExportTabId[] = ["image", "spritesheet", "video", "icon"];
 	const BACKGROUNDS: { id: ExportBackground; label: string; swatch: string }[] = [
 		{ id: "transparent", label: "Transparent", swatch: "checkerboard" },
 		{ id: "white", label: "White", swatch: "bg-white" },
@@ -80,12 +88,19 @@
 	let sheetPivotX = $state(50);
 	let sheetPivotY = $state(50);
 
-	let gifScale = $state(1);
-	let gifFps = $state(12);
-	let gifLoop = $state(true);
-	let gifUseLoopRange = $state(true);
-	let gifBackground = $state<ExportBackground>("transparent");
-	let gifFileName = $state("");
+	let videoFormat = $state<VideoFormat>("gif");
+	let videoScale = $state(1);
+	let videoFps = $state(12);
+	let videoLoop = $state(true);
+	let videoUseLoopRange = $state(true);
+	let videoBackground = $state<ExportBackground>("transparent");
+	let videoQuality = $state(90);
+	let videoFileName = $state("");
+
+	let iconFormat = $state<IconFormat>("ico");
+	let iconFrame = $state(0);
+	let iconBackground = $state<ExportBackground>("transparent");
+	let iconFileName = $state("");
 
 	let imageWidth = $derived(editor.doc.width * imageScale);
 	let imageHeight = $derived(editor.doc.height * imageScale);
@@ -105,14 +120,17 @@
 		validateExportSize(sheetGeometry.width, sheetGeometry.height),
 	);
 
-	let gifWidth = $derived(editor.doc.width * gifScale);
-	let gifHeight = $derived(editor.doc.height * gifScale);
-	let gifFrames = $derived(
-		animationFrameIndices(editor.doc, gifUseLoopRange),
+	let videoInfo = $derived(videoFormatInfo(videoFormat));
+	let iconInfo = $derived(iconFormatInfo(iconFormat));
+
+	let videoWidth = $derived(editor.doc.width * videoScale);
+	let videoHeight = $derived(editor.doc.height * videoScale);
+	let videoFrames = $derived(
+		animationFrameIndices(editor.doc, videoUseLoopRange),
 	);
-	let gifFrameCount = $derived(gifFrames.length);
-	let gifSizeError = $derived(
-		validateExportSize(gifWidth, gifHeight, gifFrameCount, true),
+	let videoFrameCount = $derived(videoFrames.length);
+	let videoSizeError = $derived(
+		validateExportSize(videoWidth, videoHeight, videoFrameCount, true),
 	);
 
 	let sizeError = $derived(
@@ -120,7 +138,9 @@
 			? imageSizeError
 			: activeTab === "spritesheet"
 				? sheetSizeError
-				: gifSizeError,
+				: activeTab === "video"
+					? videoSizeError
+					: null,
 	);
 
 	let outputLabel = $derived.by(() => {
@@ -128,7 +148,10 @@
 		if (activeTab === "spritesheet") {
 			return `${sheetGeometry.width} × ${sheetGeometry.height} px · ${sheetGeometry.columns} × ${sheetGeometry.rows}`;
 		}
-		return `${gifWidth} × ${gifHeight} px · ${gifFrameCount} ${gifFrameCount === 1 ? "frame" : "frames"}`;
+		if (activeTab === "video") {
+			return `${videoWidth} × ${videoHeight} px · ${videoFrameCount} ${videoFrameCount === 1 ? "frame" : "frames"}`;
+		}
+		return `${iconInfo.label} · multi-size`;
 	});
 
 	let formatLabel = $derived.by(() => {
@@ -145,12 +168,24 @@
 				)?.summary ?? "";
 			return `${format(sheetFormat)} · ${sheetBackground}${metadata ? ` · ${metadata}` : ""}`;
 		}
-		const range = editor.loopRange;
-		const rangeLabel =
-			gifUseLoopRange && editor.hasLoopRange
-				? ` · frames ${range.start + 1}–${range.end + 1}`
-				: "";
-		return `GIF · ${Math.round(gifFps)} fps fallback${gifLoop ? " · loop" : ""}${rangeLabel}`;
+		if (activeTab === "video") {
+			const range = editor.loopRange;
+			const rangeLabel =
+				videoUseLoopRange && editor.hasLoopRange
+					? ` · frames ${range.start + 1}–${range.end + 1}`
+					: "";
+			if (videoFormat === "gif") {
+				return `GIF · ${Math.round(videoFps)} fps fallback${videoLoop ? " · loop" : ""}${rangeLabel}`;
+			}
+			if (videoFormat === "apng") {
+				return `APNG${videoLoop ? " · loop" : ""}${rangeLabel}`;
+			}
+			if (videoFormat === "webp") {
+				return `Animated WebP · q${Math.round(videoQuality)}${videoLoop ? " · loop" : ""}${rangeLabel}`;
+			}
+			return `${videoInfo.label} · ${videoBackground}${rangeLabel}`;
+		}
+		return `${iconInfo.label} · ${iconBackground}`;
 	});
 
 	$effect(() => {
@@ -181,12 +216,19 @@
 			sheetPivotX = 50;
 			sheetPivotY = 50;
 
-			gifScale = 1;
-			gifFps = editor.doc.fps;
-			gifLoop = true;
-			gifUseLoopRange = editor.hasLoopRange;
-			gifBackground = "transparent";
-			gifFileName = `${exportBaseName(editor.name)}.gif`;
+			videoFormat = "gif";
+			videoScale = 1;
+			videoFps = editor.doc.fps;
+			videoLoop = true;
+			videoUseLoopRange = editor.hasLoopRange;
+			videoBackground = "transparent";
+			videoQuality = 90;
+			videoFileName = `${exportBaseName(editor.name)}.gif`;
+
+			iconFormat = "ico";
+			iconFrame = editor.activeFrame;
+			iconBackground = "transparent";
+			iconFileName = `${exportBaseName(editor.name)}.ico`;
 
 			error = null;
 			exporting = false;
@@ -322,7 +364,17 @@
 			return;
 		}
 
-		const frames = animationFrameIndices(doc, gifUseLoopRange);
+		if (tab === "icon") {
+			const frame = Math.max(0, Math.min(iconFrame, doc.frames.length - 1));
+			const pixels = flattenPixels(
+				compositeFrameCached(doc, frame, editor.revision),
+				iconBackground,
+			);
+			drawPixelPreview(canvas, pixels, doc.width, doc.height);
+			return;
+		}
+
+		const frames = animationFrameIndices(doc, videoUseLoopRange);
 		// Track loop and per-frame timing changes so the preview restarts.
 		editor.doc.loopStart;
 		editor.doc.loopEnd;
@@ -333,7 +385,7 @@
 			const frame = frames[position % frames.length]!;
 			const pixels = flattenPixels(
 				compositeFrameCached(doc, frame, editor.revision),
-				gifBackground,
+				videoBackground,
 			);
 			drawPixelPreview(canvas, pixels, doc.width, doc.height);
 			position = (position + 1) % frames.length;
@@ -341,9 +393,9 @@
 			if (frames.length <= 1) return;
 			const customDuration = doc.frames[frame]?.duration;
 			const duration =
-				customDuration !== undefined
+				customDuration !== undefined || !videoInfo.frameRate
 					? frameDurationMs(doc, frame)
-					: 1000 / Math.max(1, Math.min(60, Math.round(gifFps)));
+					: 1000 / Math.max(1, Math.min(60, Math.round(videoFps)));
 			previewTimer = window.setTimeout(draw, Math.max(10, duration));
 		};
 		draw();
@@ -384,6 +436,26 @@
 		}
 		if (next === "jpeg" && sheetBackground === "transparent") {
 			sheetBackground = "white";
+		}
+	}
+
+	function changeVideoFormat(event: Event): void {
+		const next = (event.currentTarget as HTMLSelectElement).value as VideoFormat;
+		videoFormat = next;
+		const info = videoFormatInfo(next);
+		if (videoFileName.trim()) {
+			videoFileName = exportFileName(videoFileName, info.extension);
+		}
+		if (!info.alpha && videoBackground === "transparent") {
+			videoBackground = "black";
+		}
+	}
+
+	function changeIconFormat(event: Event): void {
+		const next = (event.currentTarget as HTMLSelectElement).value as IconFormat;
+		iconFormat = next;
+		if (iconFileName.trim()) {
+			iconFileName = exportFileName(iconFileName, iconFormatInfo(next).extension);
 		}
 	}
 
@@ -451,15 +523,24 @@
 						150,
 					);
 				}
-			} else {
-				const blob = exportGif(doc, {
-					scale: gifScale,
-					fps: gifFps,
-					loop: gifLoop,
-					background: gifBackground,
-					loopRange: gifUseLoopRange,
+			} else if (activeTab === "video") {
+				const blob = await exportVideo(doc, {
+					format: videoFormat,
+					scale: videoScale,
+					fps: videoFps,
+					loop: videoLoop,
+					background: videoBackground,
+					loopRange: videoUseLoopRange,
+					quality: videoQuality,
 				});
-				downloadBlob(exportFileName(gifFileName, "gif"), blob);
+				downloadBlob(exportFileName(videoFileName, videoInfo.extension), blob);
+			} else {
+				const blob = await exportIcon(doc, {
+					format: iconFormat,
+					frame: iconFrame,
+					background: iconBackground,
+				});
+				downloadBlob(exportFileName(iconFileName, iconInfo.extension), blob);
 			}
 			open = false;
 		} catch (exportError) {
@@ -504,8 +585,9 @@
 		<Dialog.Header>
 			<Dialog.Title>Export file</Dialog.Title>
 			<Dialog.Description>
-				Export “{editor.name}” as a single image, a sprite sheet, or an animated GIF.
-				Sheets can include Aseprite, TexturePacker, or Godot JSON metadata.
+				Export “{editor.name}” as an image, a sprite sheet, an animation or video,
+				or an app icon. Sheets can include Aseprite, TexturePacker, or Godot JSON
+				metadata.
 			</Dialog.Description>
 		</Dialog.Header>
 
@@ -534,8 +616,10 @@
 						<ImageIcon class="size-3.5" />
 					{:else if tab === "spritesheet"}
 						<LayoutGrid class="size-3.5" />
-					{:else}
+					{:else if tab === "video"}
 						<Film class="size-3.5" />
+					{:else}
+						<AppWindow class="size-3.5" />
 					{/if}
 					{EXPORT_TAB_LABELS[tab]}
 				</button>
@@ -806,17 +890,31 @@
 					</div>
 				{/if}
 			</div>
-		{:else}
+		{:else if activeTab === "video"}
 			<div class="grid gap-4">
 				<div class="grid gap-1.5">
-					<Label for="export-gif-name">File name</Label>
+					<Label for="export-video-name">File name</Label>
 					<Input
-						id="export-gif-name"
-						bind:value={gifFileName}
+						id="export-video-name"
+						bind:value={videoFileName}
 						maxlength={120}
 						placeholder="project.gif"
 						autocomplete="off"
 					/>
+				</div>
+
+				<div class="grid gap-1.5">
+					<Label for="export-video-format">Format</Label>
+					<select
+						id="export-video-format"
+						class="h-8 w-full cursor-pointer rounded-md border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						value={videoFormat}
+						onchange={changeVideoFormat}
+					>
+						{#each VIDEO_FORMATS as option (option.id)}
+							<option value={option.id}>{option.label}</option>
+						{/each}
+					</select>
 				</div>
 
 				<div class="grid gap-2">
@@ -825,26 +923,52 @@
 						<span
 							class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground"
 						>
-							{gifScale}×
+							{videoScale}×
 						</span>
 					</div>
-					<Slider type="single" min={1} max={10} step={1} bind:value={gifScale} />
+					<Slider type="single" min={1} max={10} step={1} bind:value={videoScale} />
 				</div>
 
-				<div class="grid gap-2">
-					<div class="flex items-center justify-between">
-						<span class="text-xs font-medium">Fallback frame rate</span>
-						<span
-							class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground"
-						>
-							{Math.round(gifFps)} fps
-						</span>
+				{#if videoInfo.frameRate}
+					<div class="grid gap-2">
+						<div class="flex items-center justify-between">
+							<span class="text-xs font-medium">Frame rate</span>
+							<span
+								class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground"
+							>
+								{Math.round(videoFps)} fps
+							</span>
+						</div>
+						<Slider type="single" min={1} max={60} step={1} bind:value={videoFps} />
+						<p class="text-[10px] text-muted-foreground">
+							{#if videoFormat === "gif"}
+								Frames with a custom duration use it; all other frames use this rate.
+							{:else}
+								AVI plays at a fixed frame rate; per-frame durations are ignored.
+							{/if}
+						</p>
 					</div>
-					<Slider type="single" min={1} max={60} step={1} bind:value={gifFps} />
-					<p class="text-[10px] text-muted-foreground">
-						Frames with a custom duration use it; all other frames use this rate.
-					</p>
-				</div>
+				{/if}
+
+				{#if videoInfo.quality}
+					<div class="grid gap-2">
+						<div class="flex items-center justify-between">
+							<span class="text-xs font-medium">Quality</span>
+							<span
+								class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground"
+							>
+								{Math.round(videoQuality)}%
+							</span>
+						</div>
+						<Slider type="single" min={1} max={100} step={1} bind:value={videoQuality} />
+						{#if videoInfo.realtime}
+							<p class="text-[10px] text-muted-foreground">
+								{videoInfo.label} records in real time, so the animation plays at
+								normal speed while exporting.
+							</p>
+						{/if}
+					</div>
+				{/if}
 
 				{#if editor.hasLoopRange}
 					<label
@@ -857,34 +981,106 @@
 								only.
 							</span>
 						</span>
-						<Switch bind:checked={gifUseLoopRange} />
+						<Switch bind:checked={videoUseLoopRange} />
 					</label>
 				{/if}
 
-				<label
-					class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
-				>
-					<span class="grid gap-0.5">
-						<span class="text-xs font-medium">Loop animation</span>
-						<span class="text-[10px] text-muted-foreground">
-							Repeat forever when the GIF player allows it.
+				{#if videoInfo.loop}
+					<label
+						class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
+					>
+						<span class="grid gap-0.5">
+							<span class="text-xs font-medium">Loop animation</span>
+							<span class="text-[10px] text-muted-foreground">
+								Repeat forever when the player allows it.
+							</span>
 						</span>
-					</span>
-					<Switch bind:checked={gifLoop} />
-				</label>
+						<Switch bind:checked={videoLoop} />
+					</label>
+				{/if}
 
 				<div class="grid gap-2">
 					<span class="text-xs font-medium">Background</span>
 					{@render backgroundPicker(
-						gifBackground,
-						true,
-						(next) => (gifBackground = next),
+						videoBackground,
+						videoInfo.alpha,
+						(next) => (videoBackground = next),
 					)}
-					<p class="text-[10px] text-muted-foreground">
-						Transparent GIFs use a 50% alpha cutoff because GIF supports only binary
-						transparency.
-					</p>
+					{#if videoFormat === "gif"}
+						<p class="text-[10px] text-muted-foreground">
+							Transparent GIFs use a 50% alpha cutoff because GIF supports only binary
+							transparency.
+						</p>
+					{:else if !videoInfo.alpha}
+						<p class="text-[10px] text-muted-foreground">
+							{videoInfo.label} has no alpha channel, so transparency is flattened to
+							the chosen background.
+						</p>
+					{/if}
 				</div>
+			</div>
+		{:else}
+			<div class="grid gap-4">
+				<div class="grid gap-1.5">
+					<Label for="export-icon-name">File name</Label>
+					<Input
+						id="export-icon-name"
+						bind:value={iconFileName}
+						maxlength={120}
+						placeholder="favicon.ico"
+						autocomplete="off"
+					/>
+				</div>
+
+				<div class="grid gap-4 sm:grid-cols-2">
+					<div class="grid gap-1.5">
+						<Label for="export-icon-format">Format</Label>
+						<select
+							id="export-icon-format"
+							class="h-8 w-full cursor-pointer rounded-md border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							value={iconFormat}
+							onchange={changeIconFormat}
+						>
+							{#each ICON_FORMATS as option (option.id)}
+								<option value={option.id}>{option.label}</option>
+							{/each}
+						</select>
+					</div>
+
+					<div class="grid gap-1.5">
+						<Label for="export-icon-frame">Frame</Label>
+						<select
+							id="export-icon-frame"
+							class="h-8 w-full cursor-pointer rounded-md border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							value={iconFrame}
+							onchange={(event) =>
+								(iconFrame = Number((event.currentTarget as HTMLSelectElement).value))}
+						>
+							{#each editor.doc.frames as _frame, index (index)}
+								<option value={index}>Frame {index + 1}</option>
+							{/each}
+						</select>
+					</div>
+				</div>
+
+				<div class="grid gap-2">
+					<span class="text-xs font-medium">Background</span>
+					{@render backgroundPicker(
+						iconBackground,
+						true,
+						(next) => (iconBackground = next),
+					)}
+				</div>
+
+				<p class="text-[10px] text-muted-foreground">
+					{#if iconFormat === "ico"}
+						Embeds 16, 32, 48, 64, 128, and 256 px sizes as PNG-compressed entries.
+					{:else}
+						Embeds 16, 32, 64, 128, 256, 512, and 1024 px sizes as PNG entries for
+						macOS.
+					{/if}
+					The frame is centered and scaled to fit each square without distortion.
+				</p>
 			</div>
 		{/if}
 

@@ -18,6 +18,18 @@ export function paletteCycleLength(range: PaletteCycleRange): number {
 }
 
 /**
+ * Number of steps in one full cycle pass. Ping-pong travels forward and back
+ * without repeating the endpoints, so it takes twice as long as a linear pass.
+ */
+export function paletteCyclePeriod(
+	length: number,
+	direction: PaletteCycleDirection,
+): number {
+	if (length < 2) return 0;
+	return direction === "ping-pong" ? length * 2 - 2 : length;
+}
+
+/**
  * Converts a monotonically increasing tick into the palette color offset for
  * the selected direction. Ping-pong travels forward and back without
  * repeating the endpoints.
@@ -27,8 +39,8 @@ export function paletteShiftForStep(
 	length: number,
 	direction: PaletteCycleDirection,
 ): number {
-	if (length < 2) return 0;
-	const period = direction === "ping-pong" ? length * 2 - 2 : length;
+	const period = paletteCyclePeriod(length, direction);
+	if (period === 0) return 0;
 	const tick = ((step % period) + period) % period;
 
 	if (direction === "reverse") return (length - tick) % length;
@@ -36,6 +48,24 @@ export function paletteShiftForStep(
 		return tick < length ? tick : period - tick;
 	}
 	return tick;
+}
+
+/**
+ * Returns the colors of a cycle range in the order they display at `shift`.
+ * Used by the Color Cycles dialog preview strip.
+ */
+export function paletteCycleColors(
+	colors: string[],
+	range: PaletteCycleRange,
+	shift: number,
+): string[] {
+	const length = paletteCycleLength(range);
+	if (length < 2) return [];
+	const offset = ((Math.round(shift) % length) + length) % length;
+	return Array.from(
+		{ length },
+		(_, index) => colors[range.start + ((index + offset) % length)]!,
+	);
 }
 
 /**

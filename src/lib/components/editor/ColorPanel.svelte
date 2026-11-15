@@ -1,17 +1,14 @@
 <script lang="ts">
 	import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
-	import ArrowLeft from "@lucide/svelte/icons/arrow-left";
-	import ArrowRight from "@lucide/svelte/icons/arrow-right";
 	import Lock from "@lucide/svelte/icons/lock";
 	import LockOpen from "@lucide/svelte/icons/lock-open";
 	import Minus from "@lucide/svelte/icons/minus";
 	import PaletteIcon from "@lucide/svelte/icons/palette";
-	import Pause from "@lucide/svelte/icons/pause";
 	import Pencil from "@lucide/svelte/icons/pencil";
-	import Play from "@lucide/svelte/icons/play";
 	import Plus from "@lucide/svelte/icons/plus";
 	import Settings2 from "@lucide/svelte/icons/settings-2";
 	import Trash2 from "@lucide/svelte/icons/trash-2";
+	import ColorCyclesDialog from "$lib/components/editor/ColorCyclesDialog.svelte";
 	import PaletteLibraryDialog from "$lib/components/editor/PaletteLibraryDialog.svelte";
 	import PaletteRampDialog from "$lib/components/editor/PaletteRampDialog.svelte";
 	import {
@@ -34,10 +31,6 @@
 		MAX_PALETTE_COLORS,
 		type PaletteSortMode,
 	} from "$lib/editor/palette.js";
-	import {
-		PALETTE_CYCLE_SPEEDS,
-		type PaletteCycleDirection,
-	} from "$lib/editor/palette-cycle.js";
 	import type { ColorSlot } from "$lib/editor/types.js";
 	import { cn } from "$lib/utils.js";
 
@@ -179,15 +172,7 @@
 		event.preventDefault();
 	}
 
-	function choosePaletteColor(
-		color: string,
-		target: ColorSlot,
-		extend = false,
-		select = true,
-	): void {
-		const index = activePalette.colors.indexOf(color);
-		if (select && index >= 0) editor.selectPaletteIndex(index, extend);
-		if (extend) return;
+	function choosePaletteColor(color: string, target: ColorSlot): void {
 		editor.setColor(target, color);
 		editor.setColorAlpha(target, 255);
 		editor.activeColorSlot = target;
@@ -234,16 +219,6 @@
 	let canSortPalette = $derived(paletteEditable && paletteColorCount > 1);
 	let canDedupePalette = $derived(paletteEditable && hasPaletteDuplicates);
 
-	let selectionRange = $derived(editor.paletteSelectionRange);
-	let selectionLabel = $derived.by(() => {
-		const range = selectionRange;
-		if (!range) return "Shift-click for a range";
-		if (range.start === range.end) return `Color ${range.start + 1} selected`;
-		return `${range.start + 1}–${range.end + 1} · ${range.count} colors`;
-	});
-	let canCycle = $derived(
-		editor.paletteCyclePlaying || editor.paletteCycleRange !== null,
-	);
 	let canGenerateRamp = $derived(
 		paletteEditable && paletteColorCount < MAX_PALETTE_COLORS,
 	);
@@ -265,41 +240,6 @@
 					? "Generate ramp… (palette full)"
 					: "Generate ramp…",
 	);
-	let cycleDirectionTitle = $derived(
-		editor.paletteCycleDirection === "forward"
-			? "Direction: forward"
-			: editor.paletteCycleDirection === "reverse"
-				? "Direction: reverse"
-				: "Direction: ping-pong",
-	);
-
-	function cycleDirectionNext(): void {
-		const order: PaletteCycleDirection[] = [
-			"forward",
-			"reverse",
-			"ping-pong",
-		];
-		const index = order.indexOf(editor.paletteCycleDirection);
-		editor.setPaletteCycleDirection(order[(index + 1) % order.length]!);
-	}
-
-	function isPaletteIndexSelected(index: number): boolean {
-		const range = selectionRange;
-		return !!range && index >= range.start && index <= range.end;
-	}
-
-	/** Swatches follow the preview so the palette mirrors the canvas. */
-	function paletteSwatchColor(index: number): string {
-		const range = editor.paletteCycleRange;
-		if (!range || !editor.paletteCyclePlaying) {
-			return activePalette.colors[index]!;
-		}
-		const length = range.end - range.start + 1;
-		const shift = editor.paletteCycleShift;
-		const offset =
-			(((index - range.start + shift) % length) + length) % length;
-		return activePalette.colors[range.start + offset]!;
-	}
 
 	function onPaletteSortChange(value: string): void {
 		editor.sortPalette(activePalette.id, value as PaletteSortMode);
@@ -574,6 +514,11 @@
 							>
 								{generateRampLabel}
 							</DropdownMenu.Item>
+							<DropdownMenu.Item
+								onSelect={() => (editor.paletteCyclesOpen = true)}
+							>
+								Color cycles…
+							</DropdownMenu.Item>
 							<DropdownMenu.Separator />
 							<DropdownMenu.Label>Sort by</DropdownMenu.Label>
 							<DropdownMenu.RadioGroup
@@ -693,70 +638,7 @@
 				</Button>
 			</div>
 
-			<div class="flex items-center justify-between gap-1">
-				<span
-					class="min-w-0 truncate text-[10px] tabular-nums text-muted-foreground"
-					aria-live="polite"
-				>
-					{selectionLabel}
-				</span>
-				<div class="flex shrink-0 items-center gap-0.5">
-					<Button
-						variant="ghost"
-						size="icon-xs"
-						class="text-muted-foreground"
-						onclick={() => editor.togglePaletteCycle()}
-						disabled={!canCycle}
-						title={editor.paletteCyclePlaying
-							? "Stop color cycling preview"
-							: canCycle
-								? "Preview color cycling on the selected range"
-								: "Select two or more swatches to cycle colors"}
-						aria-label={editor.paletteCyclePlaying
-							? "Stop color cycling preview"
-							: "Preview color cycling"}
-						aria-pressed={editor.paletteCyclePlaying}
-					>
-						{#if editor.paletteCyclePlaying}
-							<Pause class="size-3.5" />
-						{:else}
-							<Play class="size-3.5" />
-						{/if}
-					</Button>
-					<select
-						class="h-6 cursor-pointer rounded-full bg-transparent px-1 font-mono text-[10px] tabular-nums text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-						value={editor.paletteCycleMs}
-						onchange={(event) =>
-							editor.setPaletteCycleMs(
-								Number((event.currentTarget as HTMLSelectElement).value),
-							)}
-						title="Color cycling speed"
-						aria-label="Color cycling speed"
-					>
-						{#each PALETTE_CYCLE_SPEEDS as speed (speed)}
-							<option value={speed}>{speed} ms</option>
-						{/each}
-					</select>
-					<Button
-						variant="ghost"
-						size="icon-xs"
-						class="text-muted-foreground"
-						onclick={cycleDirectionNext}
-						title={`${cycleDirectionTitle} — click to change`}
-						aria-label={`${cycleDirectionTitle}. Click to change.`}
-					>
-						{#if editor.paletteCycleDirection === "forward"}
-							<ArrowRight class="size-3.5" />
-						{:else if editor.paletteCycleDirection === "reverse"}
-							<ArrowLeft class="size-3.5" />
-						{:else}
-							<ArrowLeftRight class="size-3.5" />
-						{/if}
-					</Button>
-				</div>
-			</div>
-
-			<div class="max-h-44 overflow-y-auto pr-1">
+			<div class="max-h-44 overflow-y-auto p-1">
 				{#if paletteColorCount === 0}
 					<p
 						class="rounded-md border border-dashed px-2 py-3 text-center text-[10px] text-muted-foreground"
@@ -773,25 +655,14 @@
 							<div class="group relative aspect-square">
 								<button
 									type="button"
-									class={cn(
-										"relative size-full rounded-[5px] transition-transform group-hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-										isPaletteIndexSelected(index)
-											? "ring-2 ring-primary ring-offset-1 ring-offset-background"
-											: "ring-1 ring-black/10",
-									)}
-									style={`background-color: ${paletteSwatchColor(index)}`}
-									title={`${color} — color ${index + 1}. Left click: primary, right click: secondary, shift-click: select range.`}
+									class="relative size-full rounded-[5px] ring-1 ring-black/10 transition-transform group-hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+									style={`background-color: ${color}`}
+									title={`${color} — color ${index + 1}. Left click: primary, right click: secondary.`}
 									aria-label={`Use color ${color}, color ${index + 1}`}
-									aria-pressed={isPaletteIndexSelected(index)}
-									onclick={(event) =>
-										choosePaletteColor(
-											color,
-											"primary",
-											event.shiftKey || event.metaKey || event.ctrlKey,
-										)}
+									onclick={() => choosePaletteColor(color, "primary")}
 									oncontextmenu={(event) => {
 										event.preventDefault();
-										choosePaletteColor(color, "secondary", false, false);
+										choosePaletteColor(color, "secondary");
 									}}
 								>
 									{#if editor.primaryColor === color && editor.alpha === 255}
@@ -815,4 +686,5 @@
 
 	<PaletteLibraryDialog bind:open={paletteLibraryOpen} />
 	<PaletteRampDialog bind:open={editor.paletteRampOpen} />
+	<ColorCyclesDialog bind:open={editor.paletteCyclesOpen} />
 </section>
