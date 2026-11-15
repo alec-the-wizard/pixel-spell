@@ -1,7 +1,4 @@
 <script lang="ts">
-	import ArrowLeft from "@lucide/svelte/icons/arrow-left";
-	import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
-	import ArrowRight from "@lucide/svelte/icons/arrow-right";
 	import Pause from "@lucide/svelte/icons/pause";
 	import Play from "@lucide/svelte/icons/play";
 	import Sparkles from "@lucide/svelte/icons/sparkles";
@@ -31,31 +28,27 @@
 	const DIRECTIONS: {
 		id: PaletteCycleDirection;
 		label: string;
-		icon: typeof ArrowRight;
 		title: string;
 	}[] = [
 		{
 			id: "forward",
 			label: "Forward",
-			icon: ArrowRight,
 			title: "Rotate the range toward the last color",
 		},
 		{
 			id: "reverse",
 			label: "Reverse",
-			icon: ArrowLeft,
 			title: "Rotate the range toward the first color",
 		},
 		{
 			id: "ping-pong",
 			label: "Ping-pong",
-			icon: ArrowLeftRight,
 			title: "Travel forward and back without repeating the endpoints",
 		},
 	];
 
-	const PREVIEW_MAX_WIDTH = 320;
-	const PREVIEW_MAX_HEIGHT = 160;
+	const PREVIEW_MAX_WIDTH = 288;
+	const PREVIEW_MAX_HEIGHT = 120;
 
 	let phase = $state(0);
 	let playing = $state(false);
@@ -187,15 +180,14 @@
 	function bake(): void {
 		playing = false;
 		if (shift === 0) {
-			feedback =
-				"This phase is the original palette order. Choose another phase to bake.";
+			feedback = "Phase 1 is the original palette order.";
 			return;
 		}
 		const count = editor.bakePaletteCycle(shift);
 		feedback =
 			count > 0
-				? `Baked phase ${phase + 1} into the active frame.`
-				: "Nothing to bake: no pixels use colors from the selected range.";
+				? `Baked phase ${phase + 1} into this frame.`
+				: "No pixels use colors from this range.";
 	}
 
 	function generate(): void {
@@ -208,21 +200,20 @@
 		});
 		if (count > 0) {
 			phase = 0;
-			feedback = `Generated ${count} frames after the active frame. They export with GIF and sprite-sheet export.`;
+			feedback = `Generated ${count} frames.`;
 		} else {
-			feedback = `Could not generate frames. Keep the project under ${MAX_PROJECT_FRAMES} frames.`;
+			feedback = "Frame limit reached.";
 		}
 	}
 </script>
 
 <Dialog.Root bind:open>
-	<Dialog.Content class="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-xl">
+	<Dialog.Content class="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-3xl">
 		<Dialog.Header>
 			<Dialog.Title>Color cycles</Dialog.Title>
 			<Dialog.Description>
-				Animate a range of palette colors, preview it here, then bake the effect
-				into frames. Generated frames export as a normal GIF or sprite sheet.
-				Cycling ranges are workspace-only and are not saved in project files.
+				Preview a palette range, then bake it or generate a timed animation.
+				Settings are not saved with the project.
 			</Dialog.Description>
 		</Dialog.Header>
 
@@ -230,235 +221,223 @@
 			<p
 				class="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground"
 			>
-				“{palette.name}” needs at least two colors to cycle. Add colors with
-				the + button in the palette header, or choose another palette.
+				“{palette.name}” needs at least two colors. Add colors with the + button
+				in the palette header, or choose another palette.
 			</p>
 		{:else}
-			<div class="grid gap-4">
-				<div class="grid gap-2">
-					<div class="flex items-center justify-between">
-						<Label for="cycle-start">Palette range</Label>
-						<span class="text-[10px] tabular-nums text-muted-foreground">
-							{rangeLength} colors · phase {phase + 1}/{period}
-						</span>
-					</div>
-					<div class="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-						<select
-							id="cycle-start"
-							class="h-8 w-full cursor-pointer rounded-md border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							value={range.start}
-							aria-label="First color in the cycle range"
-							onchange={(event) =>
-								changeRange(
-									Number((event.currentTarget as HTMLSelectElement).value),
-									range.end,
-								)}
-						>
-							{#each palette.colors as color, index (index)}
-								<option value={index}>{index + 1} · {color}</option>
-							{/each}
-						</select>
-						<span class="text-[10px] text-muted-foreground">to</span>
-						<select
-							id="cycle-end"
-							class="h-8 w-full cursor-pointer rounded-md border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							value={range.end}
-							aria-label="Last color in the cycle range"
-							onchange={(event) =>
-								changeRange(
-									range.start,
-									Number((event.currentTarget as HTMLSelectElement).value),
-								)}
-						>
-							{#each palette.colors as color, index (index)}
-								<option value={index}>{index + 1} · {color}</option>
-							{/each}
-						</select>
-					</div>
-					<!-- The strip mirrors the canvas remap, so its colors rotate in place. -->
-					<div class="flex h-7 overflow-hidden rounded-md ring-1 ring-border">
-						{#each phaseColors as color, index (index)}
-							<span
-								class="flex-1"
-								style:background={color}
-								title={`Position ${range.start + index + 1}: ${color}`}
-							></span>
-						{/each}
-					</div>
-				</div>
-
-				<div class="grid gap-4 sm:grid-cols-2">
+			<div class="grid gap-4 sm:grid-cols-2">
+				<div class="grid content-start gap-3">
 					<div class="grid gap-1.5">
-						<Label>Direction</Label>
-						<div class="grid grid-cols-3 gap-1 rounded-lg border p-1">
-							{#each DIRECTIONS as option (option.id)}
-								{@const Icon = option.icon}
-								<button
-									type="button"
-									class={cn(
-										"flex items-center justify-center gap-1 rounded-md px-1.5 py-1 text-[11px] transition-colors",
-										direction === option.id
-											? "bg-accent text-foreground"
-											: "text-muted-foreground hover:bg-accent/60",
+						<div class="flex items-center justify-between gap-2">
+							<Label for="cycle-start">Range</Label>
+							<span class="text-[10px] tabular-nums text-muted-foreground">
+								{rangeLength} colors · {period} phases
+							</span>
+						</div>
+						<div class="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+							<select
+								id="cycle-start"
+								class="h-8 w-full cursor-pointer rounded-md border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								value={range.start}
+								aria-label="First color in the cycle range"
+								onchange={(event) =>
+									changeRange(
+										Number((event.currentTarget as HTMLSelectElement).value),
+										range.end,
 									)}
-									title={option.title}
-									aria-pressed={direction === option.id}
-									onclick={() => editor.setPaletteCycleDirection(option.id)}
-								>
-									<Icon class="size-3" />
-									{option.label}
-								</button>
+							>
+								{#each palette.colors as color, index (index)}
+									<option value={index}>{index + 1} · {color}</option>
+								{/each}
+							</select>
+							<span class="text-[10px] text-muted-foreground">to</span>
+							<select
+								id="cycle-end"
+								class="h-8 w-full cursor-pointer rounded-md border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								value={range.end}
+								aria-label="Last color in the cycle range"
+								onchange={(event) =>
+									changeRange(
+										range.start,
+										Number((event.currentTarget as HTMLSelectElement).value),
+									)}
+							>
+								{#each palette.colors as color, index (index)}
+									<option value={index}>{index + 1} · {color}</option>
+								{/each}
+							</select>
+						</div>
+						<!-- The strip mirrors the canvas remap, so its colors rotate in place. -->
+						<div class="flex h-6 overflow-hidden rounded-md ring-1 ring-border">
+							{#each phaseColors as color, index (index)}
+								<span
+									class="flex-1"
+									style:background={color}
+									title={`Position ${range.start + index + 1}: ${color}`}
+								></span>
 							{/each}
 						</div>
 					</div>
 
 					<div class="grid gap-1.5">
-						<Label for="cycle-speed">Speed</Label>
-						<select
-							id="cycle-speed"
-							class="h-8 w-full cursor-pointer rounded-md border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							value={editor.paletteCycleMs}
-							onchange={(event) =>
-								editor.setPaletteCycleMs(
-									Number((event.currentTarget as HTMLSelectElement).value),
-								)}
-						>
-							{#each PALETTE_CYCLE_SPEEDS as speed (speed)}
-								<option value={speed}>{speed} ms per step</option>
-							{/each}
-						</select>
-					</div>
-				</div>
-
-				<div class="grid gap-2">
-					<div class="flex items-center justify-between">
-						<Label>Preview</Label>
-						<div class="flex items-center gap-1">
-							<Button
-								variant={playing ? "secondary" : "outline"}
-								size="icon-xs"
-								class="rounded-full"
-								onclick={togglePlayback}
-								title={playing ? "Pause the preview" : "Play the preview"}
-								aria-label={playing ? "Pause the preview" : "Play the preview"}
-								aria-pressed={playing}
+						<div class="grid grid-cols-[4.5rem_1fr] items-center gap-2">
+							<Label>Direction</Label>
+							<div class="grid grid-cols-3 gap-1 rounded-md border p-0.5">
+								{#each DIRECTIONS as option (option.id)}
+									<button
+										type="button"
+										class={cn(
+											"rounded px-1 py-1 text-center text-[11px] transition-colors",
+											direction === option.id
+												? "bg-accent text-foreground"
+												: "text-muted-foreground hover:bg-accent/60",
+										)}
+										title={option.title}
+										aria-pressed={direction === option.id}
+										onclick={() => editor.setPaletteCycleDirection(option.id)}
+									>
+										{option.label}
+									</button>
+								{/each}
+							</div>
+						</div>
+						<div class="grid grid-cols-[4.5rem_1fr] items-center gap-2">
+							<Label for="cycle-speed">Speed</Label>
+							<select
+								id="cycle-speed"
+								class="h-8 w-full cursor-pointer rounded-md border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								value={editor.paletteCycleMs}
+								onchange={(event) =>
+									editor.setPaletteCycleMs(
+										Number((event.currentTarget as HTMLSelectElement).value),
+									)}
 							>
-								{#if playing}
-									<Pause class="size-3.5" />
-								{:else}
-									<Play class="size-3.5" />
-								{/if}
-							</Button>
+								{#each PALETTE_CYCLE_SPEEDS as speed (speed)}
+									<option value={speed}>{speed} ms per step</option>
+								{/each}
+							</select>
 						</div>
 					</div>
-					<div
-						class="checkerboard grid min-h-24 place-items-center overflow-hidden rounded-lg p-2 ring-1 ring-border"
-					>
-						<canvas
-							bind:this={previewCanvas}
-							class="max-w-full"
-							aria-label="Color cycling preview"
-						></canvas>
-					</div>
-					<Slider
-						type="single"
-						min={0}
-						max={Math.max(0, period - 1)}
-						step={1}
-						value={phase}
-						onValueChange={onPhaseChange}
-						aria-label="Cycle phase"
-					/>
-					<div class="flex items-center justify-between text-[10px] text-muted-foreground">
-						<span>Phase {phase + 1} of {period}</span>
-						<span class="font-mono tabular-nums">shift +{shift}</span>
+
+					<div class="grid gap-1.5">
+						<div class="flex items-center justify-between">
+							<Label>Preview</Label>
+							<div class="flex items-center gap-2">
+								<span class="text-[10px] tabular-nums text-muted-foreground">
+									Phase {phase + 1}/{period}
+								</span>
+								<Button
+									variant={playing ? "secondary" : "outline"}
+									size="icon-xs"
+									class="rounded-full"
+									onclick={togglePlayback}
+									title={playing ? "Pause the preview" : "Play the preview"}
+									aria-label={playing ? "Pause the preview" : "Play the preview"}
+									aria-pressed={playing}
+								>
+									{#if playing}
+										<Pause class="size-3.5" />
+									{:else}
+										<Play class="size-3.5" />
+									{/if}
+								</Button>
+							</div>
+						</div>
+						<div
+							class="checkerboard grid place-items-center overflow-hidden rounded-lg p-2 ring-1 ring-border"
+						>
+							<canvas
+								bind:this={previewCanvas}
+								class="max-w-full"
+								aria-label="Color cycling preview"
+							></canvas>
+						</div>
+						<Slider
+							type="single"
+							min={0}
+							max={Math.max(0, period - 1)}
+							step={1}
+							value={phase}
+							onValueChange={onPhaseChange}
+							aria-label="Cycle phase"
+						/>
+						<div class="flex items-center justify-between text-[10px] text-muted-foreground">
+							<span>Shift +{shift}</span>
+							<span>{editor.paletteCycleMs} ms per step</span>
+						</div>
 					</div>
 				</div>
 
-				<div class="grid gap-2 rounded-lg border px-3 py-2.5">
-					<div class="flex items-center justify-between gap-2">
+				<div class="grid content-start gap-3">
+					<div class="flex items-center justify-between gap-2 rounded-lg border p-3">
 						<span class="grid gap-0.5">
-							<span class="text-xs font-medium">Bake the current phase</span>
+							<span class="text-xs font-medium">Bake phase</span>
 							<span class="text-[10px] text-muted-foreground">
-								Writes the selected colors into visible normal layers. Reference
-								layers stay untouched.
+								Writes the shown colors into visible layers.
 							</span>
 						</span>
-						<Button variant="outline" size="sm" onclick={bake} disabled={!range}>
-							Bake phase into this frame
+						<Button variant="outline" size="sm" onclick={bake}>
+							Bake into frame
 						</Button>
 					</div>
-				</div>
 
-				<div class="grid gap-3 rounded-lg border px-3 py-2.5">
-					<div class="grid gap-0.5">
-						<span class="text-xs font-medium">Generate cycle animation</span>
-						<span class="text-[10px] text-muted-foreground">
-							Inserts one full pass after the active frame, rotating every
-							visible layer. The frames carry a duration and tag, so they play
-							and export like normal animation.
-						</span>
-					</div>
-					<div class="grid gap-2 sm:grid-cols-[8rem_1fr]">
-						<div class="grid gap-1.5">
-							<Label for="cycle-steps">Frames</Label>
-							<Input
-								id="cycle-steps"
-								type="number"
-								min={2}
-								max={Math.max(2, period)}
-								step={1}
-								value={stepsText}
-								oninput={(event) => (stepsText = event.currentTarget.value)}
-								onblur={() => (stepsText = String(steps))}
-								class="h-8 tabular-nums"
-							/>
+					<div class="grid gap-2.5 rounded-lg border p-3">
+						<div class="flex items-center justify-between gap-2">
+							<span class="text-xs font-medium">Generate animation</span>
+							<span class="text-[10px] text-muted-foreground">One cycle pass</span>
+						</div>
+						<div class="grid grid-cols-[5.5rem_1fr] gap-2">
+							<div class="grid gap-1">
+								<Label for="cycle-steps">Frames</Label>
+								<Input
+									id="cycle-steps"
+									type="number"
+									min={2}
+									max={Math.max(2, period)}
+									step={1}
+									value={stepsText}
+									oninput={(event) => (stepsText = event.currentTarget.value)}
+									onblur={() => (stepsText = String(steps))}
+									class="h-8 tabular-nums"
+								/>
+							</div>
+							<div class="grid gap-1">
+								<Label for="cycle-tag">Tag</Label>
+								<Input
+									id="cycle-tag"
+									value={tag}
+									maxlength={40}
+									placeholder="cycle"
+									oninput={(event) => (tag = event.currentTarget.value)}
+									class="h-8"
+								/>
+							</div>
+						</div>
+						<div class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+							<label class="flex items-center gap-2 text-[11px]">
+								<Switch bind:checked={loopNewFrames} />
+								Set loop range
+							</label>
 							<span class="text-[10px] text-muted-foreground">
-								2–{Math.max(2, period)} steps
+								2–{Math.max(2, period)} steps · {remainingFrames} slots left
 							</span>
 						</div>
-						<div class="grid gap-1.5">
-							<Label for="cycle-tag">Tag</Label>
-							<Input
-								id="cycle-tag"
-								value={tag}
-								maxlength={40}
-								placeholder="cycle"
-								oninput={(event) => (tag = event.currentTarget.value)}
-								class="h-8"
-							/>
-							<span class="text-[10px] text-muted-foreground">
-								Each frame lasts {editor.paletteCycleMs} ms
-							</span>
-						</div>
-					</div>
-					<label
-						class="flex items-center justify-between gap-3 rounded-md bg-muted/50 px-2.5 py-2"
-					>
-						<span class="grid gap-0.5">
-							<span class="text-xs font-medium">Set the loop range</span>
-							<span class="text-[10px] text-muted-foreground">
-								Restricts playback and GIF export to the new frames.
-							</span>
-						</span>
-						<Switch bind:checked={loopNewFrames} />
-					</label>
-					<div class="flex items-center justify-between gap-2">
-						<span class="text-[10px] text-muted-foreground">
-							{remainingFrames} frame slots left
-						</span>
-						<Button size="sm" onclick={generate} disabled={!canGenerate}>
+						<Button class="w-full" size="sm" onclick={generate} disabled={!canGenerate}>
 							<Sparkles class="size-3.5" />
 							Generate {steps} frames
 						</Button>
+						<p class="text-[10px] text-muted-foreground">
+							Each frame lasts {editor.paletteCycleMs} ms and exports with GIF and
+							sprite sheets.
+						</p>
 					</div>
-				</div>
 
-				{#if feedback}
-					<p class="text-[11px] text-muted-foreground" aria-live="polite">
-						{feedback}
-					</p>
-				{/if}
+					{#if feedback}
+						<p class="text-[11px] text-muted-foreground" aria-live="polite">
+							{feedback}
+						</p>
+					{/if}
+				</div>
 			</div>
 		{/if}
 
