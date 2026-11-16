@@ -98,7 +98,7 @@ These are deliberately out of scope for the foreseeable future. They contradict 
 
 | # | Feature | Why not now |
 | ---: | --- | --- |
-| 1 | Cloud sync / project library | Requires accounts, server storage, sync and conflict resolution, and ongoing infrastructure cost. A local project library (see Planned #23) covers the offline need first, and the client-only architecture is a core identity of the app. |
+| 1 | Cloud sync / project library | Requires accounts, server storage, sync and conflict resolution, and ongoing infrastructure cost. A local project library (see "Recent files / project library") covers the offline need first, and the client-only architecture is a core identity of the app. |
 | 2 | Real-time collaboration | Multiplayer editing, presence, permissions, and CRDT/OT conflict resolution are very high complexity and operational cost for a client-only editor. Defer until after a plugin/API layer and a clear infrastructure story exist. |
 
 ## Recommended roadmap
