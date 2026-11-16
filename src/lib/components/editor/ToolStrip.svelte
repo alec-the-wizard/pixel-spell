@@ -11,8 +11,29 @@
 	// Pan/zoom | selection tools | paint tools | fill/gradient/eyedropper | area tools
 	const SEPARATOR_BEFORE = new Set([2, 6, 12, 15]);
 
+	/** Accent colors for the left (primary blue) and right (orange) tool slots. */
+	const LEFT_SLOT_COLOR = "var(--primary)";
+	const RIGHT_SLOT_COLOR = "#f97316";
+
+	/**
+	 * Neutral fill for the unassigned half of a selected split button. Dark gray
+	 * in light mode and light gray in dark mode so it contrasts with the page.
+	 */
+	let neutralHalfColor = $derived(
+		editor.theme === "dark" ? "#d4d4d8" : "#52525b",
+	);
+
 	function shortcutLabel(id: string): string {
 		return keybindings.primaryLabel(`tool.${id}`) || "Unbound";
+	}
+
+	function toolLabel(id: string): string {
+		const base = `${TOOLS.find((item) => item.id === id)?.label ?? id} (${shortcutLabel(id)})`;
+		if (!editor.doubleToolEnabled) return base;
+		const slots: string[] = [];
+		if (editor.leftTool === id) slots.push("left mouse");
+		if (editor.rightTool === id) slots.push("right mouse");
+		return slots.length ? `${base} — ${slots.join(" / ")}` : base;
 	}
 </script>
 
@@ -33,15 +54,52 @@
 						variant="ghost"
 						size="icon-lg"
 						class={cn(
-							"size-10 rounded-lg text-muted-foreground",
-							editor.tool === tool.id &&
+							"relative size-10 rounded-lg text-muted-foreground",
+							!editor.doubleToolEnabled &&
+								editor.tool === tool.id &&
 								"bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 hover:text-primary-foreground dark:hover:bg-primary/90 dark:hover:text-primary-foreground",
 						)}
-						aria-label={`${tool.label} (${shortcutLabel(tool.id)})`}
-						aria-pressed={editor.tool === tool.id}
-						onclick={() => editor.setTool(tool.id)}
+						aria-label={toolLabel(tool.id)}
+						aria-pressed={
+							editor.doubleToolEnabled
+								? editor.leftTool === tool.id || editor.rightTool === tool.id
+								: editor.tool === tool.id
+						}
+						onclick={() =>
+							editor.doubleToolEnabled
+								? editor.setLeftTool(tool.id)
+								: editor.setTool(tool.id)}
+						oncontextmenu={(event) => {
+							event.preventDefault();
+							if (editor.doubleToolEnabled) editor.setRightTool(tool.id);
+						}}
 					>
-						<ToolIcon tool={tool.id} class="size-[18px]" />
+						{#if editor.doubleToolEnabled &&
+							(editor.leftTool === tool.id || editor.rightTool === tool.id)}
+							<span
+								class="pointer-events-none absolute inset-y-0 left-0 w-1/2 rounded-l-lg"
+								style:background={editor.leftTool === tool.id
+									? LEFT_SLOT_COLOR
+									: neutralHalfColor}
+								aria-hidden="true"
+							></span>
+							<span
+								class="pointer-events-none absolute inset-y-0 right-0 w-1/2 rounded-r-lg"
+								style:background={editor.rightTool === tool.id
+									? RIGHT_SLOT_COLOR
+									: neutralHalfColor}
+								aria-hidden="true"
+							></span>
+						{/if}
+						<ToolIcon
+							tool={tool.id}
+							class={cn(
+								"relative size-[18px]",
+								editor.doubleToolEnabled &&
+									(editor.leftTool === tool.id || editor.rightTool === tool.id) &&
+									"text-white dark:text-black",
+							)}
+						/>
 					</Button>
 				{/snippet}
 			</Tooltip.Trigger>

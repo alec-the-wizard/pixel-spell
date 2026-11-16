@@ -231,6 +231,13 @@ const ACTION_COMMANDS: CommandDef[] = [
 		run: () => editor.toggleTheme(),
 	},
 	{
+		id: "view.toggle-double-tool",
+		label: "Double tool mode",
+		group: "View",
+		keywords: "left right mouse button tool mapping paint erase",
+		run: () => editor.toggleDoubleToolMode(),
+	},
+	{
 		id: "view.mirror-x",
 		label: "Toggle X axis mirror",
 		group: "View",

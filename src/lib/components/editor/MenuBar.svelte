@@ -1,5 +1,7 @@
 <script lang="ts">
+	import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
 	import Asterisk from "@lucide/svelte/icons/asterisk";
+	import Check from "@lucide/svelte/icons/check";
 	import ChevronDown from "@lucide/svelte/icons/chevron-down";
 	import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste";
 	import Copy from "@lucide/svelte/icons/copy";
@@ -288,6 +290,14 @@
 					<Images class="size-4" />
 					Show reference board
 				</DropdownMenu.CheckboxItem>
+				<DropdownMenu.Separator />
+				<DropdownMenu.Item onSelect={() => editor.toggleDoubleToolMode()}>
+					<ArrowLeftRight class="size-4" />
+					Double tool mode
+					{#if editor.doubleToolEnabled}
+						<Check class="ml-auto size-4" />
+					{/if}
+				</DropdownMenu.Item>
 				<DropdownMenu.Item onSelect={() => editor.toggleTheme()}>
 					{#if editor.theme === "dark"}
 						<Sun class="size-4" />

@@ -177,6 +177,21 @@ export class EditorState {
 	activeReferenceId = $state<string | null>(null);
 
 	tool = $state<ToolId>("pencil");
+	/**
+	 * When enabled, the left and right mouse buttons run separate tools.
+	 * Workspace-wide preference, disabled by default.
+	 */
+	doubleToolEnabled = $state(false);
+	/** Tool assigned to the left mouse button in double tool mode. */
+	leftTool = $state<ToolId>("pencil");
+	/** Tool assigned to the right mouse button in double tool mode. */
+	rightTool = $state<ToolId>("eraser");
+	/** Which mouse slot the tool options panel is showing. */
+	activeToolSlot = $state<"left" | "right">("left");
+	/** Zoom direction used by the zoom tool while double tool mode is enabled. */
+	zoomDirection = $state<1 | -1>(1);
+	/** Color slot the eyedropper writes to while double tool mode is enabled. */
+	eyedropperTarget = $state<ColorSlot>("primary");
 	primaryColor = $state("#18181b");
 	alpha = $state(255);
 	secondaryColor = $state("#ffffff");
@@ -573,6 +588,48 @@ export class EditorState {
 
 	setTool(tool: ToolId): void {
 		this.tool = tool;
+		if (this.doubleToolEnabled) {
+			// Keyboard and command-palette activation target the left (primary) slot.
+			this.leftTool = tool;
+			this.activeToolSlot = "left";
+		}
+	}
+
+	/** Assigns a tool to the left mouse button and shows its options. */
+	setLeftTool(tool: ToolId): void {
+		this.tool = tool;
+		this.leftTool = tool;
+		this.activeToolSlot = "left";
+	}
+
+	/** Assigns a tool to the right mouse button and shows its options. */
+	setRightTool(tool: ToolId): void {
+		this.tool = tool;
+		this.rightTool = tool;
+		this.activeToolSlot = "right";
+	}
+
+	/** The tool that runs for a pointer button in the current mode. */
+	toolForButton(button: 0 | 2): ToolId {
+		if (!this.doubleToolEnabled) return this.tool;
+		return button === 2 ? this.rightTool : this.leftTool;
+	}
+
+	/** Shows the tool options for the other mouse slot. */
+	showOtherToolOptions(): void {
+		if (!this.doubleToolEnabled) return;
+		this.activeToolSlot = this.activeToolSlot === "left" ? "right" : "left";
+		this.tool = this.activeToolSlot === "left" ? this.leftTool : this.rightTool;
+	}
+
+	toggleDoubleToolMode(): void {
+		this.doubleToolEnabled = !this.doubleToolEnabled;
+		if (this.doubleToolEnabled) {
+			// Start both buttons from the current tool until the user changes one.
+			this.leftTool = this.tool;
+			this.rightTool = this.tool;
+			this.activeToolSlot = "left";
+		}
 	}
 
 	/** Whether the tool has a pixel-perfect option and it is enabled. */
