@@ -13,6 +13,7 @@ import { packColor } from "../src/lib/editor/color.js";
 import {
 	cloneDoc,
 	compositeFrame,
+	compositeFrameCachedIncremental,
 	createDoc,
 	createLayer,
 } from "../src/lib/editor/doc.js";
@@ -150,6 +151,19 @@ measure("compositeFrame 128x128x6 (per frame)", 20, 5, () => {
 	for (let frame = 0; frame < smallCompositeDoc.frames.length; frame++) {
 		compositeFrame(smallCompositeDoc, frame);
 	}
+});
+
+// Incremental compositing: with a warm cache, editing a single layer should
+// recomposite only that layer and the layers above it.
+const incrementalDoc = makeDoc(512, 512, 8, 6, 61);
+measure("compositeFrame 512x512x8 (per frame)", 12, 3, () => {
+	for (let frame = 0; frame < incrementalDoc.frames.length; frame++) {
+		compositeFrame(incrementalDoc, frame);
+	}
+});
+compositeFrameCachedIncremental(incrementalDoc, 0, false, 0, 0, "layer-0");
+measure("compositeFrameIncremental 512x512x8 (edit top layer)", 12, 3, () => {
+	compositeFrameCachedIncremental(incrementalDoc, 0, false, 0, 0, "layer-7");
 });
 
 measure("cloneDoc 512x512x4x6", 8, 2, () => {

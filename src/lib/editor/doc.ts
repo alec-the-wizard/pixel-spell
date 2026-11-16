@@ -165,6 +165,66 @@ function blendPixelSlow(
 	return (((a & 0xff) << 24) | (b << 16) | (g << 8) | r) >>> 0;
 }
 
+/** One visible layer participating in a composite, pre-resolved to its cel. */
+interface CompositeLayer {
+	id: string;
+	cel: Uint32Array;
+	opacityByte: number;
+}
+
+/**
+ * Resolves the ordered list of visible layers that participate in a composite.
+ * Reference layers are excluded by default so every export path is safe; pass
+ * `includeReferences` for viewport rendering only.
+ */
+function compositeLayers(
+	doc: PixelDoc,
+	frameIndex: number,
+	includeReferences: boolean,
+): CompositeLayer[] {
+	const layers: CompositeLayer[] = [];
+	for (const layer of doc.layers) {
+		if (!includeReferences && layer.role === "reference") continue;
+		if (!layer.visible || layer.opacity <= 0) continue;
+		const cel = layer.cels[frameIndex];
+		if (!cel) continue;
+		layers.push({
+			id: layer.id,
+			cel,
+			opacityByte: Math.max(0, Math.min(255, Math.round(layer.opacity * 255))),
+		});
+	}
+	return layers;
+}
+
+/** Blends one layer cel over `output` in place. */
+function blendLayerInto(
+	output: Uint32Array,
+	cel: Uint32Array,
+	count: number,
+	opacityByte: number,
+): void {
+	for (let index = 0; index < count; index++) {
+		const source = cel[index]!;
+		const sourceAlpha = source >>> 24;
+		if (sourceAlpha === 0) continue;
+		const sa = ALPHA_PRODUCT[(sourceAlpha << 8) | opacityByte]!;
+		if (sa === 0) continue;
+
+		const destination = output[index]!;
+		const destinationAlpha = destination >>> 24;
+		if (destinationAlpha === 0) {
+			output[index] = ((sa << 24) | (source & 0x00ffffff)) >>> 0;
+			continue;
+		}
+		if (sa === 255) {
+			output[index] = (0xff000000 | (source & 0x00ffffff)) >>> 0;
+			continue;
+		}
+		output[index] = blendPixelSlow(source, destination, sa);
+	}
+}
+
 /**
  * Flattens every visible layer of a frame into a single RGBA pixel buffer.
  * The buffer uses the same packed little-endian format as layer cels.
@@ -180,35 +240,8 @@ export function compositeFrame(
 	const count = doc.width * doc.height;
 	const output = new Uint32Array(count);
 
-	for (const layer of doc.layers) {
-		if (!includeReferences && layer.role === "reference") continue;
-		if (!layer.visible || layer.opacity <= 0) continue;
-		const cel = layer.cels[frameIndex];
-		if (!cel) continue;
-		const opacityByte = Math.max(
-			0,
-			Math.min(255, Math.round(layer.opacity * 255)),
-		);
-
-		for (let index = 0; index < count; index++) {
-			const source = cel[index]!;
-			const sourceAlpha = source >>> 24;
-			if (sourceAlpha === 0) continue;
-			const sa = ALPHA_PRODUCT[(sourceAlpha << 8) | opacityByte]!;
-			if (sa === 0) continue;
-
-			const destination = output[index]!;
-			const destinationAlpha = destination >>> 24;
-			if (destinationAlpha === 0) {
-				output[index] = ((sa << 24) | (source & 0x00ffffff)) >>> 0;
-				continue;
-			}
-			if (sa === 255) {
-				output[index] = (0xff000000 | (source & 0x00ffffff)) >>> 0;
-				continue;
-			}
-			output[index] = blendPixelSlow(source, destination, sa);
-		}
+	for (const layer of compositeLayers(doc, frameIndex, includeReferences)) {
+		blendLayerInto(output, layer.cel, count, layer.opacityByte);
 	}
 
 	return output;
@@ -289,4 +322,140 @@ export function compositeFrameCached(
 		if (oldest !== undefined) cache.frames.delete(oldest);
 	}
 	return pixels;
+}
+
+/**
+ * Per-frame prefix composites used by `compositeFrameCachedIncremental`.
+ * `prefixes[i]` is the composite of layers `[0..i]`, so editing layer `i` only
+ * needs to recomposite from `i` upward while reusing everything below it.
+ */
+interface FramePrefixes {
+	layerIds: string[];
+	prefixes: Uint32Array[];
+}
+
+interface IncrementalCompositeState {
+	structureRevision: number;
+	appearanceRevision: number;
+	includeReferences: boolean;
+	frames: Map<string, FramePrefixes>;
+}
+
+/**
+ * Prefix buffers multiply memory by the layer count, so prefix caching is only
+ * worth it while the per-frame prefix footprint stays bounded.
+ */
+const INCREMENTAL_PREFIX_MAX_PIXELS = 16_000_000;
+
+const incrementalCompositeStates = new WeakMap<
+	PixelDoc,
+	IncrementalCompositeState
+>();
+
+function buildFramePrefixes(
+	doc: PixelDoc,
+	frameIndex: number,
+	includeReferences: boolean,
+): FramePrefixes {
+	const count = doc.width * doc.height;
+	const layers = compositeLayers(doc, frameIndex, includeReferences);
+	const prefixes = new Array<Uint32Array>(layers.length);
+	const layerIds = new Array<string>(layers.length);
+	const output = new Uint32Array(count);
+
+	for (let index = 0; index < layers.length; index++) {
+		const layer = layers[index]!;
+		layerIds[index] = layer.id;
+		blendLayerInto(output, layer.cel, count, layer.opacityByte);
+		prefixes[index] = new Uint32Array(output);
+	}
+
+	return { layerIds, prefixes };
+}
+
+function recomputePrefixesFrom(
+	entry: FramePrefixes,
+	layers: readonly CompositeLayer[],
+	fromIndex: number,
+	count: number,
+): void {
+	for (let index = fromIndex; index < layers.length; index++) {
+		const destination = new Uint32Array(count);
+		if (index > 0) destination.set(entry.prefixes[index - 1]!);
+		blendLayerInto(
+			destination,
+			layers[index]!.cel,
+			count,
+			layers[index]!.opacityByte,
+		);
+		entry.prefixes[index] = destination;
+	}
+}
+
+/**
+ * Memoized `compositeFrame` that recomposites only the edited layer and the
+ * layers above it. The returned buffer is shared and must be treated as
+ * read-only.
+ *
+ * Structural changes (add/remove/reorder layers or frames, undo/redo, project
+ * switches) and visibility/opacity changes invalidate the whole cache via
+ * `structureRevision`/`appearanceRevision`. A plain pixel edit is expressed as
+ * `editedLayerId`, so layers below the edited one are reused from the cached
+ * prefixes instead of being blended again.
+ */
+export function compositeFrameCachedIncremental(
+	doc: PixelDoc,
+	frameIndex: number,
+	includeReferences: boolean,
+	structureRevision: number,
+	appearanceRevision: number,
+	editedLayerId: string | null,
+): Uint32Array {
+	const count = doc.width * doc.height;
+	const layers = compositeLayers(doc, frameIndex, includeReferences);
+
+	// Prefix caching costs `layers.length` buffers per frame; for very large
+	// documents a single full composite is cheaper to recompute than to store.
+	if (layers.length * count > INCREMENTAL_PREFIX_MAX_PIXELS) {
+		return compositeFrame(doc, frameIndex, includeReferences);
+	}
+
+	let state = incrementalCompositeStates.get(doc);
+	if (
+		!state ||
+		state.structureRevision !== structureRevision ||
+		state.appearanceRevision !== appearanceRevision ||
+		state.includeReferences !== includeReferences
+	) {
+		state = {
+			structureRevision,
+			appearanceRevision,
+			includeReferences,
+			frames: new Map(),
+		};
+		incrementalCompositeStates.set(doc, state);
+	}
+
+	const key = String(frameIndex);
+	let entry = state.frames.get(key);
+	if (!entry) {
+		entry = buildFramePrefixes(doc, frameIndex, includeReferences);
+		state.frames.set(key, entry);
+		if (state.frames.size > COMPOSITE_CACHE_LIMIT) {
+			const oldest = state.frames.keys().next().value;
+			if (oldest !== undefined) state.frames.delete(oldest);
+		}
+	}
+
+	const editedIndex =
+		editedLayerId !== null ? entry.layerIds.indexOf(editedLayerId) : -1;
+	if (editedIndex < 0) {
+		// Unknown layer or no hint: the safe path is a full recomposite.
+		entry = buildFramePrefixes(doc, frameIndex, includeReferences);
+		state.frames.set(key, entry);
+	} else {
+		recomputePrefixesFrom(entry, layers, editedIndex, count);
+	}
+
+	return entry.prefixes[entry.prefixes.length - 1] ?? new Uint32Array(count);
 }

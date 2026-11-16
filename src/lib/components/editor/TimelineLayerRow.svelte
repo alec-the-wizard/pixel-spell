@@ -13,9 +13,13 @@
 
 	let {
 		layer,
+		firstFrame,
+		lastFrame,
 		onFrameContextMenu,
 	}: {
 		layer: Layer;
+		firstFrame: number;
+		lastFrame: number;
 		onFrameContextMenu: (
 			event: MouseEvent,
 			frameIndex: number,
@@ -27,6 +31,15 @@
 	let editing = $state(false);
 	let draft = $state("");
 	let input = $state<HTMLInputElement | null>(null);
+
+	let visibleFrames = $derived(
+		lastFrame >= firstFrame
+			? editor.doc.frames.slice(firstFrame, lastFrame + 1)
+			: [],
+	);
+	let trailingFrames = $derived(
+		Math.max(0, editor.doc.frames.length - 1 - lastFrame),
+	);
 
 	function startEditing(): void {
 		editing = true;
@@ -148,7 +161,12 @@
 		</div>
 	</th>
 
-	{#each editor.doc.frames as frame, index (frame.id)}
+	{#if firstFrame > 0}
+		<td colspan={firstFrame} class="h-12 border-b"></td>
+	{/if}
+
+	{#each visibleFrames as frame, offset (frame.id)}
+		{@const index = firstFrame + offset}
 		{@const activeRow = layer.id === editor.activeLayerId}
 		{@const activeFrame = index === editor.activeFrame}
 		{@const activeCel = activeRow && activeFrame}
@@ -200,6 +218,10 @@
 			</button>
 		</td>
 	{/each}
+
+	{#if trailingFrames > 0}
+		<td colspan={trailingFrames} class="h-12 border-b"></td>
+	{/if}
 
 	<td class="h-12 w-10 min-w-10 border-b"></td>
 	<td class="h-12 border-b"></td>

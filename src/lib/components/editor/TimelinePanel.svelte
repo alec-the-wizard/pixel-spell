@@ -75,6 +75,127 @@
 		return groups;
 	});
 
+	// Timeline virtualization: only the layer rows and frame columns that are
+	// actually visible (plus a little overscan) are rendered. The sticky header
+	// and layer column remain, and spacer cells preserve the scroll extents.
+	const LAYER_COLUMN_WIDTH = 240; // w-60
+	const FRAME_COLUMN_WIDTH = 56; // w-14
+	const LAYER_ROW_HEIGHT = 48; // h-12
+	const OVERSCAN = 4;
+
+	let scrollElement = $state<HTMLDivElement | null>(null);
+	let scrollLeft = $state(0);
+	let scrollTop = $state(0);
+	// Start "unbounded" so the first paint renders everything; the effect below
+	// measures the real viewport and virtualizes from then on.
+	let viewportWidth = $state(10_000);
+	let viewportHeight = $state(10_000);
+
+	let firstFrame = $derived(
+		Math.max(
+			0,
+			Math.floor(scrollLeft / FRAME_COLUMN_WIDTH) - OVERSCAN,
+		),
+	);
+	let lastFrame = $derived(
+		Math.min(
+			editor.doc.frames.length - 1,
+			Math.max(
+				firstFrame,
+				Math.ceil(
+					(scrollLeft + viewportWidth - LAYER_COLUMN_WIDTH) /
+						FRAME_COLUMN_WIDTH,
+				) +
+					OVERSCAN -
+					1,
+			),
+		),
+	);
+	let visibleFrames = $derived(
+		lastFrame >= firstFrame
+			? editor.doc.frames.slice(firstFrame, lastFrame + 1)
+			: [],
+	);
+	let leadingFrameCols = $derived(firstFrame);
+	let trailingFrameCols = $derived(
+		Math.max(0, editor.doc.frames.length - 1 - lastFrame),
+	);
+
+	let firstLayer = $derived(
+		Math.max(0, Math.floor(scrollTop / LAYER_ROW_HEIGHT) - OVERSCAN),
+	);
+	let lastLayer = $derived(
+		Math.min(
+			editor.doc.layers.length - 1,
+			Math.max(
+				firstLayer,
+				Math.ceil((scrollTop + viewportHeight) / LAYER_ROW_HEIGHT) +
+					OVERSCAN -
+					1,
+			),
+		),
+	);
+
+	/** Layers in display (top-to-bottom) order, as the table renders them. */
+	let displayLayers = $derived([...editor.doc.layers].reverse());
+	let visibleLayers = $derived(
+		lastLayer >= firstLayer
+			? displayLayers.slice(firstLayer, lastLayer + 1)
+			: [],
+	);
+	let leadingLayerRows = $derived(firstLayer);
+	let trailingLayerRows = $derived(
+		Math.max(0, editor.doc.layers.length - 1 - lastLayer),
+	);
+
+	let windowedTagGroups = $derived.by(() => {
+		const first = firstFrame;
+		const last = lastFrame;
+		const groups: {
+			start: number;
+			end: number;
+			colSpan: number;
+			tag: string;
+			labeled: boolean;
+		}[] = [];
+		if (last < first) return groups;
+		for (const group of tagGroups) {
+			if (group.end < first || group.start > last) continue;
+			const visibleStart = Math.max(group.start, first);
+			const visibleEnd = Math.min(group.end, last);
+			groups.push({
+				start: group.start,
+				end: group.end,
+				colSpan: visibleEnd - visibleStart + 1,
+				tag: group.tag,
+				labeled: group.start >= first,
+			});
+		}
+		return groups;
+	});
+
+	function updateScroll(): void {
+		const element = scrollElement;
+		if (!element) return;
+		scrollLeft = element.scrollLeft;
+		scrollTop = element.scrollTop;
+	}
+
+	$effect(() => {
+		const element = scrollElement;
+		if (!element) return;
+		viewportWidth = element.clientWidth;
+		viewportHeight = element.clientHeight;
+		scrollLeft = element.scrollLeft;
+		scrollTop = element.scrollTop;
+		const observer = new ResizeObserver(() => {
+			viewportWidth = element.clientWidth;
+			viewportHeight = element.clientHeight;
+		});
+		observer.observe(element);
+		return () => observer.disconnect();
+	});
+
 	let contextTitle = $derived.by(() => {
 		if (!contextMenu) return "";
 		const indices = editor.selectedFrameIndices;
@@ -632,7 +753,11 @@
 		onchange={addReferenceLayer}
 	/>
 
-	<div class="min-h-0 flex-1 overflow-auto">
+	<div
+		bind:this={scrollElement}
+		class="min-h-0 flex-1 overflow-auto"
+		onscroll={updateScroll}
+	>
 		<table class="w-full border-separate border-spacing-0">
 			<caption class="sr-only">Timeline: layers as rows, animation frames as columns</caption>
 			<thead>
@@ -647,9 +772,16 @@
 						</span>
 					</th>
 
-					{#each tagGroups as group (group.start)}
+					{#if leadingFrameCols > 0}
 						<th
-							colspan={group.end - group.start + 1}
+							colspan={leadingFrameCols}
+							class="sticky top-0 z-20 h-6 border-b border-r bg-background"
+						></th>
+					{/if}
+
+					{#each windowedTagGroups as group (group.start)}
+						<th
+							colspan={group.colSpan}
 							scope="colgroup"
 							class={cn(
 								"sticky top-0 z-20 h-6 border-b border-r p-0 text-left align-middle",
@@ -659,7 +791,7 @@
 								? tagBackground(group.tag)
 								: "var(--background)"}
 						>
-							{#if group.tag}
+							{#if group.tag && group.labeled}
 								<button
 									type="button"
 									class="flex h-6 w-full min-w-0 items-center gap-1 px-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
@@ -684,6 +816,13 @@
 						</th>
 					{/each}
 
+					{#if trailingFrameCols > 0}
+						<th
+							colspan={trailingFrameCols}
+							class="sticky top-0 z-20 h-6 border-b bg-background"
+						></th>
+					{/if}
+
 					<th
 						colspan="2"
 						class="sticky top-0 z-20 h-6 border-b bg-background"
@@ -702,7 +841,15 @@
 						</span>
 					</th>
 
-					{#each editor.doc.frames as frame, index (frame.id)}
+					{#if leadingFrameCols > 0}
+						<th
+							colspan={leadingFrameCols}
+							class="sticky top-6 z-20 h-8 border-b border-r bg-background"
+						></th>
+					{/if}
+
+					{#each visibleFrames as frame, offset (frame.id)}
+						{@const index = firstFrame + offset}
 						{@const selected = editor.isFrameSelected(index)}
 						{@const inLoop =
 							editor.hasLoopRange &&
@@ -767,6 +914,13 @@
 						</th>
 					{/each}
 
+					{#if trailingFrameCols > 0}
+						<th
+							colspan={trailingFrameCols}
+							class="sticky top-6 z-20 h-8 border-b bg-background"
+						></th>
+					{/if}
+
 					<th
 						scope="col"
 						class="sticky top-6 z-20 h-8 w-10 min-w-10 border-b bg-background p-0 align-middle"
@@ -786,9 +940,32 @@
 				</tr>
 			</thead>
 			<tbody>
-				{#each [...editor.doc.layers].reverse() as layer (layer.id)}
-					<TimelineLayerRow {layer} onFrameContextMenu={openFrameContextMenu} />
+				{#if leadingLayerRows > 0}
+					<tr>
+						<td
+							colspan={editor.doc.frames.length + 3}
+							class="border-b p-0"
+							style:height={`${leadingLayerRows * LAYER_ROW_HEIGHT}px`}
+						></td>
+					</tr>
+				{/if}
+				{#each visibleLayers as layer (layer.id)}
+					<TimelineLayerRow
+						{layer}
+						firstFrame={firstFrame}
+						lastFrame={lastFrame}
+						onFrameContextMenu={openFrameContextMenu}
+					/>
 				{/each}
+				{#if trailingLayerRows > 0}
+					<tr>
+						<td
+							colspan={editor.doc.frames.length + 3}
+							class="p-0"
+							style:height={`${trailingLayerRows * LAYER_ROW_HEIGHT}px`}
+						></td>
+					</tr>
+				{/if}
 			</tbody>
 		</table>
 	</div>

@@ -10,9 +10,14 @@
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Separator } from "$lib/components/ui/separator/index.js";
 	import { packColor, unpackColor } from "$lib/editor/color.js";
-	import { compositeFrameCached, compositePixel } from "$lib/editor/doc.js";
+	import {
+		compositeFrameCached,
+		compositeFrameCachedIncremental,
+		compositePixel,
+	} from "$lib/editor/doc.js";
 	import {
 		blurPixels,
+		eraseBrush,
 		fillPixels,
 		gradientPixels,
 		jumblePixels,
@@ -260,13 +265,20 @@
 		const doc = editor.doc;
 		const frame = editor.activeFrame;
 		const currentZoom = editor.effectiveZoom;
-		const revision = editor.revision;
+		editor.revision;
 
 		if (!canvas) return;
 		// Coalesce rapid pointer moves into one draw per animation frame.
 		const id = requestAnimationFrame(() => {
 			if (!canvas) return;
-			const pixels = compositeFrameCached(doc, frame, revision, true);
+			const pixels = compositeFrameCachedIncremental(
+				doc,
+				frame,
+				true,
+				editor.structureRevision,
+				editor.layerAppearanceRevision,
+				editor.activeLayerId,
+			);
 			drawScaled(
 				canvas,
 				pixels,
@@ -971,7 +983,12 @@
 		resetCurveState(false);
 	}
 
-	function appendPixelPerfectPointTo(path: Point[], x: number, y: number): boolean {
+	function appendPixelPerfectPointTo(
+		path: Point[],
+		x: number,
+		y: number,
+		removedPoints: Point[] | null = null,
+	): boolean {
 		const lastPoint = path[path.length - 1];
 		if (lastPoint && lastPoint.x === x && lastPoint.y === y) return false;
 
@@ -996,6 +1013,7 @@
 
 			if (diagonal && bTouchesA && bTouchesC) {
 				path.splice(length - 2, 1);
+				removedPoints?.push(b);
 				removed = true;
 				continue;
 			}
@@ -1003,10 +1021,6 @@
 		}
 
 		return removed;
-	}
-
-	function appendPixelPerfectPoint(x: number, y: number): boolean {
-		return appendPixelPerfectPointTo(strokePath, x, y);
 	}
 
 	function filterPixelPerfectPath(points: readonly Point[]): Point[] {
@@ -1100,6 +1114,34 @@
 		}
 	}
 
+	/**
+	 * Erases the removed corner pixels and nothing else. A 1px brush means each
+	 * removed elbow is a single pixel (plus its symmetry copies), so restoring
+	 * just those pixels is exact and avoids repainting the whole stroke. Wider
+	 * brushes make neighboring stamps overlap, so a full repaint stays the
+	 * correct, if slower, path.
+	 */
+	function erasePixelPerfectPoints(cel: Uint32Array, points: readonly Point[]): void {
+		if (!backup || points.length === 0) return;
+		if (editor.brushSize > 1) {
+			repaintPixelPerfectStroke(cel);
+			return;
+		}
+		for (const point of points) {
+			eraseBrush(
+				cel,
+				backup,
+				editor.doc.width,
+				editor.doc.height,
+				point.x,
+				point.y,
+				1,
+				strokeMirrors,
+				strokeRadial,
+			);
+		}
+	}
+
 	function updatePixelPerfectStroke(cel: Uint32Array, point: Point): void {
 		const from = last ?? point;
 		const newPoints: Point[] = [];
@@ -1109,13 +1151,16 @@
 			newPoints.push({ x, y });
 		});
 
+		const removedPoints: Point[] = [];
 		let removed = false;
 		for (const next of newPoints) {
-			if (appendPixelPerfectPoint(next.x, next.y)) removed = true;
+			if (appendPixelPerfectPointTo(strokePath, next.x, next.y, removedPoints)) {
+				removed = true;
+			}
 		}
 
 		if (removed) {
-			repaintPixelPerfectStroke(cel);
+			erasePixelPerfectPoints(cel, removedPoints);
 		} else {
 			for (const next of newPoints) paintAt(cel, next.x, next.y);
 		}

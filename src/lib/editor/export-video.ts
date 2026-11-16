@@ -2,7 +2,7 @@ import { compositeFrame, frameDurationMs } from "./doc.js";
 import {
 	animationFrameIndices,
 	exportFrameImage,
-	exportGif,
+	exportGifInWorker,
 	validateExportSize,
 	type ExportBackground,
 	type VideoFormat,
@@ -680,7 +680,7 @@ export async function exportVideo(
 
 	switch (options.format) {
 		case "gif":
-			return exportGif(doc, {
+			return exportGifInWorker(doc, {
 				scale,
 				fps: options.fps,
 				loop: options.loop,

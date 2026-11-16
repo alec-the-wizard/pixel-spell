@@ -1055,6 +1055,10 @@ export class EditorState {
 				if (cel) layer.cels[frame] = remapPalettePixels(cel, map);
 			}
 		}
+		// Baking edits every visible layer of the affected frames, so this is a
+		// structural-level pixel change (full recomposite + thumbnail refresh),
+		// not a single-layer edit.
+		this.structureRevision++;
 		this.revision++;
 		return targets.length;
 	}

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import ScanEye from "@lucide/svelte/icons/scan-eye";
 	import X from "@lucide/svelte/icons/x";
-	import { compositeFrameCached } from "$lib/editor/doc.js";
+	import { compositeFrameCachedIncremental } from "$lib/editor/doc.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
 	import { drawScaled } from "$lib/editor/render.js";
 
@@ -11,12 +11,19 @@
 		if (!editor.showPreview) return;
 		const doc = editor.doc;
 		const frame = editor.activeFrame;
-		const revision = editor.revision;
+		editor.revision;
 
 		if (!canvas) return;
 		const id = requestAnimationFrame(() => {
 			if (!canvas || !editor.showPreview) return;
-			const pixels = compositeFrameCached(doc, frame, revision);
+			const pixels = compositeFrameCachedIncremental(
+				doc,
+				frame,
+				false,
+				editor.structureRevision,
+				editor.layerAppearanceRevision,
+				editor.activeLayerId,
+			);
 			drawScaled(canvas, pixels, doc.width, doc.height, doc.width, doc.height);
 		});
 		return () => cancelAnimationFrame(id);
