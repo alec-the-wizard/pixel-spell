@@ -71,6 +71,8 @@ export interface Layer {
 	cels: Uint32Array[];
 	/** Missing means a normal paint layer. */
 	role?: LayerRole;
+	/** Optional timeline identity tint, stored as a normalized `#rrggbb` hex. */
+	color?: string;
 }
 
 /**

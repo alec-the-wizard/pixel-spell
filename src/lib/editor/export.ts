@@ -1,5 +1,5 @@
 import type { PixelBounds } from "./canvas.js";
-import { compositeFrame, frameDurationMs, loopRangeOf } from "./doc.js";
+import { cloneDoc, compositeFrame, frameDurationMs, loopRangeOf } from "./doc.js";
 import { fileBase } from "./file.js";
 import { drawPixels } from "./render.js";
 import type { PixelDoc } from "./types.js";
@@ -229,7 +229,7 @@ export function downloadBlob(filename: string, blob: Blob): void {
 	document.body.appendChild(link);
 	link.click();
 	link.remove();
-	window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+	window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 export function getSheetGeometry(
@@ -464,40 +464,37 @@ export async function exportSpriteSheet(
  * Tight opaque bounds of one composited frame, in document pixels. Reference
  * layers, hidden layers, and fully transparent layers are ignored. A fully
  * transparent frame falls back to the full canvas.
+ *
+ * The bounds are derived from a single `compositeFrame` buffer rather than
+ * scanning every layer's cel separately, so sprite-sheet metadata only pays
+ * for one optimized composite plus one scan per frame.
  */
 export function frameTrimBounds(
 	doc: PixelDoc,
 	frameIndex: number,
 ): PixelBounds {
+	const pixels = compositeFrame(doc, frameIndex);
 	let minX = doc.width;
 	let minY = doc.height;
 	let maxX = -1;
 	let maxY = -1;
 
-	for (const layer of doc.layers) {
-		const opacityByte = Math.round(layer.opacity * 255);
-		if (layer.role === "reference" || !layer.visible || opacityByte <= 0) {
-			continue;
-		}
-		const cel = layer.cels[frameIndex];
-		if (!cel) continue;
-
-		for (let y = 0; y < doc.height; y++) {
-			const rowStart = y * doc.width;
-			for (let x = 0; x < doc.width; x++) {
-				if ((cel[rowStart + x]! >>> 24) === 0) continue;
-				if (x < minX) minX = x;
-				if (x > maxX) maxX = x;
-				if (y < minY) minY = y;
-				if (y > maxY) maxY = y;
-				if (
-					minX === 0 &&
-					minY === 0 &&
-					maxX === doc.width - 1 &&
-					maxY === doc.height - 1
-				) {
-					return { x: 0, y: 0, width: doc.width, height: doc.height };
-				}
+	for (let y = 0; y < doc.height; y++) {
+		const rowStart = y * doc.width;
+		for (let x = 0; x < doc.width; x++) {
+			// In the composited buffer, transparent pixels are exactly zero.
+			if (pixels[rowStart + x] === 0) continue;
+			if (x < minX) minX = x;
+			if (x > maxX) maxX = x;
+			if (y < minY) minY = y;
+			if (y > maxY) maxY = y;
+			if (
+				minX === 0 &&
+				minY === 0 &&
+				maxX === doc.width - 1 &&
+				maxY === doc.height - 1
+			) {
+				return { x: 0, y: 0, width: doc.width, height: doc.height };
 			}
 		}
 	}
@@ -967,9 +964,10 @@ function collectGifColors(
 	background: ExportBackground,
 	frameIndices: readonly number[],
 	getFrame: (frame: number) => Uint32Array,
-): ColorCount[] {
+): { colors: ColorCount[]; buckets: Set<number> } {
 	let exact: Map<number, number> | null = new Map();
 	let buckets: Map<number, number> | null = null;
+	const observedBuckets = new Set<number>();
 
 	const backgroundRgb = background === "white" ? 0xffffff : 0x000000;
 	const backgroundR = backgroundRgb & 0xff;
@@ -977,9 +975,11 @@ function collectGifColors(
 	const backgroundB = (backgroundRgb >>> 16) & 0xff;
 
 	const add = (r: number, g: number, b: number): void => {
+		const bucketKey = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+		observedBuckets.add(bucketKey);
+
 		if (buckets) {
-			const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
-			buckets.set(key, (buckets.get(key) ?? 0) + 1);
+			buckets.set(bucketKey, (buckets.get(bucketKey) ?? 0) + 1);
 			return;
 		}
 
@@ -1029,7 +1029,7 @@ function collectGifColors(
 				count,
 			});
 		}
-		return colors;
+		return { colors, buckets: observedBuckets };
 	}
 
 	for (const [key, count] of buckets!) {
@@ -1043,7 +1043,7 @@ function collectGifColors(
 			count,
 		});
 	}
-	return colors;
+	return { colors, buckets: observedBuckets };
 }
 
 interface GifPalette {
@@ -1061,7 +1061,11 @@ function buildGifPalette(
 ): GifPalette {
 	const transparentIndex = background === "transparent" ? 0 : null;
 	const maxColors = transparentIndex === null ? 256 : 255;
-	const sourceColors = collectGifColors(background, frameIndices, getFrame);
+	const { colors: sourceColors, buckets: observedBuckets } = collectGifColors(
+		background,
+		frameIndices,
+		getFrame,
+	);
 	const reduced =
 		sourceColors.length <= maxColors
 			? sourceColors
@@ -1088,7 +1092,7 @@ function buildGifPalette(
 	while (tableSize < Math.max(2, entries)) tableSize <<= 1;
 
 	const lookup = new Uint8Array(32_768);
-	for (let key = 0; key < lookup.length; key++) {
+	for (const key of observedBuckets) {
 		const r = Math.round((((key >>> 10) & 31) * 255) / 31);
 		const g = Math.round((((key >>> 5) & 31) * 255) / 31);
 		const b = Math.round(((key & 31) * 255) / 31);
@@ -1316,6 +1320,14 @@ function writeSubBlocks(writer: ByteWriter, bytes: Uint8Array): void {
 }
 
 export function exportGif(doc: PixelDoc, options: GifExportOptions): Blob {
+	return new Blob([exportGifBytes(doc, options)], { type: "image/gif" });
+}
+
+/** Encodes a GIF as raw bytes (pure, DOM-free; safe to run in a worker). */
+export function exportGifBytes(
+	doc: PixelDoc,
+	options: GifExportOptions,
+): Uint8Array<ArrayBuffer> {
 	const scale = clampInt(options.scale, 1, 10);
 	const width = doc.width * scale;
 	const height = doc.height * scale;
@@ -1419,5 +1431,80 @@ export function exportGif(doc: PixelDoc, options: GifExportOptions): Blob {
 	}
 
 	writer.writeByte(0x3b);
-	return new Blob([writer.toUint8Array()], { type: "image/gif" });
+	return writer.toUint8Array();
+}
+
+/**
+ * Clones a document into a plain, transferable form for the GIF worker. The
+ * returned buffers are detached from the clone (not the live document) so the
+ * worker can receive them zero-copy.
+ */
+function gifWorkerPayload(doc: PixelDoc): { doc: PixelDoc; buffers: ArrayBuffer[] } {
+	const clone = cloneDoc(doc);
+	clone.references = [];
+	const buffers: ArrayBuffer[] = [];
+	for (const layer of clone.layers) {
+		for (const cel of layer.cels) buffers.push(cel.buffer as ArrayBuffer);
+	}
+	return { doc: clone, buffers };
+}
+
+/**
+ * Runs GIF encoding on a worker thread so large animations do not block the
+ * UI. Falls back to the synchronous encoder when workers are unavailable or
+ * fail, so export always completes.
+ */
+export function exportGifInWorker(
+	doc: PixelDoc,
+	options: GifExportOptions,
+): Promise<Blob> {
+	return new Promise<Blob>((resolve, reject) => {
+		const runSync = (): void => {
+			try {
+				resolve(exportGif(doc, options));
+			} catch (error) {
+				reject(error);
+			}
+		};
+
+		if (typeof Worker === "undefined") {
+			runSync();
+			return;
+		}
+
+		let worker: Worker;
+		try {
+			worker = new Worker(new URL("./export-worker.js", import.meta.url), {
+				type: "module",
+			});
+		} catch {
+			runSync();
+			return;
+		}
+
+		const payload = gifWorkerPayload(doc);
+		worker.onmessage = (event: MessageEvent) => {
+			worker.terminate();
+			const { error, bytes } = event.data as {
+				error?: string;
+				bytes?: Uint8Array<ArrayBuffer>;
+			};
+			if (error || !bytes) {
+				reject(new Error(error ?? "GIF export failed"));
+				return;
+			}
+			resolve(new Blob([bytes], { type: "image/gif" }));
+		};
+		worker.onerror = () => {
+			worker.terminate();
+			runSync();
+		};
+
+		try {
+			worker.postMessage({ doc: payload.doc, options }, payload.buffers);
+		} catch {
+			worker.terminate();
+			runSync();
+		}
+	});
 }

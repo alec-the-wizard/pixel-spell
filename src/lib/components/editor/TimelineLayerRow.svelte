@@ -7,15 +7,20 @@
 	import { tick } from "svelte";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
+	import { layerTint } from "$lib/editor/layer-color.js";
 	import type { Layer } from "$lib/editor/types.js";
 	import { cn } from "$lib/utils.js";
 	import CelThumb from "./CelThumb.svelte";
 
 	let {
 		layer,
+		firstFrame,
+		lastFrame,
 		onFrameContextMenu,
 	}: {
 		layer: Layer;
+		firstFrame: number;
+		lastFrame: number;
 		onFrameContextMenu: (
 			event: MouseEvent,
 			frameIndex: number,
@@ -24,9 +29,39 @@
 	} = $props();
 
 	let isReference = $derived(layer.role === "reference");
+	let activeRow = $derived(layer.id === editor.activeLayerId);
 	let editing = $state(false);
 	let draft = $state("");
 	let input = $state<HTMLInputElement | null>(null);
+
+	let visibleFrames = $derived(
+		lastFrame >= firstFrame
+			? editor.doc.frames.slice(firstFrame, lastFrame + 1)
+			: [],
+	);
+	let trailingFrames = $derived(
+		Math.max(0, editor.doc.frames.length - 1 - lastFrame),
+	);
+
+	let headerBackground = $derived.by(() => {
+		if (!layer.color) return undefined;
+		return activeRow
+			? layerTint(layer.color, 26, "var(--accent)")
+			: layerTint(layer.color, 16);
+	});
+
+	/** Shading strength for a cel cell; stronger for the focused layer/frame. */
+	function cellBackground(
+		activeFrame: boolean,
+		activeCel: boolean,
+		selectedFrame: boolean,
+	): string | undefined {
+		if (!layer.color) return undefined;
+		if (activeCel) return layerTint(layer.color, 26);
+		if (activeRow || activeFrame) return layerTint(layer.color, 16);
+		if (selectedFrame) return layerTint(layer.color, 13);
+		return layerTint(layer.color, 9);
+	}
 
 	function startEditing(): void {
 		editing = true;
@@ -53,8 +88,9 @@
 		scope="row"
 		class={cn(
 			"sticky left-0 z-10 h-12 w-60 min-w-60 max-w-60 border-b border-r p-0 text-left align-middle",
-			layer.id === editor.activeLayerId ? "bg-accent" : "bg-background",
+			!layer.color && (activeRow ? "bg-accent" : "bg-background"),
 		)}
+		style:background={headerBackground}
 	>
 		<div class="flex h-12 items-center gap-1.5 px-2">
 			<Button
@@ -148,8 +184,16 @@
 		</div>
 	</th>
 
-	{#each editor.doc.frames as frame, index (frame.id)}
-		{@const activeRow = layer.id === editor.activeLayerId}
+	{#if firstFrame > 0}
+		<td
+			colspan={firstFrame}
+			class="h-12 border-b"
+			style:background={layer.color ? layerTint(layer.color, 9) : undefined}
+		></td>
+	{/if}
+
+	{#each visibleFrames as frame, offset (frame.id)}
+		{@const index = firstFrame + offset}
 		{@const activeFrame = index === editor.activeFrame}
 		{@const activeCel = activeRow && activeFrame}
 		{@const selectedFrame = editor.isFrameSelected(index)}
@@ -161,6 +205,7 @@
 				selectedFrame && !activeFrame && "bg-primary/10",
 				activeCel && "bg-accent/60",
 			)}
+			style:background={cellBackground(activeFrame, activeCel, selectedFrame)}
 		>
 			<button
 				type="button"
@@ -201,6 +246,20 @@
 		</td>
 	{/each}
 
-	<td class="h-12 w-10 min-w-10 border-b"></td>
-	<td class="h-12 border-b"></td>
+	{#if trailingFrames > 0}
+		<td
+			colspan={trailingFrames}
+			class="h-12 border-b"
+			style:background={layer.color ? layerTint(layer.color, 9) : undefined}
+		></td>
+	{/if}
+
+	<td
+		class="h-12 w-10 min-w-10 border-b"
+		style:background={layer.color ? layerTint(layer.color, 9) : undefined}
+	></td>
+	<td
+		class="h-12 border-b"
+		style:background={layer.color ? layerTint(layer.color, 9) : undefined}
+	></td>
 </tr>

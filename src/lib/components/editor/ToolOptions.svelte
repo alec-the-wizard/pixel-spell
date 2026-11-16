@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
 	import Circle from "@lucide/svelte/icons/circle";
 	import Slash from "@lucide/svelte/icons/slash";
 	import { Button } from "$lib/components/ui/button/index.js";
@@ -16,6 +17,10 @@
 		{ id: "bayer4", label: "Bayer 4x4" },
 		{ id: "bayer8", label: "Bayer 8x8" },
 	];
+
+	/** Accent colors for the left (blue) and right (orange) tool slots. */
+	const LEFT_SLOT_COLOR = "#3b82f6";
+	const RIGHT_SLOT_COLOR = "#f97316";
 
 	let tool = $derived(TOOL_BY_ID[editor.tool]);
 	let isShape = $derived(editor.tool === "shape");
@@ -44,7 +49,7 @@
 	{/if}
 {/snippet}
 
-<section class="flex min-h-0 flex-1 flex-col">
+<section class="relative flex min-h-0 flex-1 flex-col">
 	<header class="flex h-11 shrink-0 items-center gap-2.5 border-b px-4">
 		<div class="grid size-7 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
 			<ToolIcon tool={editor.tool} class="size-4" />
@@ -60,7 +65,29 @@
 			</div>
 			<p class="truncate text-[10px] text-muted-foreground">{tool.description}</p>
 		</div>
+		{#if editor.doubleToolEnabled}
+			<Button
+				variant="ghost"
+				size="icon-xs"
+				class="shrink-0 text-muted-foreground"
+				onclick={() => editor.showOtherToolOptions()}
+				title="Show the other mouse button's tool options"
+				aria-label="Show the other mouse button's tool options"
+			>
+				<ArrowLeftRight class="size-3.5" />
+			</Button>
+		{/if}
 	</header>
+
+	{#if editor.doubleToolEnabled}
+		<div
+			class="pointer-events-none absolute left-0 right-0 top-[2.75rem] z-10 h-0.5"
+			style:background={editor.activeToolSlot === "left"
+				? LEFT_SLOT_COLOR
+				: RIGHT_SLOT_COLOR}
+			aria-hidden="true"
+		></div>
+	{/if}
 
 	<div class="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
 		<div class="space-y-5">
@@ -70,10 +97,37 @@
 					locked or hidden.
 				</p>
 			{:else if editor.tool === "zoom"}
-				<p class="text-[10px] leading-relaxed text-muted-foreground">
-					Left-click to zoom in and right-click to zoom out. Zooming stays focused on the
-					point under the pointer.
-				</p>
+				{#if editor.doubleToolEnabled}
+					<div class="space-y-2.5">
+						<span class="text-xs font-medium">Zoom direction</span>
+						<div class="grid grid-cols-2 gap-1.5" role="group" aria-label="Zoom direction">
+							<Button
+								variant={editor.zoomDirection === 1 ? "secondary" : "outline"}
+								size="sm"
+								onclick={() => (editor.zoomDirection = 1)}
+								aria-pressed={editor.zoomDirection === 1}
+							>
+								Zoom in
+							</Button>
+							<Button
+								variant={editor.zoomDirection === -1 ? "secondary" : "outline"}
+								size="sm"
+								onclick={() => (editor.zoomDirection = -1)}
+								aria-pressed={editor.zoomDirection === -1}
+							>
+								Zoom out
+							</Button>
+						</div>
+						<p class="text-[10px] leading-relaxed text-muted-foreground">
+							Click with the assigned mouse button to zoom in the chosen direction.
+						</p>
+					</div>
+				{:else}
+					<p class="text-[10px] leading-relaxed text-muted-foreground">
+						Left-click to zoom in and right-click to zoom out. Zooming stays focused on the
+						point under the pointer.
+					</p>
+				{/if}
 			{:else if editor.tool === "magic-wand"}
 				<label
 					class="flex items-start justify-between gap-3 rounded-lg border px-3 py-2.5"
@@ -122,6 +176,29 @@
 					</span>
 					<Switch bind:checked={editor.sampleAllLayers} />
 				</label>
+				{#if editor.doubleToolEnabled}
+					<div class="space-y-2.5">
+						<span class="text-xs font-medium">Pick target</span>
+						<div class="grid grid-cols-2 gap-1.5" role="group" aria-label="Eyedropper target">
+							<Button
+								variant={editor.eyedropperTarget === "primary" ? "secondary" : "outline"}
+								size="sm"
+								onclick={() => (editor.eyedropperTarget = "primary")}
+								aria-pressed={editor.eyedropperTarget === "primary"}
+							>
+								Primary
+							</Button>
+							<Button
+								variant={editor.eyedropperTarget === "secondary" ? "secondary" : "outline"}
+								size="sm"
+								onclick={() => (editor.eyedropperTarget = "secondary")}
+								aria-pressed={editor.eyedropperTarget === "secondary"}
+							>
+								Secondary
+							</Button>
+						</div>
+					</div>
+				{/if}
 			{:else if editor.tool === "spray"}
 				<div class="space-y-2.5">
 					<div class="flex items-center justify-between">
@@ -173,7 +250,7 @@
 					</div>
 					<Slider type="single" min={1} max={100} step={1} bind:value={editor.blurPower} />
 					<p class="text-[10px] leading-snug text-muted-foreground">
-						Each click applies one pass. Click again to soften the area further.
+						Pass over an area repeatedly to soften it further.
 					</p>
 				</div>
 			{:else if editor.tool === "jumble"}

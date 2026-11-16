@@ -10,9 +10,14 @@
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Separator } from "$lib/components/ui/separator/index.js";
 	import { packColor, unpackColor } from "$lib/editor/color.js";
-	import { compositeFrameCached, compositePixel } from "$lib/editor/doc.js";
+	import {
+		compositeFrameCached,
+		compositeFrameCachedIncremental,
+		compositePixel,
+	} from "$lib/editor/doc.js";
 	import {
 		blurPixels,
+		eraseBrush,
 		fillPixels,
 		gradientPixels,
 		jumblePixels,
@@ -40,16 +45,22 @@
 		Point,
 		RadialSymmetry,
 		ReferenceImage,
+		ToolId,
 	} from "$lib/editor/types.js";
 	import { cn } from "$lib/utils.js";
 	import Preview from "./Preview.svelte";
 	import ReferenceBoardImage from "./ReferenceBoardImage.svelte";
 	import ReferenceBoardPanel from "./ReferenceBoardPanel.svelte";
+	import ToolIcon from "./ToolIcon.svelte";
 
 	const ROTATION_OPTIONS = Array.from({ length: 25 }, (_, index) => -180 + index * 15);
 	const GRID_SIZES = [1, 2, 4, 8, 16, 32, 64];
 	const GRID_MIN = GRID_SIZES[0]!;
 	const GRID_MAX = GRID_SIZES[GRID_SIZES.length - 1]!;
+
+	/** Accent colors for the left (blue) and right (orange) tool slots. */
+	const LEFT_SLOT_COLOR = "#3b82f6";
+	const RIGHT_SLOT_COLOR = "#f97316";
 
 	function stepGridSize(direction: 1 | -1): void {
 		const current = GRID_SIZES.indexOf(editor.gridSize);
@@ -83,6 +94,8 @@
 	let backup: Uint32Array | null = null;
 	/** Packed color captured on pointer down, so the whole stroke stays consistent. */
 	let strokeColor = 0;
+	/** Tool running for the active pointer gesture, resolved from the button. */
+	let strokeTool: ToolId = "pencil";
 	/** Mirror axes captured on pointer down; avoids rebuilding the array per pixel. */
 	let strokeMirrors: readonly MirrorAxis[] = [];
 	/** Radial symmetry captured on pointer down, or null when it is off. */
@@ -110,6 +123,8 @@
 	let panning = $state(false);
 	let panOrigin = { x: 0, y: 0, panX: 0, panY: 0 };
 	let wheelAccumulator = 0;
+	/** Raw pointer position in stage-local screen pixels, for the floating tool icon. */
+	let pointerScreen = $state<{ x: number; y: number } | null>(null);
 
 	let selecting = false;
 	let selectStart: Point | null = null;
@@ -121,6 +136,9 @@
 	let lassoDragging = false;
 	let lassoAdditive = false;
 	let lassoBaseMask: Uint8Array | null = null;
+	/** Tracks the last lasso click so a double-click can finish the selection. */
+	let lassoLastClickTime = 0;
+	let lassoLastClickPoint: Point | null = null;
 
 	let movingSelection = false;
 	let moveStart: Point | null = null;
@@ -131,7 +149,6 @@
 	/** True when the drag started on content that was already floating. */
 	let moveExistingFloating = false;
 
-	let hoveringSelection = $state(false);
 	let hoveringMirror = $state<MirrorKind | null>(null);
 	let draggingMirror = $state<MirrorKind | null>(null);
 	let hoveringRadialCenter = $state(false);
@@ -185,6 +202,17 @@
 			!isSelectionTool(editor.tool),
 	);
 
+	let showToolCursor = $derived(
+		!!pointerScreen &&
+			!panning &&
+			!draggingMirror &&
+			!hoveringMirror &&
+			!draggingRadialCenter &&
+			!hoveringRadialCenter &&
+			!draggingReference &&
+			!hoveringReference,
+	);
+
 	let canvasCursor = $derived(
 		draggingReference
 			? "cursor-grabbing"
@@ -200,21 +228,7 @@
 								? mirrorCursor(hoveringMirror)
 								: panning
 									? "cursor-grabbing"
-									: editor.tool === "pan"
-										? "cursor-grab"
-										: editor.tool === "zoom"
-											? "cursor-zoom-in"
-											: isSelectionTool(editor.tool)
-												? hoveringSelection
-													? "cursor-move"
-													: "cursor-crosshair"
-												: editor.tool === "eyedropper"
-													? "cursor-copy"
-													: !isDrawable
-														? "cursor-not-allowed"
-														: editor.tool === "fill"
-															? "cursor-cell"
-															: "cursor-crosshair",
+									: "cursor-crosshair",
 	);
 
 	let stageCursor = $derived(
@@ -260,13 +274,20 @@
 		const doc = editor.doc;
 		const frame = editor.activeFrame;
 		const currentZoom = editor.effectiveZoom;
-		const revision = editor.revision;
+		editor.revision;
 
 		if (!canvas) return;
 		// Coalesce rapid pointer moves into one draw per animation frame.
 		const id = requestAnimationFrame(() => {
 			if (!canvas) return;
-			const pixels = compositeFrameCached(doc, frame, revision, true);
+			const pixels = compositeFrameCachedIncremental(
+				doc,
+				frame,
+				true,
+				editor.structureRevision,
+				editor.layerAppearanceRevision,
+				editor.activeLayerId,
+			);
 			drawScaled(
 				canvas,
 				pixels,
@@ -279,6 +300,8 @@
 		return () => cancelAnimationFrame(id);
 	});
 
+	let onionTintBuffer: Uint32Array | null = null;
+
 	/** Recolors an onion frame so previous and next frames stay distinguishable. */
 	function tintOnionPixels(
 		source: Uint32Array,
@@ -287,11 +310,18 @@
 	): Uint32Array {
 		const color = unpackColor(packColor(tint));
 		const mix = 0.82;
-		const output = new Uint32Array(source.length);
+		if (!onionTintBuffer || onionTintBuffer.length < source.length) {
+			onionTintBuffer = new Uint32Array(source.length);
+		}
+		const output = onionTintBuffer;
 		for (let index = 0; index < source.length; index++) {
 			const value = source[index]!;
 			const alpha = value >>> 24;
-			if (alpha === 0) continue;
+			if (alpha === 0) {
+				// Reused buffer: clear any stale pixel left by the previous skin.
+				output[index] = 0;
+				continue;
+			}
 			const r = value & 0xff;
 			const g = (value >>> 8) & 0xff;
 			const b = (value >>> 16) & 0xff;
@@ -442,6 +472,7 @@
 		draggingReference = null;
 		hoveringReference = false;
 		selecting = false;
+		pointerScreen = null;
 	});
 
 	$effect(() => {
@@ -697,7 +728,7 @@
 	}
 
 	function paintAt(cel: Uint32Array, x: number, y: number): void {
-		const color = editor.tool === "eraser" ? 0 : strokeColor;
+		const color = strokeTool === "eraser" ? 0 : strokeColor;
 		paintBrush(
 			cel,
 			editor.doc.width,
@@ -731,7 +762,7 @@
 	}
 
 	function applyAreaTool(cel: Uint32Array, point: Point): boolean {
-		if (editor.tool === "blur") {
+		if (strokeTool === "blur") {
 			return blurPixels(
 				cel,
 				editor.doc.width,
@@ -744,7 +775,7 @@
 				editor.lockAlpha,
 			);
 		}
-		if (editor.tool === "jumble") {
+		if (strokeTool === "jumble") {
 			return jumblePixels(
 				cel,
 				editor.doc.width,
@@ -772,7 +803,7 @@
 		stopSpray();
 		sprayLastTick = performance.now();
 		sprayTimer = setInterval(() => {
-			if (!drawing || editor.tool !== "spray") {
+			if (!drawing || strokeTool !== "spray") {
 				stopSpray();
 				return;
 			}
@@ -826,11 +857,11 @@
 				editor.lockAlpha,
 			);
 
-		const pixelPerfect = editor.pixelPerfectFor(editor.tool);
+		const pixelPerfect = editor.pixelPerfectFor(strokeTool);
 
-		if (editor.tool === "line") {
+		if (strokeTool === "line") {
 			plotLine(start.x, start.y, end.x, end.y, stroke);
-		} else if (editor.tool === "shape") {
+		} else if (strokeTool === "shape") {
 			const minSide = Math.min(
 				Math.abs(end.x - start.x),
 				Math.abs(end.y - start.y),
@@ -962,7 +993,12 @@
 		resetCurveState(false);
 	}
 
-	function appendPixelPerfectPointTo(path: Point[], x: number, y: number): boolean {
+	function appendPixelPerfectPointTo(
+		path: Point[],
+		x: number,
+		y: number,
+		removedPoints: Point[] | null = null,
+	): boolean {
 		const lastPoint = path[path.length - 1];
 		if (lastPoint && lastPoint.x === x && lastPoint.y === y) return false;
 
@@ -987,6 +1023,7 @@
 
 			if (diagonal && bTouchesA && bTouchesC) {
 				path.splice(length - 2, 1);
+				removedPoints?.push(b);
 				removed = true;
 				continue;
 			}
@@ -994,10 +1031,6 @@
 		}
 
 		return removed;
-	}
-
-	function appendPixelPerfectPoint(x: number, y: number): boolean {
-		return appendPixelPerfectPointTo(strokePath, x, y);
 	}
 
 	function filterPixelPerfectPath(points: readonly Point[]): Point[] {
@@ -1073,7 +1106,7 @@
 		if (!backup) return;
 		cel.set(backup);
 
-		const color = editor.tool === "eraser" ? 0 : strokeColor;
+		const color = strokeTool === "eraser" ? 0 : strokeColor;
 		for (const point of strokePath) {
 			paintBrush(
 				cel,
@@ -1091,6 +1124,34 @@
 		}
 	}
 
+	/**
+	 * Erases the removed corner pixels and nothing else. A 1px brush means each
+	 * removed elbow is a single pixel (plus its symmetry copies), so restoring
+	 * just those pixels is exact and avoids repainting the whole stroke. Wider
+	 * brushes make neighboring stamps overlap, so a full repaint stays the
+	 * correct, if slower, path.
+	 */
+	function erasePixelPerfectPoints(cel: Uint32Array, points: readonly Point[]): void {
+		if (!backup || points.length === 0) return;
+		if (editor.brushSize > 1) {
+			repaintPixelPerfectStroke(cel);
+			return;
+		}
+		for (const point of points) {
+			eraseBrush(
+				cel,
+				backup,
+				editor.doc.width,
+				editor.doc.height,
+				point.x,
+				point.y,
+				1,
+				strokeMirrors,
+				strokeRadial,
+			);
+		}
+	}
+
 	function updatePixelPerfectStroke(cel: Uint32Array, point: Point): void {
 		const from = last ?? point;
 		const newPoints: Point[] = [];
@@ -1100,13 +1161,16 @@
 			newPoints.push({ x, y });
 		});
 
+		const removedPoints: Point[] = [];
 		let removed = false;
 		for (const next of newPoints) {
-			if (appendPixelPerfectPoint(next.x, next.y)) removed = true;
+			if (appendPixelPerfectPointTo(strokePath, next.x, next.y, removedPoints)) {
+				removed = true;
+			}
 		}
 
 		if (removed) {
-			repaintPixelPerfectStroke(cel);
+			erasePixelPerfectPoints(cel, removedPoints);
 		} else {
 			for (const next of newPoints) paintAt(cel, next.x, next.y);
 		}
@@ -1298,6 +1362,8 @@
 		lassoDragging = false;
 		lassoAdditive = false;
 		lassoBaseMask = null;
+		lassoLastClickTime = 0;
+		lassoLastClickPoint = null;
 	}
 
 	function beginSelectionMove(point: Point): void {
@@ -1655,7 +1721,12 @@
 
 	function handlePointerDown(event: PointerEvent): void {
 		blurActiveInput();
-		const tool = editor.tool;
+		const tool = editor.toolForButton(event.button === 2 ? 2 : 0);
+		strokeTool = tool;
+
+		// Starting a different tool's gesture commits any pending curve so its
+		// multi-phase state cannot leak into the new stroke.
+		if (tool !== "curve" && curvePhase !== "idle") finishCurve();
 
 		if (event.button === 1) {
 			event.preventDefault();
@@ -1696,24 +1767,17 @@
 		hoveringRadialCenter = false;
 
 		if (tool === "pan") {
-			if (event.button !== 0) return;
+			if (event.button !== 0 && event.button !== 2) return;
 			startPan(event);
 			return;
 		}
 
 		if (tool === "zoom") {
 			if (event.button !== 0 && event.button !== 2) return;
-			zoomAtPoint(event, event.button === 0 ? 1 : -1);
-			return;
-		}
-
-		if (tool === "lasso" && event.button === 2) {
-			if (lassoPoints.length >= 2) {
-				event.preventDefault();
-				const point = pixelFromEvent(event, true);
-				if (point) lassoHover = point;
-				finishLasso();
-			}
+			zoomAtPoint(
+				event,
+				editor.doubleToolEnabled ? editor.zoomDirection : event.button === 0 ? 1 : -1,
+			);
 			return;
 		}
 
@@ -1728,15 +1792,33 @@
 		capturePointer(event);
 
 		if (isSelectionTool(tool)) {
-			if (secondary) return;
-
 			const additive = event.shiftKey && !!editor.selection;
 
-			// A pending lasso keeps accepting points, even over an older selection.
-			if (tool === "lasso" && lassoPoints.length > 0) {
-				appendLassoPoint(point);
-				lassoDragging = true;
-				return;
+			if (tool === "lasso") {
+				const now = performance.now();
+				const isDoubleClick =
+					lassoLastClickTime > 0 &&
+					lassoLastClickPoint !== null &&
+					now - lassoLastClickTime < 400 &&
+					Math.abs(point.x - lassoLastClickPoint.x) <= 2 &&
+					Math.abs(point.y - lassoLastClickPoint.y) <= 2;
+				lassoLastClickTime = now;
+				lassoLastClickPoint = point;
+
+				if (isDoubleClick && lassoPoints.length >= 2) {
+					lassoHover = point;
+					finishLasso();
+					lassoLastClickTime = 0;
+					lassoLastClickPoint = null;
+					return;
+				}
+
+				// A pending lasso keeps accepting points, even over an older selection.
+				if (lassoPoints.length > 0) {
+					appendLassoPoint(point);
+					lassoDragging = true;
+					return;
+				}
 			}
 
 			if (!additive && editor.selection && isPointSelected(point) && isEditable()) {
@@ -1761,15 +1843,11 @@
 				return;
 			}
 			if (tool === "lasso") {
-				if (lassoPoints.length === 0) {
-					lassoPoints = [point];
-					lassoHover = point;
-					lassoAdditive = additive;
-					lassoBaseMask =
-						additive && editor.selection ? new Uint8Array(editor.selection) : null;
-				} else {
-					appendLassoPoint(point);
-				}
+				lassoPoints = [point];
+				lassoHover = point;
+				lassoAdditive = additive;
+				lassoBaseMask =
+					additive && editor.selection ? new Uint8Array(editor.selection) : null;
 				lassoDragging = true;
 				return;
 			}
@@ -1778,7 +1856,14 @@
 		if (tool === "eyedropper") {
 			// Picking is read-only, so it works even when the active layer is
 			// locked or hidden.
-			pickColor(point, secondary ? "secondary" : "primary");
+			pickColor(
+				point,
+				editor.doubleToolEnabled
+					? editor.eyedropperTarget
+					: secondary
+						? "secondary"
+						: "primary",
+			);
 			return;
 		}
 
@@ -1881,6 +1966,11 @@
 	}
 
 	function handlePointerMove(event: PointerEvent): void {
+		pointerScreen = {
+			x: event.clientX - stageRect.left,
+			y: event.clientY - stageRect.top,
+		};
+
 		if (draggingReference) {
 			updateReferenceDrag(event);
 			return;
@@ -1934,7 +2024,7 @@
 			return;
 		}
 
-		if (editor.tool === "curve" && curvePhase !== "idle") {
+		if (curvePhase !== "idle") {
 			const point = pixelFromEvent(event, true);
 			if (!point) return;
 			setCursor(point);
@@ -1971,15 +2061,13 @@
 			lassoHover = point;
 		}
 
-		hoveringSelection = isSelectionTool(editor.tool) && isPointSelected(point);
-
 		if (!drawing || !point) return;
 		const layer = editor.activeLayer;
 		const cel = layer.cels[editor.activeFrame];
 		if (!cel) return;
 
 		let changed = false;
-		if (editor.tool === "pencil" || editor.tool === "eraser") {
+		if (strokeTool === "pencil" || strokeTool === "eraser") {
 			if (strokePixelPerfect) {
 				updatePixelPerfectStroke(cel, point);
 			} else {
@@ -1988,19 +2076,15 @@
 				last = point;
 			}
 			changed = true;
-		} else if (editor.tool === "spray") {
+		} else if (strokeTool === "spray") {
 			// The spray timer paints while the pointer is held still.
 			last = point;
-		} else if (editor.tool === "blur") {
-			// Blur applies exactly one pass per pointer hold; dragging over the
-			// same stroke must not stack additional passes.
-			last = point;
-		} else if (editor.tool === "jumble") {
+		} else if (strokeTool === "blur" || strokeTool === "jumble") {
 			if (!last || last.x !== point.x || last.y !== point.y) {
 				last = point;
 				changed = applyAreaTool(cel, point);
 			}
-		} else if (editor.tool === "gradient") {
+		} else if (strokeTool === "gradient") {
 			if (!last || last.x !== point.x || last.y !== point.y) {
 				last = point;
 				changed = drawGradient(cel, point, () => {
@@ -2034,7 +2118,7 @@
 			return;
 		}
 
-		if (editor.tool === "curve" && curvePhase !== "idle") {
+		if (curvePhase !== "idle") {
 			if (curveDragging) {
 				if (curvePhase === "base") {
 					if (
@@ -2087,7 +2171,7 @@
 
 		if (drawing) {
 			stopSpray();
-			const commit = editor.tool !== "gradient" || gradientHistoryPushed;
+			const commit = strokeTool !== "gradient" || gradientHistoryPushed;
 			drawing = false;
 			backup = null;
 			start = null;
@@ -2104,9 +2188,9 @@
 	}
 
 	function handlePointerLeave(): void {
+		pointerScreen = null;
 		if (drawing || selecting || lassoDragging || movingSelection || panning) return;
 		setCursor(null);
-		hoveringSelection = false;
 		hoveringMirror = null;
 		hoveringRadialCenter = false;
 		hoveringReference = false;
@@ -2139,7 +2223,7 @@
 			return;
 		}
 
-		if (isSelectionTool(editor.tool)) editor.clearSelection();
+		if (isSelectionTool(editor.toolForButton(0))) editor.clearSelection();
 	}
 
 	function handleStagePointerMove(event: PointerEvent): void {
@@ -2284,6 +2368,38 @@
 				{/if}
 			{/if}
 		</div>
+
+		{#if pointerScreen && showToolCursor}
+			{#if editor.doubleToolEnabled}
+				<div
+					class="pointer-events-none absolute z-20 flex size-7 items-center justify-center rounded-md border bg-background/90 shadow-sm"
+					style:left={`${pointerScreen.x - 32}px`}
+					style:top={`${pointerScreen.y + 12}px`}
+					style:border-color={LEFT_SLOT_COLOR}
+					aria-hidden="true"
+				>
+					<ToolIcon tool={editor.leftTool} class="size-4" />
+				</div>
+				<div
+					class="pointer-events-none absolute z-20 flex size-7 items-center justify-center rounded-md border bg-background/90 shadow-sm"
+					style:left={`${pointerScreen.x + 4}px`}
+					style:top={`${pointerScreen.y + 12}px`}
+					style:border-color={RIGHT_SLOT_COLOR}
+					aria-hidden="true"
+				>
+					<ToolIcon tool={editor.rightTool} class="size-4" />
+				</div>
+			{:else}
+				<div
+					class="pointer-events-none absolute z-20 flex size-7 items-center justify-center rounded-md border bg-background/90 shadow-sm"
+					style:left={`${pointerScreen.x - 32}px`}
+					style:top={`${pointerScreen.y + 12}px`}
+					aria-hidden="true"
+				>
+					<ToolIcon tool={editor.tool} class="size-4" />
+				</div>
+			{/if}
+		{/if}
 
 		<canvas
 			bind:this={mirrorCanvas}

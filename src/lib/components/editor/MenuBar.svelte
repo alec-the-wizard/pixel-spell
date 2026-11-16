@@ -1,5 +1,7 @@
 <script lang="ts">
+	import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
 	import Asterisk from "@lucide/svelte/icons/asterisk";
+	import Check from "@lucide/svelte/icons/check";
 	import ChevronDown from "@lucide/svelte/icons/chevron-down";
 	import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste";
 	import Copy from "@lucide/svelte/icons/copy";
@@ -41,6 +43,7 @@
 		RADIAL_SYMMETRY_MAX,
 		RADIAL_SYMMETRY_MIN,
 	} from "$lib/editor/editor.svelte.js";
+	import { layerColorName } from "$lib/editor/layer-color.js";
 
 	let {
 		onNew,
@@ -287,6 +290,14 @@
 					<Images class="size-4" />
 					Show reference board
 				</DropdownMenu.CheckboxItem>
+				<DropdownMenu.Separator />
+				<DropdownMenu.Item onSelect={() => editor.toggleDoubleToolMode()}>
+					<ArrowLeftRight class="size-4" />
+					Double tool mode
+					{#if editor.doubleToolEnabled}
+						<Check class="ml-auto size-4" />
+					{/if}
+				</DropdownMenu.Item>
 				<DropdownMenu.Item onSelect={() => editor.toggleTheme()}>
 					{#if editor.theme === "dark"}
 						<Sun class="size-4" />
@@ -339,8 +350,18 @@
 			<span class="h-3 w-px shrink-0 bg-border" aria-hidden="true"></span>
 			<span class="shrink-0">Frame {editor.activeFrame + 1} / {editor.frameCount}</span>
 			<span class="h-3 w-px shrink-0 bg-border" aria-hidden="true"></span>
-			<span class="max-w-36 truncate" title="Current layer">
-				Layer: {editor.activeLayer.name}
+			<span
+				class="flex min-w-0 max-w-40 items-center gap-1"
+				title={`Current layer${editor.activeLayer.color ? ` · ${layerColorName(editor.activeLayer.color)}` : ""}`}
+			>
+				{#if editor.activeLayer.color}
+					<span
+						class="size-2 shrink-0 rounded-full border border-black/20 dark:border-white/30"
+						style:background={editor.activeLayer.color}
+						aria-hidden="true"
+					></span>
+				{/if}
+				<span class="truncate">Layer: {editor.activeLayer.name}</span>
 			</span>
 		</div>
 	</div>

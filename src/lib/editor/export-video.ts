@@ -2,7 +2,7 @@ import { compositeFrame, frameDurationMs } from "./doc.js";
 import {
 	animationFrameIndices,
 	exportFrameImage,
-	exportGif,
+	exportGifInWorker,
 	validateExportSize,
 	type ExportBackground,
 	type VideoFormat,
@@ -22,12 +22,42 @@ export interface VideoExportOptions {
 	loopRange?: boolean;
 	/** Lossy quality 0–100 for WebP, WebM/MP4, and the JPEG video containers. */
 	quality: number;
+	/** Cancels an in-progress export (used by the real-time video recorder). */
+	signal?: AbortSignal;
 }
 
 const clampInt = (value: number, min: number, max: number) =>
 	Number.isFinite(value) ? Math.max(min, Math.min(max, Math.round(value))) : min;
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/** An error that distinguishes a user-initiated cancel from a real failure. */
+function abortError(): Error {
+	const error = new Error("Export cancelled");
+	error.name = "AbortError";
+	return error;
+}
+
+/**
+ * Resolves after `ms` milliseconds, or rejects with an AbortError when the
+ * signal fires first. Used to keep the real-time MediaRecorder loop
+ * interruptible without leaving a hung `setTimeout` behind.
+ */
+const sleep = (ms: number, signal?: AbortSignal) =>
+	new Promise<void>((resolve, reject) => {
+		if (signal?.aborted) {
+			reject(abortError());
+			return;
+		}
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const onAbort = () => {
+			if (timer !== undefined) clearTimeout(timer);
+			reject(abortError());
+		};
+		signal?.addEventListener("abort", onAbort, { once: true });
+		timer = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+	});
 
 function ascii(value: string): Uint8Array<ArrayBuffer> {
 	const bytes = new Uint8Array(value.length);
@@ -88,9 +118,11 @@ async function encodeJpegFrames(
 	scale: number,
 	background: ExportBackground,
 	quality: number,
+	signal?: AbortSignal,
 ): Promise<Uint8Array[]> {
 	const frames: Uint8Array[] = [];
 	for (const frameIndex of frameIndices) {
+		if (signal?.aborted) throw abortError();
 		const blob = await exportFrameImage(doc, {
 			frame: frameIndex,
 			scale,
@@ -536,6 +568,7 @@ function pickMimeType(candidates: string[]): string | null {
 
 function drawVideoFrame(
 	canvas: HTMLCanvasElement,
+	source: HTMLCanvasElement,
 	doc: PixelDoc,
 	frameIndex: number,
 	scale: number,
@@ -550,7 +583,6 @@ function drawVideoFrame(
 		context.fillRect(0, 0, canvas.width, canvas.height);
 	}
 
-	const source = document.createElement("canvas");
 	drawPixels(source, compositeFrame(doc, frameIndex), doc.width, doc.height);
 	context.imageSmoothingEnabled = false;
 	context.drawImage(source, 0, 0, doc.width * scale, doc.height * scale);
@@ -563,6 +595,7 @@ async function encodeMediaVideo(
 	background: ExportBackground,
 	quality: number,
 	candidates: string[],
+	signal?: AbortSignal,
 ): Promise<Blob> {
 	const mimeType = pickMimeType(candidates);
 	if (!mimeType) {
@@ -570,6 +603,8 @@ async function encodeMediaVideo(
 			"This browser cannot record the requested video format. Try WebM or MP4 in a Chromium browser.",
 		);
 	}
+
+	if (signal?.aborted) throw abortError();
 
 	const width = doc.width * scale;
 	const height = doc.height * scale;
@@ -581,35 +616,49 @@ async function encodeMediaVideo(
 	canvas.style.top = "0";
 	document.body.appendChild(canvas);
 
+	// A single scratch surface avoids allocating a canvas per recorded frame.
+	const source = document.createElement("canvas");
+	let recorder: MediaRecorder | null = null;
+	let stream: MediaStream | null = null;
+
 	try {
-		const stream = canvas.captureStream(30);
+		stream = canvas.captureStream(30);
 		const videoBitsPerSecond = Math.round(
 			500_000 * (0.25 + (Math.max(0, Math.min(100, quality)) / 100) * 7.75),
 		);
-		const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond });
+		recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond });
+		const rec = recorder;
 		const chunks: BlobPart[] = [];
-		recorder.ondataavailable = (event) => {
+		rec.ondataavailable = (event) => {
 			if (event.data && event.data.size > 0) chunks.push(event.data);
 		};
 		const stopped = new Promise<void>((resolve) => {
-			recorder.onstop = () => resolve();
+			rec.onstop = () => resolve();
 		});
 
-		drawVideoFrame(canvas, doc, frameIndices[0]!, scale, background);
-		recorder.start(100);
+		drawVideoFrame(canvas, source, doc, frameIndices[0]!, scale, background);
+		rec.start(100);
 
 		for (let index = 0; index < frameIndices.length; index++) {
-			drawVideoFrame(canvas, doc, frameIndices[index]!, scale, background);
-			await sleep(Math.max(10, frameDurationMs(doc, frameIndices[index]!)));
+			if (signal?.aborted) throw abortError();
+			drawVideoFrame(canvas, source, doc, frameIndices[index]!, scale, background);
+			await sleep(
+				Math.max(10, frameDurationMs(doc, frameIndices[index]!)),
+				signal,
+			);
 		}
 
 		// Keep the final frame visible long enough to be captured.
-		await sleep(80);
-		recorder.stop();
+		await sleep(80, signal);
+		rec.stop();
 		await stopped;
 
 		return new Blob(chunks, { type: mimeType });
 	} finally {
+		// Guarantee teardown even if a frame draw throws mid-recording, so a
+		// live recorder and its capture stream are never leaked.
+		if (recorder && recorder.state !== "inactive") recorder.stop();
+		stream?.getTracks().forEach((track) => track.stop());
 		canvas.remove();
 	}
 }
@@ -627,10 +676,11 @@ export async function exportVideo(
 	const height = doc.height * scale;
 	const sizeError = validateExportSize(width, height, frameIndices.length, true);
 	if (sizeError) throw new Error(sizeError);
+	if (options.signal?.aborted) throw abortError();
 
 	switch (options.format) {
 		case "gif":
-			return exportGif(doc, {
+			return exportGifInWorker(doc, {
 				scale,
 				fps: options.fps,
 				loop: options.loop,
@@ -660,6 +710,7 @@ export async function exportVideo(
 				options.background,
 				options.quality,
 				["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"],
+				options.signal,
 			);
 		case "mp4":
 			return encodeMediaVideo(
@@ -669,6 +720,7 @@ export async function exportVideo(
 				options.background,
 				options.quality,
 				["video/mp4;codecs=avc1.42E01E", "video/mp4", "video/mp4;codecs=avc1"],
+				options.signal,
 			);
 		case "mov": {
 			const frames = await encodeJpegFrames(
@@ -677,6 +729,7 @@ export async function exportVideo(
 				scale,
 				options.background,
 				options.quality,
+				options.signal,
 			);
 			const durations = frameIndices.map((index) => frameDurationMs(doc, index));
 			return new Blob([buildMov(frames, width, height, durations)], {
@@ -690,6 +743,7 @@ export async function exportVideo(
 				scale,
 				options.background,
 				options.quality,
+				options.signal,
 			);
 			return new Blob([buildAvi(frames, width, height, options.fps)], {
 				type: "video/x-msvideo",
@@ -702,6 +756,7 @@ export async function exportVideo(
 				scale,
 				options.background,
 				options.quality,
+				options.signal,
 			);
 			const durations = frameIndices.map((index) => frameDurationMs(doc, index));
 			return new Blob([buildMkv(frames, width, height, durations)], {

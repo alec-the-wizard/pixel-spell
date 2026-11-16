@@ -4,8 +4,8 @@
 	import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 	import AboutDialog from "$lib/components/editor/AboutDialog.svelte";
 	import CommandPalette from "$lib/components/editor/CommandPalette.svelte";
-	import ExportDialog from "$lib/components/editor/ExportDialog.svelte";
-	import ImportDialog from "$lib/components/editor/ImportDialog.svelte";
+	import LazyExportDialog from "$lib/components/editor/LazyExportDialog.svelte";
+	import LazyImportDialog from "$lib/components/editor/LazyImportDialog.svelte";
 	import RecoveryDialog from "$lib/components/editor/RecoveryDialog.svelte";
 	import TimelineDock from "$lib/components/editor/TimelineDock.svelte";
 	import CanvasStage from "$lib/components/editor/CanvasStage.svelte";
@@ -312,8 +312,8 @@
 	<CommandPalette bind:open={commandPaletteOpen} />
 	<ShortcutsDialog bind:open={shortcutsOpen} />
 	<AboutDialog bind:open={aboutOpen} />
-	<ImportDialog bind:open={importDialogOpen} file={importFile} />
-	<ExportDialog bind:open={exportDialogOpen} />
+	<LazyImportDialog bind:open={importDialogOpen} file={importFile} />
+	<LazyExportDialog bind:open={exportDialogOpen} />
 	<ScaleCanvasDialog bind:open={scaleCanvasOpen} />
 	<ResizeCanvasDialog bind:open={resizeCanvasOpen} />
 	<RecoveryDialog

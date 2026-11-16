@@ -1,6 +1,7 @@
 import { MAX_CANVAS_SIZE } from "./canvas.js";
 import { normalizeHex } from "./color.js";
 import { MAX_FRAME_DURATION, MIN_FRAME_DURATION, uid } from "./doc.js";
+import { normalizeLayerColor } from "./layer-color.js";
 import {
 	MAX_REFERENCE_BYTES,
 	MAX_REFERENCE_COUNT,
@@ -43,6 +44,7 @@ interface ProjectMeta {
 		locked: boolean;
 		opacity: number;
 		role?: "reference";
+		color?: string;
 	}[];
 }
 
@@ -239,6 +241,7 @@ export function serializeProject(
 			locked: layer.locked,
 			opacity: layer.opacity,
 			...(layer.role ? { role: layer.role } : {}),
+			...(layer.color ? { color: layer.color } : {}),
 		})),
 	};
 	const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
@@ -290,8 +293,10 @@ export function serializeProject(
 	for (const cel of cels) total += 1 + 4 + cel.bytes.length;
 	total += 4 + referenceMetaBytes.length;
 	for (const reference of doc.references) total += 4 + reference.bytes.length;
-	if (total > 2_000_000_000) {
-		throw new Error("This project is too large to save as a single file.");
+	if (total > MAX_PROJECT_FILE_BYTES) {
+		throw new Error(
+			`This project is too large to save (${Math.round(MAX_PROJECT_FILE_BYTES / (1024 * 1024))} MB limit).`,
+		);
 	}
 
 	const buffer = new ArrayBuffer(total);
@@ -357,7 +362,7 @@ export function saveProjectFile(
 	const blob = new Blob([bytes], { type: "application/octet-stream" });
 	const url = URL.createObjectURL(blob);
 	download(`${fileBase(name)}.pixelspell`, url);
-	setTimeout(() => URL.revokeObjectURL(url), 1000);
+	setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 function normalizePalette(value: unknown): string[] | undefined {
@@ -458,6 +463,8 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 		if (usedLayerIds.has(id)) id = uid("layer");
 		usedLayerIds.add(id);
 
+		const color = normalizeLayerColor(rawLayer.color);
+
 		layers.push({
 			id,
 			name:
@@ -469,6 +476,7 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 			opacity: clamp(Number(rawLayer.opacity ?? 1), 0, 1),
 			cels,
 			...(rawLayer.role === "reference" ? { role: "reference" as const } : {}),
+			...(color ? { color } : {}),
 		});
 	}
 

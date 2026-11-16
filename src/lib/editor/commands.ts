@@ -231,6 +231,13 @@ const ACTION_COMMANDS: CommandDef[] = [
 		run: () => editor.toggleTheme(),
 	},
 	{
+		id: "view.toggle-double-tool",
+		label: "Double tool mode",
+		group: "View",
+		keywords: "left right mouse button tool mapping paint erase",
+		run: () => editor.toggleDoubleToolMode(),
+	},
+	{
 		id: "view.mirror-x",
 		label: "Toggle X axis mirror",
 		group: "View",
@@ -403,6 +410,14 @@ const ACTION_COMMANDS: CommandDef[] = [
 		label: "Move layer down",
 		group: "Layers",
 		run: () => editor.moveLayerDown(),
+	},
+	{
+		id: "layer.clear-color",
+		label: "Clear layer color",
+		group: "Layers",
+		keywords: "tint track row identity",
+		enabled: () => !!editor.activeLayer.color,
+		run: () => editor.setLayerColor(editor.activeLayerId, null),
 	},
 	{
 		id: "palette.generate-ramp",

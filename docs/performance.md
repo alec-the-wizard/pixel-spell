@@ -125,11 +125,45 @@ CanvasRenderingContext2D.prototype.putImageData = original;
 
 ## Remaining performance work
 
-These were intentionally left out of this pass because they are larger changes:
+These items were larger changes, deferred from the first pass. They have all been
+implemented in a follow-up pass. The measured results are summarized below the
+list.
 
 - **Timeline virtualization.** Adding a frame still redraws every thumbnail (169 `putImageData` calls for the 8 × 21 benchmark document). For very large layer × frame counts, virtualize off-screen rows/columns or draw thumbnails from a shared atlas.
 - **Incremental compositing.** `compositeFrame` still blends every visible layer. Cache the composite below each layer and recomposite only the edited layer and the layers above it.
-- **Code splitting.** The production bundle is ~515 kB (~153 kB gzip) and Vite warns about the chunk size. Lazy-load the export/import dialogs and the GIF/PNG encoders so the initial editor shell loads sooner.
+- **Code splitting.** The production bundle is ~710 kB (~205 kB gzip) and Vite warns about the chunk size. Lazy-load the export/import dialogs and the GIF/PNG encoders so the initial editor shell loads sooner.
 - **Worker-based export.** GIF encoding and large sprite-sheet exports run on the main thread. Move them to a worker to keep the UI responsive on large animations.
 - **Faster GIF palette lookup.** `buildGifPalette` builds a 32,768-entry nearest-color table by scanning every palette color. Compute entries only for 5-bit buckets that actually occur in the source frames.
 - **Pixel-perfect stroke repaint.** Corner removal currently restores the backup cel and repaints the whole stroke. Repaint only the local neighborhood of the removed corner.
+
+### Follow-up pass results
+
+| Change | Measurement | Before | After | Change |
+| --- | --- | ---: | ---: | ---: |
+| Faster GIF palette lookup | `exportGif` 128×128×12 | 37.05 ms | 14.16 ms | **−62%** |
+| Faster GIF palette lookup | `exportGif` output bytes | 81,137 B | 81,137 B | unchanged |
+| Incremental compositing | full `compositeFrame` 512×512×8 | — | 33.54 ms | baseline |
+| Incremental compositing | `compositeFrameCachedIncremental` single-layer edit, 8 layers | — | 0.83 ms | **−98% vs full** |
+| Code splitting + worker | main JS bundle | 710.64 kB / 205.22 kB gzip | 645.33 kB / 187.84 kB gzip | **−9% / −8.5%** |
+| Code splitting + worker | lazy chunks | — | Export 58.23 kB, Import 16.03 kB, GIF worker 8.75 kB | new |
+| Timeline virtualization | rendered cel thumbnails, 8×100 doc | 800 | 224 | **−72%** |
+
+Notes:
+
+- The GIF palette lookup now builds the 32,768-entry nearest-color table only
+  for the 5-bit buckets that actually appear in the source frames (tracked by
+  `collectGifColors`), instead of scanning every palette color for all 32,768
+  buckets. Output bytes are byte-for-byte identical.
+- `compositeFrameCachedIncremental` keeps per-frame prefix composites and
+  recomposites from the edited layer upward. The viewport and preview use it,
+  keyed by `structureRevision`/`layerAppearanceRevision` (full invalidation) and
+  the active layer id (incremental). `bakePaletteCycle` now bumps
+  `structureRevision` because it edits many layers.
+- The export and import dialogs are lazy-loaded via thin wrappers, which pulls
+  the GIF/APNG/WebP/video/icon encoders out of the initial bundle. GIF encoding
+  runs on a module worker (`export-worker.ts`) with a synchronous fallback.
+- The timeline virtualizes both rows and columns using spacer cells; only
+  visible layers/frames plus a small overscan are rendered.
+
+The other core rows (`compositeFrame`, drawing, selection, project files) are
+unchanged from the first pass; small differences there are run-to-run noise.
