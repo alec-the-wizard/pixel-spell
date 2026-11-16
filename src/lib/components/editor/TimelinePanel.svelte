@@ -33,6 +33,7 @@
 	import { cn } from "$lib/utils.js";
 	import DuplicateFramesDialog from "./DuplicateFramesDialog.svelte";
 	import FramePropertiesDialog from "./FramePropertiesDialog.svelte";
+	import LayerPropertiesDialog from "./LayerPropertiesDialog.svelte";
 	import TimelineLayerRow from "./TimelineLayerRow.svelte";
 
 	let opacity = $state(100);
@@ -40,6 +41,7 @@
 	let referenceLoading = $state(false);
 
 	let framePropertiesOpen = $state(false);
+	let layerPropertiesOpen = $state(false);
 	let duplicateFramesOpen = $state(false);
 
 	let contextMenu = $state<{
@@ -499,6 +501,16 @@
 			aria-label="Delete layer"
 		>
 			<Trash2 class="size-3.5" />
+		</Button>
+		<Button
+			variant="ghost"
+			size="icon-xs"
+			class="text-muted-foreground"
+			onclick={() => (layerPropertiesOpen = true)}
+			title="Layer properties"
+			aria-label="Layer properties"
+		>
+			<Settings2 class="size-3.5" />
 		</Button>
 
 		<Separator orientation="vertical" class="mx-1.5 h-5" />
@@ -1125,6 +1137,7 @@
 {/if}
 
 <FramePropertiesDialog bind:open={framePropertiesOpen} />
+<LayerPropertiesDialog bind:open={layerPropertiesOpen} />
 <DuplicateFramesDialog bind:open={duplicateFramesOpen} />
 
 <svelte:window
