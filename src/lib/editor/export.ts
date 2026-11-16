@@ -464,40 +464,37 @@ export async function exportSpriteSheet(
  * Tight opaque bounds of one composited frame, in document pixels. Reference
  * layers, hidden layers, and fully transparent layers are ignored. A fully
  * transparent frame falls back to the full canvas.
+ *
+ * The bounds are derived from a single `compositeFrame` buffer rather than
+ * scanning every layer's cel separately, so sprite-sheet metadata only pays
+ * for one optimized composite plus one scan per frame.
  */
 export function frameTrimBounds(
 	doc: PixelDoc,
 	frameIndex: number,
 ): PixelBounds {
+	const pixels = compositeFrame(doc, frameIndex);
 	let minX = doc.width;
 	let minY = doc.height;
 	let maxX = -1;
 	let maxY = -1;
 
-	for (const layer of doc.layers) {
-		const opacityByte = Math.round(layer.opacity * 255);
-		if (layer.role === "reference" || !layer.visible || opacityByte <= 0) {
-			continue;
-		}
-		const cel = layer.cels[frameIndex];
-		if (!cel) continue;
-
-		for (let y = 0; y < doc.height; y++) {
-			const rowStart = y * doc.width;
-			for (let x = 0; x < doc.width; x++) {
-				if ((cel[rowStart + x]! >>> 24) === 0) continue;
-				if (x < minX) minX = x;
-				if (x > maxX) maxX = x;
-				if (y < minY) minY = y;
-				if (y > maxY) maxY = y;
-				if (
-					minX === 0 &&
-					minY === 0 &&
-					maxX === doc.width - 1 &&
-					maxY === doc.height - 1
-				) {
-					return { x: 0, y: 0, width: doc.width, height: doc.height };
-				}
+	for (let y = 0; y < doc.height; y++) {
+		const rowStart = y * doc.width;
+		for (let x = 0; x < doc.width; x++) {
+			// In the composited buffer, transparent pixels are exactly zero.
+			if (pixels[rowStart + x] === 0) continue;
+			if (x < minX) minX = x;
+			if (x > maxX) maxX = x;
+			if (y < minY) minY = y;
+			if (y > maxY) maxY = y;
+			if (
+				minX === 0 &&
+				minY === 0 &&
+				maxX === doc.width - 1 &&
+				maxY === doc.height - 1
+			) {
+				return { x: 0, y: 0, width: doc.width, height: doc.height };
 			}
 		}
 	}

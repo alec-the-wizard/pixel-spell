@@ -69,6 +69,7 @@
 	let previewTimer: number | undefined;
 	let wasOpen = false;
 	let sheetSourceCanvas: HTMLCanvasElement | null = null;
+	let abortController: AbortController | null = null;
 
 	let imageFrame = $state(0);
 	let imageScale = $state(1);
@@ -470,6 +471,8 @@
 
 		error = null;
 		exporting = true;
+		abortController = new AbortController();
+		const signal = abortController.signal;
 		await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
 		const doc = editor.doc;
@@ -534,6 +537,7 @@
 					background: videoBackground,
 					loopRange: videoUseLoopRange,
 					quality: videoQuality,
+					signal,
 				});
 				downloadBlob(exportFileName(videoFileName, videoInfo.extension), blob);
 			} else {
@@ -546,12 +550,26 @@
 			}
 			open = false;
 		} catch (exportError) {
-			error =
-				exportError instanceof Error
-					? exportError.message
-					: "The file could not be exported.";
+			if ((exportError as { name?: string } | null)?.name === "AbortError") {
+				// Cancelled by the user; keep the dialog open and idle.
+				error = null;
+			} else {
+				error =
+					exportError instanceof Error
+						? exportError.message
+						: "The file could not be exported.";
+			}
 		} finally {
 			exporting = false;
+			abortController = null;
+		}
+	}
+
+	function cancelExport(): void {
+		if (exporting) {
+			abortController?.abort();
+		} else {
+			open = false;
 		}
 	}
 </script>
@@ -1094,8 +1112,8 @@
 		{/if}
 
 		<Dialog.Footer>
-			<Button variant="outline" onclick={() => (open = false)} disabled={exporting}>
-				Cancel
+			<Button variant="outline" onclick={cancelExport}>
+				{exporting ? "Cancel export" : "Cancel"}
 			</Button>
 			<Button onclick={exportNow} disabled={exporting || Boolean(sizeError)}>
 				{#if exporting}
