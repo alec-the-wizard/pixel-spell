@@ -1,4 +1,6 @@
 <script lang="ts">
+	import Ban from "@lucide/svelte/icons/ban";
+	import Check from "@lucide/svelte/icons/check";
 	import Eye from "@lucide/svelte/icons/eye";
 	import EyeOff from "@lucide/svelte/icons/eye-off";
 	import Lock from "@lucide/svelte/icons/lock";
@@ -6,7 +8,13 @@
 	import ScanEye from "@lucide/svelte/icons/scan-eye";
 	import { tick } from "svelte";
 	import { Button } from "$lib/components/ui/button/index.js";
+	import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
+	import {
+		LAYER_COLOR_PRESETS,
+		layerColorName,
+		layerTint,
+	} from "$lib/editor/layer-color.js";
 	import type { Layer } from "$lib/editor/types.js";
 	import { cn } from "$lib/utils.js";
 	import CelThumb from "./CelThumb.svelte";
@@ -28,6 +36,8 @@
 	} = $props();
 
 	let isReference = $derived(layer.role === "reference");
+	let activeRow = $derived(layer.id === editor.activeLayerId);
+	let colorMenuOpen = $state(false);
 	let editing = $state(false);
 	let draft = $state("");
 	let input = $state<HTMLInputElement | null>(null);
@@ -40,6 +50,31 @@
 	let trailingFrames = $derived(
 		Math.max(0, editor.doc.frames.length - 1 - lastFrame),
 	);
+
+	let headerBackground = $derived.by(() => {
+		if (!layer.color) return undefined;
+		return activeRow
+			? layerTint(layer.color, 24, "var(--accent)")
+			: layerTint(layer.color, 14);
+	});
+
+	/** Shading strength for a cel cell; stronger for the focused layer/frame. */
+	function cellBackground(
+		activeFrame: boolean,
+		activeCel: boolean,
+		selectedFrame: boolean,
+	): string | undefined {
+		if (!layer.color) return undefined;
+		if (activeCel) return layerTint(layer.color, 24);
+		if (activeRow || activeFrame) return layerTint(layer.color, 14);
+		if (selectedFrame) return layerTint(layer.color, 12);
+		return layerTint(layer.color, 7);
+	}
+
+	function chooseColor(color: string | null): void {
+		editor.setLayerColor(layer.id, color);
+		colorMenuOpen = false;
+	}
 
 	function startEditing(): void {
 		editing = true;
@@ -66,8 +101,9 @@
 		scope="row"
 		class={cn(
 			"sticky left-0 z-10 h-12 w-60 min-w-60 max-w-60 border-b border-r p-0 text-left align-middle",
-			layer.id === editor.activeLayerId ? "bg-accent" : "bg-background",
+			!layer.color && (activeRow ? "bg-accent" : "bg-background"),
 		)}
+		style:background={headerBackground}
 	>
 		<div class="flex h-12 items-center gap-1.5 px-2">
 			<Button
@@ -116,6 +152,83 @@
 				{/if}
 			</Button>
 
+			<DropdownMenu.Root bind:open={colorMenuOpen}>
+				<DropdownMenu.Trigger
+					class={cn(
+						"grid size-6 shrink-0 place-items-center rounded-full outline-none transition-colors hover:bg-background/60 focus-visible:ring-2 focus-visible:ring-ring",
+						!layer.color && "text-muted-foreground/60",
+					)}
+					title={layer.color
+						? `Layer color: ${layerColorName(layer.color)}`
+						: "Set layer color"}
+					aria-label={layer.color
+						? `Set layer color for ${layer.name} (currently ${layerColorName(layer.color)})`
+						: `Set layer color for ${layer.name}`}
+				>
+					{#if layer.color}
+						<span
+							class="size-3.5 rounded-full border border-black/20 shadow-sm dark:border-white/25"
+							style:background={layer.color}
+						></span>
+					{:else}
+						<span
+							class="size-3.5 rounded-full border border-dashed border-muted-foreground/60"
+						></span>
+					{/if}
+				</DropdownMenu.Trigger>
+				<DropdownMenu.Content class="w-52 p-2" align="start">
+					<DropdownMenu.Label class="px-1">Layer color</DropdownMenu.Label>
+					<div class="mt-1 grid grid-cols-6 gap-1">
+						{#each LAYER_COLOR_PRESETS as preset (preset.value)}
+							<button
+								type="button"
+								class={cn(
+									"size-6 rounded-md border border-black/10 transition-transform outline-none hover:scale-110 focus-visible:ring-2 focus-visible:ring-ring dark:border-white/10",
+									layer.color === preset.value &&
+										"ring-2 ring-ring ring-offset-1 ring-offset-popover",
+								)}
+								style:background={preset.value}
+								title={preset.name}
+								aria-label={`${preset.name} layer color`}
+								aria-pressed={layer.color === preset.value}
+								onclick={() => chooseColor(preset.value)}
+							></button>
+						{/each}
+					</div>
+					<div class="mt-2 flex items-center gap-1 border-t pt-2">
+						<DropdownMenu.Item
+							class="h-7 gap-1.5 px-1.5 text-xs"
+							disabled={!layer.color}
+							onSelect={() => chooseColor(null)}
+						>
+							{#if layer.color}
+								<Ban class="size-3.5" />
+							{:else}
+								<Check class="size-3.5" />
+							{/if}
+							No color
+						</DropdownMenu.Item>
+						<label
+							class="ml-auto flex h-7 cursor-pointer items-center gap-1 rounded-sm px-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+							title="Pick a custom layer color"
+						>
+							<input
+								type="color"
+								class="size-5 cursor-pointer rounded border bg-transparent p-0"
+								value={layer.color ?? "#8b8b8b"}
+								aria-label="Custom layer color"
+								onchange={(event) =>
+									editor.setLayerColor(
+										layer.id,
+										event.currentTarget.value,
+									)}
+							/>
+							Custom
+						</label>
+					</div>
+				</DropdownMenu.Content>
+			</DropdownMenu.Root>
+
 			<div class="min-w-0 flex-1">
 				{#if editing}
 					<input
@@ -162,12 +275,15 @@
 	</th>
 
 	{#if firstFrame > 0}
-		<td colspan={firstFrame} class="h-12 border-b"></td>
+		<td
+			colspan={firstFrame}
+			class="h-12 border-b"
+			style:background={layer.color ? layerTint(layer.color, 7) : undefined}
+		></td>
 	{/if}
 
 	{#each visibleFrames as frame, offset (frame.id)}
 		{@const index = firstFrame + offset}
-		{@const activeRow = layer.id === editor.activeLayerId}
 		{@const activeFrame = index === editor.activeFrame}
 		{@const activeCel = activeRow && activeFrame}
 		{@const selectedFrame = editor.isFrameSelected(index)}
@@ -179,6 +295,7 @@
 				selectedFrame && !activeFrame && "bg-primary/10",
 				activeCel && "bg-accent/60",
 			)}
+			style:background={cellBackground(activeFrame, activeCel, selectedFrame)}
 		>
 			<button
 				type="button"
@@ -220,9 +337,19 @@
 	{/each}
 
 	{#if trailingFrames > 0}
-		<td colspan={trailingFrames} class="h-12 border-b"></td>
+		<td
+			colspan={trailingFrames}
+			class="h-12 border-b"
+			style:background={layer.color ? layerTint(layer.color, 7) : undefined}
+		></td>
 	{/if}
 
-	<td class="h-12 w-10 min-w-10 border-b"></td>
-	<td class="h-12 border-b"></td>
+	<td
+		class="h-12 w-10 min-w-10 border-b"
+		style:background={layer.color ? layerTint(layer.color, 7) : undefined}
+	></td>
+	<td
+		class="h-12 border-b"
+		style:background={layer.color ? layerTint(layer.color, 7) : undefined}
+	></td>
 </tr>

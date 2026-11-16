@@ -29,6 +29,7 @@ import {
 	serializeProject,
 	type LoadedProject,
 } from "./file.js";
+import { normalizeLayerColor } from "./layer-color.js";
 import {
 	MAX_REFERENCE_COUNT,
 	cropPixelsToCanvas,
@@ -2349,6 +2350,25 @@ export class EditorState {
 		this.modified = true;
 	}
 
+	/**
+	 * Sets or clears a layer's timeline identity tint. This is presentation
+	 * metadata only, so it is not undoable and does not touch pixel revisions.
+	 */
+	setLayerColor(id: string, color: string | null): void {
+		const layer = this.doc.layers.find((item) => item.id === id);
+		if (!layer) return;
+		if (color === null) {
+			if (!layer.color) return;
+			delete layer.color;
+		} else {
+			const next = normalizeLayerColor(color);
+			if (!next || next === layer.color) return;
+			layer.color = next;
+		}
+		this.dirty = true;
+		this.modified = true;
+	}
+
 	setLayerOpacity(id: string, opacity: number): void {
 		if (!Number.isFinite(opacity)) return;
 		const layer = this.doc.layers.find((item) => item.id === id);
@@ -2388,6 +2408,7 @@ export class EditorState {
 			opacity: source.opacity,
 			cels: source.cels.map((cel) => new Uint32Array(cel)),
 			...(source.role ? { role: source.role } : {}),
+			...(source.color ? { color: source.color } : {}),
 		};
 		const index = this.doc.layers.findIndex((layer) => layer.id === source.id);
 		this.doc.layers.splice(index + 1, 0, copy);

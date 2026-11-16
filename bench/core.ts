@@ -35,6 +35,11 @@ import {
 } from "../src/lib/editor/export.js";
 import { parseProject, serializeProject } from "../src/lib/editor/file.js";
 import {
+	LAYER_COLOR_PRESETS,
+	layerTint,
+	normalizeLayerColor,
+} from "../src/lib/editor/layer-color.js";
+import {
 	nearestPaletteColor,
 	sortPaletteColors,
 } from "../src/lib/editor/palette.js";
@@ -345,6 +350,9 @@ function assertProjectRoundtrip(doc: PixelDoc, label: string): void {
 		if (originalLayer.role !== restoredLayer.role) {
 			throw new Error(`${label}: layer role changed`);
 		}
+		if (originalLayer.color !== restoredLayer.color) {
+			throw new Error(`${label}: layer color changed`);
+		}
 		if (originalLayer.locked !== restoredLayer.locked) {
 			throw new Error(`${label}: layer lock changed`);
 		}
@@ -384,6 +392,32 @@ function assertProjectRoundtrip(doc: PixelDoc, label: string): void {
 		) {
 			throw new Error(`${label}: reference transform changed`);
 		}
+	}
+}
+
+function assertLayerColors(): void {
+	const seen = new Set<string>();
+	for (const preset of LAYER_COLOR_PRESETS) {
+		if (normalizeLayerColor(preset.value) !== preset.value) {
+			throw new Error(`invalid layer color preset: ${preset.value}`);
+		}
+		if (seen.has(preset.value)) {
+			throw new Error(`duplicate layer color preset: ${preset.value}`);
+		}
+		seen.add(preset.value);
+	}
+	if (normalizeLayerColor("not-a-color") !== undefined) {
+		throw new Error("invalid layer color accepted");
+	}
+	if (normalizeLayerColor("#ABCDEF") !== "#abcdef") {
+		throw new Error("layer color was not normalized");
+	}
+	const tint = layerTint("#ef4444", 50);
+	if (!tint.startsWith("color-mix(")) {
+		throw new Error("layer tint is not a color-mix value");
+	}
+	if (layerTint("#ef4444", 500).includes("500%")) {
+		throw new Error("layer tint percentage was not clamped");
 	}
 }
 
@@ -729,6 +763,7 @@ function assertSheetMetadata(): void {
 }
 
 assertCanvasSizePresets();
+assertLayerColors();
 assertPaletteSorting();
 assertPaletteRamps();
 assertPaletteCycling();
@@ -741,6 +776,8 @@ assertProjectRoundtrip(opaqueDoc, "flat");
 const referenceDoc = makeDoc(64, 64, 2, 3, 43);
 referenceDoc.layers[0]!.role = "reference";
 referenceDoc.layers[0]!.locked = true;
+referenceDoc.layers[0]!.color = "#14b8a6";
+referenceDoc.layers[1]!.color = "#ef4444";
 referenceDoc.references.push({
 	id: "reference-1",
 	name: "Mood board",

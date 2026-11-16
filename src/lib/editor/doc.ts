@@ -117,6 +117,7 @@ export function cloneDoc(doc: PixelDoc): PixelDoc {
 			opacity: layer.opacity,
 			cels: layer.cels.map((cel) => new Uint32Array(cel)),
 			...(layer.role ? { role: layer.role } : {}),
+			...(layer.color ? { color: layer.color } : {}),
 		})),
 		// Reference bytes are immutable, so history and project snapshots can
 		// share them while cloning the small transform metadata.

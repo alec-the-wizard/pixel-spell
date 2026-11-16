@@ -1,6 +1,7 @@
 import { MAX_CANVAS_SIZE } from "./canvas.js";
 import { normalizeHex } from "./color.js";
 import { MAX_FRAME_DURATION, MIN_FRAME_DURATION, uid } from "./doc.js";
+import { normalizeLayerColor } from "./layer-color.js";
 import {
 	MAX_REFERENCE_BYTES,
 	MAX_REFERENCE_COUNT,
@@ -43,6 +44,7 @@ interface ProjectMeta {
 		locked: boolean;
 		opacity: number;
 		role?: "reference";
+		color?: string;
 	}[];
 }
 
@@ -239,6 +241,7 @@ export function serializeProject(
 			locked: layer.locked,
 			opacity: layer.opacity,
 			...(layer.role ? { role: layer.role } : {}),
+			...(layer.color ? { color: layer.color } : {}),
 		})),
 	};
 	const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
@@ -460,6 +463,8 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 		if (usedLayerIds.has(id)) id = uid("layer");
 		usedLayerIds.add(id);
 
+		const color = normalizeLayerColor(rawLayer.color);
+
 		layers.push({
 			id,
 			name:
@@ -471,6 +476,7 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 			opacity: clamp(Number(rawLayer.opacity ?? 1), 0, 1),
 			cels,
 			...(rawLayer.role === "reference" ? { role: "reference" as const } : {}),
+			...(color ? { color } : {}),
 		});
 	}
 

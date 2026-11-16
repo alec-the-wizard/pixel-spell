@@ -13,7 +13,7 @@ A focused pixel art editor that runs entirely in the browser. Draw sprites, buil
 - **Pixel perfect** — optional per-tool corner-pixel removal for pencil, eraser, curve, and shape-outline strokes. The switch lives in the tool options panel and only appears for tools that support it. The line tool does not expose it because Bresenham lines already avoid redundant corner pixels.
 - **Mirroring** — X, Y, and two diagonal axis mirrors. X mirrors across the horizontal axis and Y across the vertical axis. Active axes are drawn as dashed blue lines across the whole canvas stage and can be dragged from anywhere on the stage; drag a line in half-pixel steps to move its mirror axis. Turning a mirror off resets its guide to the center. The toggles live in the top bar next to the theme switch.
 - **Radial symmetry** — an asterisk button duplicates every stroke around a center point for mandalas, wheels, and ornaments. Choose 2–16 rotational copies from the adjacent chevron menu, and drag the center handle on the canvas to move the rotation origin. Radial symmetry can be combined with the axis mirrors; mirror axes stay blue while radial spokes and the center handle are red. Turning radial symmetry off resets its center to the canvas center.
-- **Aseprite-style timeline** — layers are rows and frames are columns. Click any cel to select its layer and frame; sticky headers keep both axes visible while scrolling. Add, duplicate, reorder (drag frame headers), rename, hide, lock, delete, and adjust layer opacity; add, duplicate, and delete frames; play the animation at 1–60 fps. Shift-click frames or cels to select a range, Ctrl/Cmd-click to toggle individual frames, and drag a selected frame header to move the whole range.
+- **Aseprite-style timeline** — layers are rows and frames are columns. Click any cel to select its layer and frame; sticky headers keep both axes visible while scrolling. Add, duplicate, reorder (drag frame headers), rename, hide, lock, delete, and adjust layer opacity; add, duplicate, and delete frames; play the animation at 1–60 fps. Shift-click frames or cels to select a range, Ctrl/Cmd-click to toggle individual frames, and drag a selected frame header to move the whole range. Give layers a color from the dot beside the lock button to shade their header and entire frame track, making long layer stacks easier to scan.
 - **Onion skinning** — show previous and/or next frames at low opacity behind the active frame. Choose a 1–3 frame range, 15/30/50% opacity, and a previous/next tint preset. Toggle it with `O`, the ghost button, or its settings menu.
 - **Multi-frame editing** — copy, paste, and duplicate selected frame ranges. Duplicate can shift every cel by X/Y offsets. Right-click a frame header or cel for the same actions plus move left/right, frame duration and tag settings, loop range controls, and delete.
 - **Frame tags, durations, and loop range** — give frames a tag and a custom duration. Contiguous frames with the same tag appear as tag ranges above the timeline; click a range to select it. Set a loop range for playback and GIF export. Per-frame durations override the project FPS, and GIF export can honor the loop range.
@@ -118,6 +118,7 @@ src/
         ├── render.ts           # Canvas and thumbnail rendering helpers
         ├── color.ts            # Packed RGBA and hex color utilities
         ├── file.ts             # Project serialization and save helpers
+        ├── layer-color.ts      # Layer identity tints, presets, and row shading
         ├── autosave.ts         # IndexedDB crash-recovery snapshots
         ├── canvas.ts           # Nearest-neighbor scale, resize, and crop helpers
         ├── import.ts           # Image/palette import parsing and analysis
@@ -145,7 +146,7 @@ A document is a `PixelDoc`:
 
 - `width`, `height`, `fps`
 - `frames[]` — animation frames, each with an optional custom duration (milliseconds) and tag
-- `layers[]` — ordered bottom-to-top; each layer has visibility, opacity, lock state, an optional `role: "reference"`, and one `Uint32Array` cel per frame
+- `layers[]` — ordered bottom-to-top; each layer has visibility, opacity, lock state, an optional `role: "reference"`, an optional timeline color (`#rrggbb`), and one `Uint32Array` cel per frame
 - `references[]` — project-level reference-board images with their source bytes, natural dimensions, display bounds, opacity, visibility, and lock state
 - `loopStart`, `loopEnd` — optional inclusive playback/export range
 
@@ -178,6 +179,7 @@ Each open project is a separate `PixelDoc` session with its own active layer/fra
 - Animation and video export use per-frame durations and can optionally export only the loop range. GIF, APNG, and animated WebP honor an in-file loop flag; video containers (WebM, MP4, MOV, AVI, MKV) play once and flatten transparency because they carry no alpha channel. The fallback frame rate applies to GIF and AVI, which use a fixed or fallback rate rather than per-frame timestamps. WebM and MP4 are recorded with `MediaRecorder` in real time.
 - Custom color palettes, the active palette, and the palette lock are saved in `localStorage`; the built-in palette is recreated on load and cannot be edited. Color cycle range, speed, and direction are workspace preferences only: they are never written to project files, and generated frames are ordinary frames.
 - Layer visibility and opacity are document-wide rather than per-frame.
+- Layer colors are timeline identity tints only: they shade the timeline row and frame track, are saved in project files and carried through undo snapshots, but never affect pixels, exports, or composite order. Changing a layer color is not undoable.
 - Brushes are square and pixel-aligned; there is no free-transform (scale/rotate) tool for selections yet.
 - Projects are limited to 1024 layers and 1000 frames.
 - The editor autosaves dirty tabs to IndexedDB for crash recovery. Autosaves are offered on the next launch and do not replace **File → Save project**, which is still required to keep a `.pixelspell` file. Saving or discarding a dirty project clears its recovery snapshot.

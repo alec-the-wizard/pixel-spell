@@ -405,6 +405,14 @@ const ACTION_COMMANDS: CommandDef[] = [
 		run: () => editor.moveLayerDown(),
 	},
 	{
+		id: "layer.clear-color",
+		label: "Clear layer color",
+		group: "Layers",
+		keywords: "tint track row identity",
+		enabled: () => !!editor.activeLayer.color,
+		run: () => editor.setLayerColor(editor.activeLayerId, null),
+	},
+	{
 		id: "palette.generate-ramp",
 		label: "Generate palette ramp…",
 		group: "Palette",

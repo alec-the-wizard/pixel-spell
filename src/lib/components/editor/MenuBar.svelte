@@ -41,6 +41,7 @@
 		RADIAL_SYMMETRY_MAX,
 		RADIAL_SYMMETRY_MIN,
 	} from "$lib/editor/editor.svelte.js";
+	import { layerColorName } from "$lib/editor/layer-color.js";
 
 	let {
 		onNew,
@@ -339,8 +340,18 @@
 			<span class="h-3 w-px shrink-0 bg-border" aria-hidden="true"></span>
 			<span class="shrink-0">Frame {editor.activeFrame + 1} / {editor.frameCount}</span>
 			<span class="h-3 w-px shrink-0 bg-border" aria-hidden="true"></span>
-			<span class="max-w-36 truncate" title="Current layer">
-				Layer: {editor.activeLayer.name}
+			<span
+				class="flex min-w-0 max-w-40 items-center gap-1"
+				title={`Current layer${editor.activeLayer.color ? ` · ${layerColorName(editor.activeLayer.color)}` : ""}`}
+			>
+				{#if editor.activeLayer.color}
+					<span
+						class="size-2 shrink-0 rounded-full border border-black/20 dark:border-white/30"
+						style:background={editor.activeLayer.color}
+						aria-hidden="true"
+					></span>
+				{/if}
+				<span class="truncate">Layer: {editor.activeLayer.name}</span>
 			</span>
 		</div>
 	</div>
