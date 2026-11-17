@@ -146,6 +146,8 @@ Key files:
 - **Reference Board** uses the original compressed bytes and `addReferenceImage`.
 - **Palette** keeps the existing palette collection behavior.
 - Timeline reference-layer imports and board imports also have direct file-picker buttons outside the dialog. They must revoke the analysis preview object URL after use.
+- **File → Import from URL…** opens the dialog with no file. `analyzeImportUrl` downloads the link, derives an extension from the response type, magic bytes, or URL, and then reuses `analyzeImportFile`, so URL imports support every destination above. Cross-origin hosts must allow CORS; `analyzeImportUrl` returns a readable error instead of a partial import.
+- Pasting an image file from the OS clipboard opens the dialog with that file. The window `paste` handler in `App.svelte` prefers a clipboard image, then falls back to `editor.pasteSelection()`. Commands that need the native paste event set `deferToPasteEvent` (see `edit.paste-selection`) so the keydown handler leaves the default action alone.
 
 ## Pixel format
 

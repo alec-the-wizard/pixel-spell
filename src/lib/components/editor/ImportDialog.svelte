@@ -4,6 +4,7 @@
 	import ImageIcon from "@lucide/svelte/icons/image";
 	import Images from "@lucide/svelte/icons/images";
 	import Layers from "@lucide/svelte/icons/layers";
+	import Link2 from "@lucide/svelte/icons/link-2";
 	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 	import PaletteIcon from "@lucide/svelte/icons/palette";
 	import ScanEye from "@lucide/svelte/icons/scan-eye";
@@ -15,6 +16,7 @@
 	import {
 		MAX_IMPORT_DIMENSION,
 		analyzeImportFile,
+		analyzeImportUrl,
 		type ImportAnalysis,
 		type ImportTabId,
 	} from "$lib/editor/import.js";
@@ -24,12 +26,14 @@
 
 	let analysis = $state<ImportAnalysis | null>(null);
 	let loading = $state(false);
+	let loadingLabel = $state("");
 	let activeTab = $state<ImportTabId>("project");
 	let projectName = $state("");
 	let paletteName = $state("");
 	let layerName = $state("");
 	let referenceName = $state("");
 	let referenceAllFrames = $state(true);
+	let urlInput = $state("");
 	let loadToken = 0;
 
 	const TAB_LABELS: Record<ImportTabId, string> = {
@@ -78,24 +82,26 @@
 	let canImport = $derived(!loading && Boolean(analysis) && tabAvailable(activeTab));
 	let actionLabel = $derived(ACTION_LABELS[activeTab]);
 
-	$effect(() => {
-		const selectedFile = file;
-		if (!open || !selectedFile) return;
-
-		const token = ++loadToken;
+	function resetAnalysis(): void {
 		analysis = null;
-		loading = true;
+		loading = false;
 		activeTab = "project";
 		projectName = "";
 		paletteName = "";
 		layerName = "";
 		referenceName = "";
 		referenceAllFrames = true;
+	}
 
-		analyzeImportFile(selectedFile)
+	function startAnalysis(task: Promise<ImportAnalysis>, label: string): void {
+		const token = ++loadToken;
+		loading = true;
+		loadingLabel = label;
+
+		task
 			.then((result) => {
 				if (token !== loadToken) {
-					// The dialog was closed or another file replaced this one.
+					// The dialog was closed or another source replaced this one.
 					if (result.project) URL.revokeObjectURL(result.project.previewUrl);
 					return;
 				}
@@ -111,7 +117,7 @@
 			.catch(() => {
 				if (token !== loadToken) return;
 				analysis = {
-					fileName: selectedFile.name,
+					fileName: label,
 					project: null,
 					reference: null,
 					palette: null,
@@ -119,6 +125,27 @@
 				};
 				loading = false;
 			});
+	}
+
+	function loadUrl(): void {
+		const value = urlInput.trim();
+		if (!value || loading) return;
+		resetAnalysis();
+		startAnalysis(analyzeImportUrl(value), value);
+	}
+
+	$effect(() => {
+		const selectedFile = file;
+		if (!open) return;
+
+		// A new file or a fresh open replaces any previous source.
+		loadToken++;
+		urlInput = "";
+		resetAnalysis();
+
+		if (selectedFile) {
+			startAnalysis(analyzeImportFile(selectedFile), selectedFile.name);
+		}
 	});
 
 	// Revoke the preview object URL when the analysis is replaced or cleared.
@@ -187,29 +214,70 @@
 </script>
 
 <Dialog.Root bind:open>
-	<Dialog.Content class="sm:max-w-lg">
+	<Dialog.Content class="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-lg">
 		<Dialog.Header>
-			<Dialog.Title>Import file</Dialog.Title>
+			<Dialog.Title>Import</Dialog.Title>
 			<Dialog.Description>
 				{#if file}
 					<span class="font-medium break-all text-foreground">{file.name}</span>
-					—
+					— Choose how you want to use this file.
+				{:else}
+					Load an image from a URL, then choose how to use it.
 				{/if}
-				Choose how you want to use this file.
 			</Dialog.Description>
 		</Dialog.Header>
 
+		{#if !file}
+			<form
+				class="grid gap-1.5"
+				onsubmit={(event) => {
+					event.preventDefault();
+					loadUrl();
+				}}
+			>
+				<Label for="import-url">Image URL</Label>
+				<div class="flex gap-2">
+					<Input
+						id="import-url"
+						bind:value={urlInput}
+						placeholder="https://example.com/sprite.png"
+						autocomplete="off"
+						spellcheck={false}
+						disabled={loading}
+					/>
+					<Button
+						type="submit"
+						variant="secondary"
+						disabled={loading || !urlInput.trim()}
+					>
+						{#if loading}
+							<LoaderCircle class="size-4 animate-spin" />
+						{:else}
+							<Link2 class="size-4" />
+						{/if}
+						Load
+					</Button>
+				</div>
+				<p class="text-xs text-muted-foreground">
+					Direct links to PNG, JPEG, GIF, WebP, BMP, AVIF, ICO, or SVG images. You can
+					also drop an image anywhere or paste one from the clipboard.
+				</p>
+			</form>
+		{/if}
+
 		{#if loading}
 			<div class="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-				<LoaderCircle class="size-4 animate-spin" />
-				Reading {file?.name ?? "file"}…
+				<LoaderCircle class="size-4 shrink-0 animate-spin" />
+				<span class="max-w-full truncate">Reading {loadingLabel}…</span>
 			</div>
 		{:else if analysis}
 			{#if availableTabs.length === 0}
 				<div class="flex gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3">
 					<AlertTriangle class="mt-0.5 size-4 shrink-0 text-destructive" />
 					<div class="grid gap-1">
-						<p class="text-sm font-medium">This file can't be imported</p>
+						<p class="text-sm font-medium">
+							{file ? "This file can't be imported" : "This image can't be imported"}
+						</p>
 						<p class="text-xs text-muted-foreground">
 							{analysis.error ?? "The file is not a supported image or palette."}
 						</p>

@@ -17,6 +17,7 @@ export interface CommandHost {
 	openNewProject: () => void;
 	openProject: () => void;
 	openImport: () => void;
+	openImportUrl: () => void;
 	openExport: () => void;
 	openScaleCanvas: () => void;
 	openResizeCanvas: () => void;
@@ -29,6 +30,7 @@ const NOOP_HOST: CommandHost = {
 	openNewProject: () => {},
 	openProject: () => {},
 	openImport: () => {},
+	openImportUrl: () => {},
 	openExport: () => {},
 	openScaleCanvas: () => {},
 	openResizeCanvas: () => {},
@@ -54,6 +56,11 @@ export interface CommandDef {
 	defaultKeys?: string[];
 	/** Keep the shortcut from firing repeatedly while the key is held. */
 	ignoreRepeat?: boolean;
+	/**
+	 * Leave the key to the browser's native paste event. The window paste
+	 * handler then chooses between an image file and the in-app clipboard.
+	 */
+	deferToPasteEvent?: boolean;
 	enabled?: () => boolean;
 	run: () => void;
 }
@@ -89,6 +96,14 @@ const ACTION_COMMANDS: CommandDef[] = [
 		keywords: "image palette reference",
 		defaultKeys: [],
 		run: () => host.openImport(),
+	},
+	{
+		id: "file.import-url",
+		label: "Import from URL…",
+		group: "File",
+		keywords: "image web link clipboard paste",
+		defaultKeys: [],
+		run: () => host.openImportUrl(),
 	},
 	{
 		id: "file.save",
@@ -135,6 +150,7 @@ const ACTION_COMMANDS: CommandDef[] = [
 		group: "Edit",
 		defaultKeys: ["mod+v"],
 		enabled: () => editor.hasClipboard,
+		deferToPasteEvent: true,
 		run: () => editor.pasteSelection(),
 	},
 	{
