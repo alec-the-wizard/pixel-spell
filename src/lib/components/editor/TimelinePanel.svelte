@@ -915,7 +915,7 @@
 								ondragend={endFrameDrag}
 								aria-label={`Select frame ${index + 1}${frame.tag ? `, ${frame.tag}` : ""}`}
 								aria-pressed={index === editor.activeFrame}
-								title={`Frame ${index + 1} · ${Math.round(editor.frameDurationAt(index))} ms${frame.tag ? ` · ${frame.tag}` : ""}. Double-click for properties.`}
+								title={`Frame ${index + 1} · ${Math.round(editor.frameDurationAt(index))} ms (${frame.duration !== undefined ? "frame properties" : "project FPS"})${frame.tag ? ` · ${frame.tag}` : ""}. Double-click for properties.`}
 							>
 								<span class="flex items-center gap-1">
 									{index + 1}
@@ -925,11 +925,13 @@
 								</span>
 								<span
 									class={cn(
-										"text-[7px] font-normal",
+										"text-[7px] font-normal whitespace-nowrap",
 										frame.duration !== undefined ? "opacity-95" : "opacity-60",
 									)}
 								>
-									{Math.round(editor.frameDurationAt(index))}
+									{frame.duration !== undefined
+										? `[ ${Math.round(editor.frameDurationAt(index))}ms ]`
+										: `${Math.round(editor.frameDurationAt(index))}ms`}
 								</span>
 								{#if dragOverIndex === index}
 									<span
