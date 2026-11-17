@@ -7,6 +7,8 @@
 	import ClipboardCopy from "@lucide/svelte/icons/clipboard-copy";
 	import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste";
 	import Copy from "@lucide/svelte/icons/copy";
+	import Eye from "@lucide/svelte/icons/eye";
+	import EyeOff from "@lucide/svelte/icons/eye-off";
 	import Film from "@lucide/svelte/icons/film";
 	import FolderInput from "@lucide/svelte/icons/folder-input";
 	import FolderOutput from "@lucide/svelte/icons/folder-output";
@@ -14,6 +16,8 @@
 	import Ghost from "@lucide/svelte/icons/ghost";
 	import IndentDecrease from "@lucide/svelte/icons/indent-decrease";
 	import IndentIncrease from "@lucide/svelte/icons/indent-increase";
+	import Lock from "@lucide/svelte/icons/lock";
+	import LockOpen from "@lucide/svelte/icons/lock-open";
 	import Pause from "@lucide/svelte/icons/pause";
 	import Play from "@lucide/svelte/icons/play";
 	import Plus from "@lucide/svelte/icons/plus";
@@ -53,11 +57,21 @@
 	let layerPropertiesOpen = $state(false);
 	let duplicateFramesOpen = $state(false);
 
-	let contextMenu = $state<{
-		x: number;
-		y: number;
-		frameIndex: number;
-	} | null>(null);
+	let contextMenu = $state<
+		| { kind: "frame"; x: number; y: number; frameIndex: number }
+		| { kind: "layer"; x: number; y: number; layerId: string }
+		| {
+				kind: "cel";
+				x: number;
+				y: number;
+				layerId: string;
+				frameIndex: number;
+		  }
+		| null
+	>(null);
+
+	/** Cel where a left-button block selection started, if any. */
+	let celDrag = $state<{ layerId: string; frameIndex: number } | null>(null);
 
 	let draggingFrames = $state(false);
 	let dragOverIndex = $state<number | null>(null);
@@ -74,6 +88,11 @@
 		if (!draggingLayerId) return null;
 		return editor.layerSubtreeIds(draggingLayerId);
 	});
+
+	const MENU_ITEM_CLASS =
+		"flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40";
+	const MENU_DANGER_CLASS =
+		"flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-destructive outline-none hover:bg-destructive/10 focus-visible:bg-destructive/10 disabled:pointer-events-none disabled:opacity-40";
 
 	const ONION_TINT_PRESETS = [
 		{ id: "red-green", label: "Red / green", previous: "#ef4444", next: "#22c55e" },
@@ -232,9 +251,18 @@
 
 	let contextTitle = $derived.by(() => {
 		if (!contextMenu) return "";
+		if (contextMenu.kind === "layer") {
+			return `Layer · ${editor.activeLayer.name}`;
+		}
 		const indices = editor.selectedFrameIndices;
-		if (indices.length <= 1) return `Frame ${contextMenu.frameIndex + 1}`;
-		return `Frames ${indices[0]! + 1}–${indices[indices.length - 1]! + 1} · ${indices.length} selected`;
+		const frameLabel =
+			indices.length <= 1
+				? `Frame ${contextMenu.frameIndex + 1}`
+				: `Frames ${indices[0]! + 1}–${indices[indices.length - 1]! + 1} · ${indices.length} selected`;
+		if (contextMenu.kind === "cel") {
+			return `${editor.activeLayer.name} · ${frameLabel}`;
+		}
+		return frameLabel;
 	});
 
 	async function addReferenceLayer(event: Event): Promise<void> {
@@ -329,12 +357,21 @@
 		}
 	}
 
+	/** Positions a fixed context menu without letting it leave the viewport. */
+	function menuCoordinates(event: MouseEvent): { x: number; y: number } {
+		const width = 224;
+		const height = 480;
+		return {
+			x: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
+			y: Math.max(8, Math.min(event.clientY, window.innerHeight - height)),
+		};
+	}
+
 	function openFrameContextMenu(event: MouseEvent, index: number): void {
 		event.preventDefault();
-		const width = 224;
 		contextMenu = {
-			x: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
-			y: Math.max(8, Math.min(event.clientY, window.innerHeight - 420)),
+			kind: "frame",
+			...menuCoordinates(event),
 			frameIndex: index,
 		};
 	}
@@ -357,6 +394,84 @@
 		openFrameContextMenu(event, start);
 	}
 
+	function handleCelPointerDown(
+		event: PointerEvent,
+		layerId: string,
+		frameIndex: number,
+	): void {
+		if (event.button !== 0) return;
+		if (event.shiftKey) {
+			editor.extendCelSelection(layerId, frameIndex);
+			return;
+		}
+		if (event.ctrlKey || event.metaKey) {
+			editor.toggleCelSelection(layerId, frameIndex);
+			return;
+		}
+		celDrag = { layerId, frameIndex };
+		editor.selectCel(layerId, frameIndex);
+		// Prevent native text/image selection while dragging across cels.
+		event.preventDefault();
+	}
+
+	function handleCelPointerEnter(layerId: string, frameIndex: number): void {
+		if (!celDrag) return;
+		if (celDrag.layerId === layerId && celDrag.frameIndex === frameIndex) return;
+		editor.selectCelRange(
+			celDrag.layerId,
+			celDrag.frameIndex,
+			layerId,
+			frameIndex,
+		);
+	}
+
+	function endCelDrag(): void {
+		celDrag = null;
+	}
+
+	function handleCelContextMenu(
+		event: MouseEvent,
+		layerId: string,
+		frameIndex: number,
+	): void {
+		event.preventDefault();
+		if (editor.isLayerSelected(layerId)) {
+			editor.selectLayer(layerId, { preserveSelection: true });
+		} else {
+			editor.selectLayer(layerId);
+		}
+		if (editor.isFrameSelected(frameIndex)) {
+			editor.selectFrame(frameIndex, { preserveSelection: true });
+		} else {
+			editor.selectFrame(frameIndex);
+		}
+		contextMenu = {
+			kind: "cel",
+			...menuCoordinates(event),
+			layerId,
+			frameIndex,
+		};
+	}
+
+	function handleLayerContextMenu(event: MouseEvent, layer: Layer): void {
+		event.preventDefault();
+		if (editor.isLayerSelected(layer.id)) {
+			editor.selectLayer(layer.id, { preserveSelection: true });
+		} else {
+			editor.selectLayer(layer.id);
+		}
+		contextMenu = {
+			kind: "layer",
+			...menuCoordinates(event),
+			layerId: layer.id,
+		};
+	}
+
+	function openLayerProperties(layer: Layer): void {
+		editor.selectLayer(layer.id);
+		layerPropertiesOpen = true;
+	}
+
 	function closeContextMenu(): void {
 		contextMenu = null;
 	}
@@ -368,8 +483,8 @@
 
 	function handleWindowPointerDown(event: PointerEvent): void {
 		if (!contextMenu) return;
-		const target = event.target as HTMLElement | null;
-		if (target?.closest("[data-frame-menu]")) return;
+		const target = event.target;
+		if (target instanceof Element && target.closest("[data-timeline-menu]")) return;
 		contextMenu = null;
 	}
 
@@ -497,6 +612,15 @@
 				title={`${editor.selectedFrameCount} frames selected`}
 			>
 				{editor.selectedFrameCount} frames
+			</Badge>
+		{/if}
+		{#if editor.selectedLayerCount > 1}
+			<Badge
+				variant="outline"
+				class="h-5 px-1.5 text-[10px] tabular-nums"
+				title={`${editor.selectedLayerCount} layers selected`}
+			>
+				{editor.selectedLayerCount} layers
 			</Badge>
 		{/if}
 		{#if editor.referenceLayerCount > 0}
@@ -1096,7 +1220,11 @@
 							: null}
 						firstFrame={firstFrame}
 						lastFrame={lastFrame}
-						onFrameContextMenu={openFrameContextMenu}
+						onCelPointerDown={handleCelPointerDown}
+						onCelPointerEnter={handleCelPointerEnter}
+						onCelContextMenu={handleCelContextMenu}
+						onLayerContextMenu={handleLayerContextMenu}
+						onLayerProperties={openLayerProperties}
 						onDragStart={(event) => beginLayerDrag(event, row.layer)}
 						onDragOver={(mode) => updateLayerDrop(row.layer, mode)}
 						onDrop={(mode) => finishLayerDrop(row.layer, mode)}
@@ -1135,92 +1263,218 @@
 	</footer>
 </section>
 
+{#snippet layerMenuActions()}
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		onclick={() => runMenuAction(() => (layerPropertiesOpen = true))}
+	>
+		<Settings2 class="size-3.5 text-muted-foreground" />
+		Layer properties…
+	</button>
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		onclick={() =>
+			runMenuAction(() => editor.toggleLayerVisibility(editor.activeLayerId))}
+	>
+		{#if editor.activeLayer.visible}
+			<EyeOff class="size-3.5 text-muted-foreground" />
+			Hide layer
+		{:else}
+			<Eye class="size-3.5 text-muted-foreground" />
+			Show layer
+		{/if}
+	</button>
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		disabled={editor.activeLayer.role === "reference"}
+		onclick={() =>
+			runMenuAction(() => editor.toggleLayerLock(editor.activeLayerId))}
+	>
+		{#if editor.activeLayer.locked}
+			<LockOpen class="size-3.5 text-muted-foreground" />
+			Unlock layer
+		{:else}
+			<Lock class="size-3.5 text-muted-foreground" />
+			Lock layer
+		{/if}
+	</button>
+
+	<div class="my-1 h-px bg-border"></div>
+
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		onclick={() => runMenuAction(() => editor.duplicateLayer())}
+	>
+		<Copy class="size-3.5 text-muted-foreground" />
+		Duplicate layer
+	</button>
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		onclick={() => runMenuAction(() => editor.groupActiveLayer())}
+	>
+		<FolderInput class="size-3.5 text-muted-foreground" />
+		Group layer
+	</button>
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		onclick={() => runMenuAction(() => editor.moveLayerUp())}
+	>
+		<ChevronUp class="size-3.5 text-muted-foreground" />
+		Move layer up
+	</button>
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		onclick={() => runMenuAction(() => editor.moveLayerDown())}
+	>
+		<ChevronDown class="size-3.5 text-muted-foreground" />
+		Move layer down
+	</button>
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		onclick={() => runMenuAction(() => editor.indentActiveLayer())}
+	>
+		<IndentIncrease class="size-3.5 text-muted-foreground" />
+		Move into group above
+	</button>
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		disabled={!editor.activeLayer.parentId}
+		onclick={() => runMenuAction(() => editor.outdentActiveLayer())}
+	>
+		<IndentDecrease class="size-3.5 text-muted-foreground" />
+		Move out of group
+	</button>
+
+	<div class="my-1 h-px bg-border"></div>
+
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_DANGER_CLASS}
+		disabled={!editor.canDeleteLayer}
+		onclick={() => runMenuAction(() => editor.deleteLayer())}
+	>
+		<Trash2 class="size-3.5" />
+		Delete layer
+	</button>
+{/snippet}
+
+{#snippet frameMenuActions()}
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		onclick={() => runMenuAction(() => editor.copyFrames())}
+	>
+		<ClipboardCopy class="size-3.5 text-muted-foreground" />
+		Copy frames
+	</button>
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		onclick={() => runMenuAction(() => editor.pasteFrames())}
+		disabled={!editor.hasFrameClipboard}
+	>
+		<ClipboardPaste class="size-3.5 text-muted-foreground" />
+		Paste frames
+	</button>
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		onclick={() => runMenuAction(() => (duplicateFramesOpen = true))}
+	>
+		<Copy class="size-3.5 text-muted-foreground" />
+		Duplicate frames…
+	</button>
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		onclick={() => runMenuAction(() => (framePropertiesOpen = true))}
+	>
+		<Settings2 class="size-3.5 text-muted-foreground" />
+		Frame properties…
+	</button>
+
+	<div class="my-1 h-px bg-border"></div>
+
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		onclick={() => runMenuAction(() => editor.moveSelectedFrames(-1))}
+	>
+		<ArrowLeft class="size-3.5 text-muted-foreground" />
+		Move frames left
+	</button>
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		onclick={() => runMenuAction(() => editor.moveSelectedFrames(1))}
+	>
+		<ArrowRight class="size-3.5 text-muted-foreground" />
+		Move frames right
+	</button>
+
+	<div class="my-1 h-px bg-border"></div>
+
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_DANGER_CLASS}
+		onclick={() => runMenuAction(() => editor.deleteSelectedFrames())}
+		disabled={
+			editor.frameCount <= 1 ||
+			editor.selectedFrameCount >= editor.frameCount
+		}
+	>
+		<Trash2 class="size-3.5" />
+		Delete frames
+	</button>
+{/snippet}
+
 {#if contextMenu}
 	<div
-		data-frame-menu
+		data-timeline-menu
 		class="fixed z-50 max-h-[calc(100svh-1rem)] w-56 overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-lg"
 		role="menu"
-		aria-label="Frame actions"
+		aria-label="Timeline actions"
 		style:left={`${contextMenu.x}px`}
 		style:top={`${contextMenu.y}px`}
 	>
 		<div class="px-2 py-1 text-[10px] font-medium text-muted-foreground">
 			{contextTitle}
 		</div>
-		<button
-			type="button"
-			role="menuitem"
-			class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40"
-			onclick={() => runMenuAction(() => editor.copyFrames())}
-		>
-			<ClipboardCopy class="size-3.5 text-muted-foreground" />
-			Copy frames
-		</button>
-		<button
-			type="button"
-			role="menuitem"
-			class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40"
-			onclick={() => runMenuAction(() => editor.pasteFrames())}
-			disabled={!editor.hasFrameClipboard}
-		>
-			<ClipboardPaste class="size-3.5 text-muted-foreground" />
-			Paste frames
-		</button>
-		<button
-			type="button"
-			role="menuitem"
-			class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40"
-			onclick={() => runMenuAction(() => (duplicateFramesOpen = true))}
-		>
-			<Copy class="size-3.5 text-muted-foreground" />
-			Duplicate frames…
-		</button>
-		<button
-			type="button"
-			role="menuitem"
-			class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40"
-			onclick={() => runMenuAction(() => (framePropertiesOpen = true))}
-		>
-			<Settings2 class="size-3.5 text-muted-foreground" />
-			Frame properties…
-		</button>
-
-		<div class="my-1 h-px bg-border"></div>
-
-		<button
-			type="button"
-			role="menuitem"
-			class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40"
-			onclick={() => runMenuAction(() => editor.moveSelectedFrames(-1))}
-		>
-			<ArrowLeft class="size-3.5 text-muted-foreground" />
-			Move frames left
-		</button>
-		<button
-			type="button"
-			role="menuitem"
-			class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40"
-			onclick={() => runMenuAction(() => editor.moveSelectedFrames(1))}
-		>
-			<ArrowRight class="size-3.5 text-muted-foreground" />
-			Move frames right
-		</button>
-
-		<div class="my-1 h-px bg-border"></div>
-
-		<button
-			type="button"
-			role="menuitem"
-			class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-destructive outline-none hover:bg-destructive/10 focus-visible:bg-destructive/10 disabled:pointer-events-none disabled:opacity-40"
-			onclick={() => runMenuAction(() => editor.deleteSelectedFrames())}
-			disabled={
-				editor.frameCount <= 1 ||
-				editor.selectedFrameCount >= editor.frameCount
-			}
-		>
-			<Trash2 class="size-3.5" />
-			Delete frames
-		</button>
+		{#if contextMenu.kind === "layer"}
+			{@render layerMenuActions()}
+		{:else if contextMenu.kind === "frame"}
+			{@render frameMenuActions()}
+		{:else}
+			{@render layerMenuActions()}
+			<div class="my-1 h-px bg-border"></div>
+			{@render frameMenuActions()}
+		{/if}
 	</div>
 {/if}
 
@@ -1230,5 +1484,7 @@
 
 <svelte:window
 	onpointerdown={handleWindowPointerDown}
+	onpointerup={endCelDrag}
+	onpointercancel={endCelDrag}
 	onkeydown={handleWindowKeydown}
 />

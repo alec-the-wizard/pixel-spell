@@ -187,6 +187,8 @@ interface ProjectSnapshot {
 	activeLayerId: string;
 	activeFrame: number;
 	activeReferenceId: string | null;
+	layerSelection: string[];
+	layerAnchorId: string | null;
 	frameSelection: string[];
 	frameAnchorId: string | null;
 	zoom: number | null;
@@ -240,6 +242,12 @@ export class EditorState {
 	doc = $state<PixelDoc>(createDoc(32, 32));
 	activeLayerId = $state<string>(this.doc.layers[0].id);
 	activeFrame = $state(0);
+	/**
+	 * Selected layer ids in the timeline. Always includes the active layer.
+	 * Timeline selection is a layer selection plus a frame selection, not a
+	 * grouping of individual cels.
+	 */
+	layerSelection = $state<string[]>([this.doc.layers[0].id]);
 	/** Selected frame ids, including the active frame. */
 	frameSelection = $state<string[]>([this.doc.frames[0]!.id]);
 	/** Selected image on the project-level reference board. */
@@ -380,6 +388,7 @@ export class EditorState {
 	#states = new Map<string, ProjectSnapshot>();
 	#clipboard: SelectionClipboard | null = null;
 	#frameClipboard: FrameClipboard | null = null;
+	#layerAnchorId: string | null = this.doc.layers[0].id;
 	#frameAnchorId: string | null = this.doc.frames[0]!.id;
 	#playbackSequence: number[] = [];
 	#playbackCursor = -1;
@@ -400,6 +409,8 @@ export class EditorState {
 			activeLayerId: this.activeLayerId,
 			activeFrame: this.activeFrame,
 			activeReferenceId: null,
+			layerSelection: this.layerSelection,
+			layerAnchorId: this.#layerAnchorId,
 			frameSelection: this.frameSelection,
 			frameAnchorId: this.#frameAnchorId,
 			zoom: this.zoom,
@@ -532,6 +543,15 @@ export class EditorState {
 
 	get selectedFrameCount(): number {
 		return this.selectedFrameIndices.length;
+	}
+
+	get selectedLayerCount(): number {
+		return this.layerSelection.length;
+	}
+
+	/** Whether a layer row is part of the timeline selection. */
+	isLayerSelected(id: string): boolean {
+		return this.layerSelection.includes(id);
 	}
 
 	/** Playback order of the animation. */
@@ -1822,6 +1842,7 @@ export class EditorState {
 		if (!this.doc.layers.some((layer) => layer.id === this.activeLayerId)) {
 			this.activeLayerId = this.doc.layers[this.doc.layers.length - 1]!.id;
 		}
+		this.#restoreLayerSelection(this.layerSelection, this.#layerAnchorId);
 		if (
 			this.activeReferenceId &&
 			!this.doc.references.some(
@@ -1842,6 +1863,24 @@ export class EditorState {
 		this.revision++;
 		this.dirty = true;
 		this.modified = true;
+	}
+
+	#restoreLayerSelection(ids: string[], anchorId: string | null): void {
+		const valid = new Set(this.doc.layers.map((layer) => layer.id));
+		const selection = (Array.isArray(ids) ? ids : []).filter((id) =>
+			valid.has(id),
+		);
+		const activeId = valid.has(this.activeLayerId)
+			? this.activeLayerId
+			: this.doc.layers[this.doc.layers.length - 1]?.id;
+		if (activeId && this.activeLayerId !== activeId) {
+			this.activeLayerId = activeId;
+		}
+		if (activeId && !selection.includes(activeId)) selection.push(activeId);
+		this.layerSelection =
+			selection.length > 0 ? selection : activeId ? [activeId] : [];
+		this.#layerAnchorId =
+			anchorId && valid.has(anchorId) ? anchorId : (activeId ?? null);
 	}
 
 	#restoreFrameSelection(ids: string[], anchorId: string | null): void {
@@ -1876,6 +1915,8 @@ export class EditorState {
 		snapshot.activeLayerId = this.activeLayerId;
 		snapshot.activeFrame = this.activeFrame;
 		snapshot.activeReferenceId = this.activeReferenceId;
+		snapshot.layerSelection = this.layerSelection;
+		snapshot.layerAnchorId = this.#layerAnchorId;
 		snapshot.frameSelection = this.frameSelection;
 		snapshot.frameAnchorId = this.#frameAnchorId;
 		snapshot.zoom = this.zoom;
@@ -1899,6 +1940,7 @@ export class EditorState {
 		this.activeLayerId = snapshot.activeLayerId;
 		this.activeFrame = snapshot.activeFrame;
 		this.activeReferenceId = snapshot.activeReferenceId;
+		this.#restoreLayerSelection(snapshot.layerSelection, snapshot.layerAnchorId);
 		this.#restoreFrameSelection(snapshot.frameSelection, snapshot.frameAnchorId);
 		this.zoom = snapshot.zoom;
 		this.panX = snapshot.panX;
@@ -2018,6 +2060,8 @@ export class EditorState {
 			activeLayerId: doc.layers[0].id,
 			activeFrame: 0,
 			activeReferenceId: null,
+			layerSelection: [doc.layers[0].id],
+			layerAnchorId: doc.layers[0].id,
 			frameSelection: [doc.frames[0]!.id],
 			frameAnchorId: doc.frames[0]!.id,
 			zoom: null,
@@ -2052,6 +2096,8 @@ export class EditorState {
 			activeLayerId,
 			activeFrame,
 			activeReferenceId: null,
+			layerSelection: [activeLayerId],
+			layerAnchorId: activeLayerId,
 			frameSelection: [doc.frames[activeFrame]!.id],
 			frameAnchorId: doc.frames[activeFrame]!.id,
 			zoom: null,
@@ -2114,6 +2160,8 @@ export class EditorState {
 			activeLayerId: doc.layers[0]!.id,
 			activeFrame: 0,
 			activeReferenceId: null,
+			layerSelection: [doc.layers[0]!.id],
+			layerAnchorId: doc.layers[0]!.id,
 			frameSelection: [doc.frames[0]!.id],
 			frameAnchorId: doc.frames[0]!.id,
 			zoom: null,
@@ -2160,7 +2208,7 @@ export class EditorState {
 			),
 		);
 		this.doc.layers.push(layer);
-		this.activeLayerId = layer.id;
+		this.#setActiveLayer(layer.id);
 		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
@@ -2238,7 +2286,7 @@ export class EditorState {
 		this.activeFrame = index;
 		this.frameSelection = [this.doc.frames[index]!.id];
 		this.#frameAnchorId = this.doc.frames[index]!.id;
-		this.activeLayerId = target.id;
+		this.#setActiveLayer(target.id);
 		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
@@ -2282,7 +2330,7 @@ export class EditorState {
 		}
 
 		this.doc.layers.push(layer);
-		this.activeLayerId = layer.id;
+		this.#setActiveLayer(layer.id);
 		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
@@ -2495,12 +2543,145 @@ export class EditorState {
 		}
 	}
 
-	selectLayer(id: string): void {
+	selectLayer(id: string, options: { preserveSelection?: boolean } = {}): void {
 		if (!this.doc.layers.some((layer) => layer.id === id)) return;
 		if (this.floating) this.commitFloatingSelection();
 		this.activeReferenceId = null;
-		if (id === this.activeLayerId) return;
+
+		if (options.preserveSelection) {
+			if (!this.layerSelection.includes(id)) {
+				this.layerSelection = [...this.layerSelection, id];
+			}
+			this.activeLayerId = id;
+			return;
+		}
+
 		this.activeLayerId = id;
+		this.layerSelection = [id];
+		this.#layerAnchorId = id;
+	}
+
+	/** Selects a single layer without disturbing multi-frame selection. */
+	#setActiveLayer(id: string): void {
+		this.activeLayerId = id;
+		this.layerSelection = [id];
+		this.#layerAnchorId = id;
+	}
+
+	#layerRange(fromId: string, toId: string): string[] {
+		const layers = this.doc.layers;
+		const a = layers.findIndex((layer) => layer.id === fromId);
+		const b = layers.findIndex((layer) => layer.id === toId);
+		if (a < 0 || b < 0) return [toId];
+		const start = Math.min(a, b);
+		const end = Math.max(a, b);
+		return layers.slice(start, end + 1).map((layer) => layer.id);
+	}
+
+	/** Extends the layer selection from the last anchor to `id` (Shift+click). */
+	extendLayerSelection(id: string): void {
+		const layers = this.doc.layers;
+		if (!layers.some((layer) => layer.id === id)) return;
+		if (this.floating) this.commitFloatingSelection();
+		this.activeReferenceId = null;
+		const anchorId = this.#layerAnchorId ?? this.activeLayerId;
+		this.activeLayerId = id;
+		this.layerSelection = this.#layerRange(anchorId, id);
+	}
+
+	/** Toggles a layer row in the selection (Ctrl/Cmd+click). */
+	toggleLayerSelection(id: string): void {
+		const layers = this.doc.layers;
+		if (!layers.some((layer) => layer.id === id)) return;
+		if (this.floating) this.commitFloatingSelection();
+		this.activeReferenceId = null;
+
+		if (this.layerSelection.includes(id)) {
+			if (this.layerSelection.length <= 1) return;
+			this.layerSelection = this.layerSelection.filter(
+				(layerId) => layerId !== id,
+			);
+			if (this.activeLayerId === id) {
+				this.activeLayerId =
+					this.layerSelection[this.layerSelection.length - 1]!;
+				this.#layerAnchorId = this.activeLayerId;
+			}
+			return;
+		}
+
+		this.layerSelection = [...this.layerSelection, id];
+		this.activeLayerId = id;
+		this.#layerAnchorId = id;
+	}
+
+	/** Selects one timeline cel (collapses both selections). */
+	selectCel(layerId: string, frameIndex: number): void {
+		this.selectLayer(layerId);
+		this.selectFrame(frameIndex);
+	}
+
+	/** Shift+click on a cel: extends the layer and frame selections together. */
+	extendCelSelection(layerId: string, frameIndex: number): void {
+		const layers = this.doc.layers;
+		if (!layers.some((layer) => layer.id === layerId)) return;
+		const next = clamp(Math.round(frameIndex), 0, this.doc.frames.length - 1);
+		if (this.floating) this.commitFloatingSelection();
+		this.activeReferenceId = null;
+
+		const layerAnchorId = this.#layerAnchorId ?? this.activeLayerId;
+		const frameAnchorIndex = this.#frameAnchorId
+			? this.doc.frames.findIndex((frame) => frame.id === this.#frameAnchorId)
+			: this.activeFrame;
+		const fromFrame = frameAnchorIndex >= 0 ? frameAnchorIndex : this.activeFrame;
+
+		this.activeLayerId = layerId;
+		this.layerSelection = this.#layerRange(layerAnchorId, layerId);
+		this.activeFrame = next;
+		this.frameSelection = this.#frameIdsBetween(fromFrame, next);
+	}
+
+	/** Ctrl/Cmd+click on a cel: toggles its layer and frame in the selection. */
+	toggleCelSelection(layerId: string, frameIndex: number): void {
+		this.toggleLayerSelection(layerId);
+		this.toggleFrameSelection(frameIndex);
+	}
+
+	/**
+	 * Selects the rectangular block of frames and layers between two cels.
+	 * The end cel becomes the active layer/frame, so the main canvas shows it.
+	 */
+	selectCelRange(
+		fromLayerId: string,
+		fromFrame: number,
+		toLayerId: string,
+		toFrame: number,
+	): void {
+		const layers = this.doc.layers;
+		if (!layers.some((layer) => layer.id === fromLayerId)) return;
+		if (!layers.some((layer) => layer.id === toLayerId)) return;
+		const lastFrame = clamp(
+			Math.round(toFrame),
+			0,
+			this.doc.frames.length - 1,
+		);
+		const firstFrame = clamp(
+			Math.round(fromFrame),
+			0,
+			this.doc.frames.length - 1,
+		);
+		if (this.floating) this.commitFloatingSelection();
+		this.activeReferenceId = null;
+
+		this.activeLayerId = toLayerId;
+		this.layerSelection = this.#layerRange(fromLayerId, toLayerId);
+		this.activeFrame = lastFrame;
+		this.frameSelection = this.#frameIdsBetween(firstFrame, lastFrame);
+	}
+
+	#frameIdsBetween(a: number, b: number): string[] {
+		const start = Math.min(a, b);
+		const end = Math.max(a, b);
+		return this.doc.frames.slice(start, end + 1).map((frame) => frame.id);
 	}
 
 	selectReferenceImage(id: string | null): void {
@@ -2584,7 +2765,7 @@ export class EditorState {
 			this.doc.frames.length,
 		);
 		this.doc.layers.push(layer);
-		this.activeLayerId = layer.id;
+		this.#setActiveLayer(layer.id);
 		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
@@ -2610,7 +2791,7 @@ export class EditorState {
 		this.pushHistory();
 		const group = createGroup(this.#nextGroupName());
 		this.doc.layers.push(group);
-		this.activeLayerId = group.id;
+		this.#setActiveLayer(group.id);
 		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
@@ -2647,8 +2828,9 @@ export class EditorState {
 			if (child.parentId === layer.id) child.parentId = parentId;
 		}
 		layers.splice(index, 1);
-		this.activeLayerId =
-			layers[Math.min(index, layers.length - 1)]?.id ?? this.activeLayerId;
+		this.#setActiveLayer(
+			layers[Math.min(index, layers.length - 1)]?.id ?? this.activeLayerId,
+		);
 		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
@@ -2740,7 +2922,7 @@ export class EditorState {
 			};
 		});
 		layers.splice(end, 0, ...clones);
-		this.activeLayerId = idMap.get(source.id)!;
+		this.#setActiveLayer(idMap.get(source.id)!);
 		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
@@ -2754,8 +2936,9 @@ export class EditorState {
 		this.pushHistory();
 		const { end } = subtreeRange(layers, index);
 		layers.splice(index, end - index);
-		this.activeLayerId =
-			layers[Math.min(index, layers.length - 1)]?.id ?? this.activeLayerId;
+		this.#setActiveLayer(
+			layers[Math.min(index, layers.length - 1)]?.id ?? this.activeLayerId,
+		);
 		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
