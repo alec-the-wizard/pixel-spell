@@ -17,7 +17,6 @@
 	} from "$lib/editor/doc.js";
 	import {
 		blurPixels,
-		eraseBrush,
 		fillPixels,
 		gradientPixels,
 		jumblePixels,
@@ -1124,34 +1123,6 @@
 		}
 	}
 
-	/**
-	 * Erases the removed corner pixels and nothing else. A 1px brush means each
-	 * removed elbow is a single pixel (plus its symmetry copies), so restoring
-	 * just those pixels is exact and avoids repainting the whole stroke. Wider
-	 * brushes make neighboring stamps overlap, so a full repaint stays the
-	 * correct, if slower, path.
-	 */
-	function erasePixelPerfectPoints(cel: Uint32Array, points: readonly Point[]): void {
-		if (!backup || points.length === 0) return;
-		if (editor.brushSize > 1) {
-			repaintPixelPerfectStroke(cel);
-			return;
-		}
-		for (const point of points) {
-			eraseBrush(
-				cel,
-				backup,
-				editor.doc.width,
-				editor.doc.height,
-				point.x,
-				point.y,
-				1,
-				strokeMirrors,
-				strokeRadial,
-			);
-		}
-	}
-
 	function updatePixelPerfectStroke(cel: Uint32Array, point: Point): void {
 		const from = last ?? point;
 		const newPoints: Point[] = [];
@@ -1161,16 +1132,18 @@
 			newPoints.push({ x, y });
 		});
 
-		const removedPoints: Point[] = [];
 		let removed = false;
 		for (const next of newPoints) {
-			if (appendPixelPerfectPointTo(strokePath, next.x, next.y, removedPoints)) {
-				removed = true;
-			}
+			if (appendPixelPerfectPointTo(strokePath, next.x, next.y)) removed = true;
 		}
 
 		if (removed) {
-			erasePixelPerfectPoints(cel, removedPoints);
+			// Rebuilding from the pre-stroke backup is the only exact way to
+			// drop the removed elbow: the newly added points still have to be
+			// painted, and a removed pixel's footprint may overlap neighboring
+			// stamps (or their symmetry copies). Erasing the elbow alone used
+			// to skip the new points, which left gaps in the stroke.
+			repaintPixelPerfectStroke(cel);
 		} else {
 			for (const next of newPoints) paintAt(cel, next.x, next.y);
 		}

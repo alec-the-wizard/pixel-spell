@@ -144,44 +144,6 @@ export function paintBrush(
 	}
 }
 
-/**
- * Restores a brush stamp's footprint from `backup`, honoring the same symmetry
- * as `paintBrush`. Used by pixel-perfect corner removal to erase a single
- * removed elbow pixel without repainting the whole stroke.
- */
-export function eraseBrush(
-	cel: Uint32Array,
-	backup: Uint32Array,
-	width: number,
-	height: number,
-	x: number,
-	y: number,
-	size: number,
-	mirrors: readonly MirrorAxis[] = [],
-	radial: RadialSymmetry | null = null,
-): void {
-	const span = Math.max(1, Math.round(size));
-	const offset = Math.floor((span - 1) / 2);
-	const set = (px: number, py: number) => {
-		if (px < 0 || px >= width || py < 0 || py >= height) return;
-		cel[py * width + px] = backup[py * width + px]!;
-	};
-
-	for (let dy = 0; dy < span; dy++) {
-		for (let dx = 0; dx < span; dx++) {
-			forEachSymmetryPoint(
-				x - offset + dx,
-				y - offset + dy,
-				width,
-				height,
-				mirrors,
-				radial,
-				set,
-			);
-		}
-	}
-}
-
 /** Bresenham line between two points. */
 export function plotLine(
 	x0: number,
