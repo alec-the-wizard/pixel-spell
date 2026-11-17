@@ -451,6 +451,21 @@ const ACTION_COMMANDS: CommandDef[] = [
 		run: () => (editor.paletteCyclesOpen = true),
 	},
 	{
+		id: "palette.remove-unused",
+		label: "Remove unused palette colors",
+		group: "Palette",
+		keywords: "prune clean unused coverage palette analysis",
+		enabled: () => editor.paletteEditable,
+		run: () => editor.removeUnusedPaletteColors(),
+	},
+	{
+		id: "palette.coverage",
+		label: "Palette coverage analysis…",
+		group: "Palette",
+		keywords: "used unused colors report stats palette analysis",
+		run: () => (editor.paletteCoverageOpen = true),
+	},
+	{
 		id: "app.command-palette",
 		label: "Command palette…",
 		group: "Help",

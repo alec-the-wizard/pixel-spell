@@ -59,6 +59,10 @@ import {
 	type PaletteCycleDirection,
 	type PaletteCycleRange,
 } from "./palette-cycle.js";
+import {
+	analyzePaletteCoverage,
+	unusedPaletteColors,
+} from "./palette-analysis.js";
 import type {
 	AnimationMode,
 	BackgroundKind,
@@ -206,6 +210,7 @@ export class EditorState {
 	paletteLocked = $state(false);
 	paletteRampOpen = $state(false);
 	paletteCyclesOpen = $state(false);
+	paletteCoverageOpen = $state(false);
 	/**
 	 * Inclusive palette range used by the Color Cycles dialog. Cycling is a
 	 * workspace preference and is intentionally not stored in project files.
@@ -1379,6 +1384,38 @@ export class EditorState {
 				? sortPaletteColors(originalColors, palette.sortMode)
 				: colors;
 		this.#persistPalettes();
+	}
+
+	/**
+	 * Measures palette usage against every normal layer of the active document.
+	 * Reference layers are ignored.
+	 */
+	analyzePaletteCoverage(colors: readonly string[] = this.activePalette.colors) {
+		return analyzePaletteCoverage(this.doc, colors);
+	}
+
+	/**
+	 * Removes palette entries that no normal layer uses in any frame. Reference
+	 * layers are ignored, and the built-in or locked palettes are never touched.
+	 * Returns the number of removed colors.
+	 */
+	removeUnusedPaletteColors(): number {
+		const palette = this.activePalette;
+		if (!this.paletteEditable) return 0;
+
+		const unused = unusedPaletteColors(this.doc, palette.colors);
+		if (unused.length === 0) return 0;
+		const removed = new Set(unused);
+		const originalColors = (palette.originalColors ?? palette.colors).filter(
+			(color) => !removed.has(color),
+		);
+		palette.originalColors = originalColors;
+		palette.colors =
+			palette.sortMode && palette.sortMode !== "original"
+				? sortPaletteColors(originalColors, palette.sortMode)
+				: palette.colors.filter((color) => !removed.has(color));
+		this.#persistPalettes();
+		return unused.length;
 	}
 
 	/** Adds an imported palette, makes it active, and returns its id. */

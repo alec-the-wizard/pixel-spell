@@ -52,6 +52,10 @@ import {
 	paletteShiftForStep,
 	remapPalettePixels,
 } from "../src/lib/editor/palette-cycle.js";
+import {
+	analyzePaletteCoverage,
+	unusedPaletteColors,
+} from "../src/lib/editor/palette-analysis.js";
 import { generatePaletteRamp } from "../src/lib/editor/palette-ramp.js";
 import {
 	lassoSelectionMask,
@@ -571,6 +575,72 @@ function assertPaletteCycling(): void {
 	}
 }
 
+function assertPaletteAnalysis(): void {
+	const doc = createDoc(4, 4);
+	doc.frames = [{ id: "frame-0" }, { id: "frame-1" }];
+	const layer = doc.layers[0]!;
+	layer.cels = doc.frames.map(() => new Uint32Array(16));
+	layer.cels[0]!.set([
+		packColor("#ff0000"),
+		packColor("#00ff00"),
+		packColor("#123456"),
+	]);
+	layer.cels[1]!.set([packColor("#ff0000"), packColor("#ff0000", 64)]);
+
+	// Reference layers are not part of the palette usage analysis.
+	const reference = createLayer("Reference", 4, 4, 2, "reference");
+	reference.cels[1]!.fill(packColor("#0000ff"));
+	doc.layers.push(reference);
+
+	const palette = ["#ff0000", "#00ff00", "#0000ff", "#ffffff"];
+	const unused = unusedPaletteColors(doc, palette);
+	if (unused.join() !== ["#0000ff", "#ffffff"].join()) {
+		throw new Error("unused palette color detection changed");
+	}
+	if (unusedPaletteColors(doc, ["#ff0000"]).length !== 0) {
+		throw new Error("used palette colors were reported unused");
+	}
+
+	const analysis = analyzePaletteCoverage(doc, palette);
+	if (analysis.paintedPixels !== 5) {
+		throw new Error("palette analysis pixel count changed");
+	}
+	if (analysis.matchedPixels !== 4 || Math.abs(analysis.coverage - 0.8) > 1e-9) {
+		throw new Error("palette analysis coverage changed");
+	}
+	if (analysis.usedColors !== 2 || analysis.unusedColors !== 2) {
+		throw new Error("palette analysis used/unused counts changed");
+	}
+	if (
+		analysis.entries[0]?.count !== 3 ||
+		analysis.entries[1]?.count !== 1 ||
+		analysis.entries[2]?.count !== 0
+	) {
+		throw new Error("palette analysis per-color counts changed");
+	}
+	if (
+		analysis.offPaletteCount !== 1 ||
+		analysis.offPalettePixels !== 1 ||
+		analysis.offPalette[0]?.color !== "#123456"
+	) {
+		throw new Error("palette analysis off-palette detection changed");
+	}
+	if (analysis.hueBins[0]?.count !== 1 || analysis.hueBins[4]?.count !== 1) {
+		throw new Error("palette analysis hue bins changed");
+	}
+	if (analysis.neutralColors !== 1) {
+		throw new Error("palette analysis neutral colors changed");
+	}
+	if (analysis.valueBins[analysis.valueBins.length - 1]?.count !== 4) {
+		throw new Error("palette analysis brightness bins changed");
+	}
+
+	const empty = analyzePaletteCoverage(createDoc(2, 2), palette);
+	if (empty.paintedPixels !== 0 || empty.coverage !== 0) {
+		throw new Error("palette analysis empty document changed");
+	}
+}
+
 function assertSheetMetadata(): void {
 	const doc = createDoc(4, 4);
 	doc.frames = [
@@ -770,6 +840,7 @@ assertLayerColors();
 assertPaletteSorting();
 assertPaletteRamps();
 assertPaletteCycling();
+assertPaletteAnalysis();
 assertSheetMetadata();
 assertProjectRoundtrip(makeDoc(64, 64, 2, 3, 41), "sparse");
 const opaqueDoc = makeDoc(64, 64, 1, 1, 42);

@@ -40,6 +40,7 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Left/right mouse button tool mapping | 6 | 2 | 3.00 | | Implemented as an optional, disabled-by-default **Double tool mode** (View menu). When enabled, the left and right mouse buttons run separate tools: left-click a tool button to assign the blue left slot, right-click to assign the orange right slot. The tool options panel follows the last-selected tool and can be swapped with an arrow button; the canvas shows a crosshair with floating tool icons. Zoom gains an in/out direction option, lasso finishes on double-click from either button, and the eyedropper can target primary or secondary. |
 | Import from URL & paste-from-clipboard | 6 | 2 | 3.00 | | Implemented: **File → Import from URL…** (also in the command palette) opens the import dialog with a URL field that downloads the image and runs it through the normal import analysis, so it can still become a project, layer, frame, reference layer, reference-board image, or palette. Cross-origin hosts must allow CORS; failures explain that and suggest downloading the file. Pasting an image from the OS clipboard anywhere outside a text field opens the same dialog with the pasted image. When the clipboard holds an image, `Ctrl+V` imports it; otherwise `Ctrl+V` still pastes the in-app selection. |
 | Frame duration badges and colored tag ranges | 5 | 2 | 2.50 | | Implemented: each frame header shows its duration in milliseconds in the timeline, with `ms` appended so the unit is unambiguous. A duration that comes from frame properties is wrapped in square brackets (`[ 123ms ]`); a duration derived from the project FPS stays bare (`123ms`). Tags carry a generated color, so contiguous tag ranges are easy to distinguish in the tag row. |
+| Unused-color pruning and palette analysis | 5 | 2 | 2.50 | | Implemented: the palette tools menu can remove every palette color that no frame or normal layer uses (reference layers are ignored, and the built-in, locked, and read-only palettes are never modified). **Coverage analysis…** opens a read-only dialog with used/unused totals, the share of painted pixels covered by the palette, per-color usage bars, twelve-bin hue coverage with dashed gaps, eight-bin brightness coverage, and the most-used off-palette colors. |
 
 ## Planned features
 
@@ -47,7 +48,6 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | --- | ---: | ---: | ---: | :---: | --- |
 | Dithering patterns and pattern brushes | 8 | 3 | 2.67 | | Add selectable dither masks (Bayer, checker, custom) to pencil/fill, plus standalone error-diffusion (Floyd–Steinberg) and ordered-dither filters over a selection. Reuse the gradient Bayer code and selection masks. |
 | Color-blindness simulation and palette preview | 5 | 2 | 2.50 | | Preview deuteranopia/protanopia/tritanopia and grayscale in the canvas without changing pixels. Useful for accessibility checks and palette design. |
-| Unused-color pruning and palette analysis | 5 | 2 | 2.50 | | Report how many colors are actually used and remove unused entries; add a Lospec-style analyzer that highlights weak ramp coverage. Lospec ships “remove unused colors” and GrafX2 offers palette coverage tools. |
 | Export presets | 7 | 3 | 2.33 | | Name and reuse export configurations (format, scale, trim, spacing, metadata, loop) so the right settings are one click. Pixelorama ships an `export_presets.cfg`; the community repeatedly asks for this. |
 | Outline, drop shadow, and color-replace filters | 8 | 4 | 2.00 | | Selection-aware filters that operate on the active cel or all visible layers. Add a preview and an undoable apply step. High value for quick sprite cleanup; the natural home for non-destructive FX layers later. |
 | Rulers and draggable guides | 6 | 3 | 2.00 | | Horizontal/vertical guides with snapping, persisted per project, plus a quick measurement readout. Reuse the mirror-guide overlay and pointer mapping. |
@@ -118,7 +118,7 @@ These are deliberately out of scope for the foreseeable future. They contradict 
 11. Left/right mouse button tool mapping — done
 12. Import from URL & paste-from-clipboard — done
 13. Frame duration badges and colored tag ranges — done
-14. Unused-color pruning and palette analysis
+14. Unused-color pruning and palette analysis — done
 
 These add the most day-to-day value per unit of risk. Onion skinning and reference layers in particular are table stakes for animation and tracing workflows. A dedicated onion-skin static frame was dropped from this list because reference layers and the reference board already cover that workflow.
 
