@@ -9,6 +9,7 @@
 	import Settings2 from "@lucide/svelte/icons/settings-2";
 	import Trash2 from "@lucide/svelte/icons/trash-2";
 	import ColorCyclesDialog from "$lib/components/editor/ColorCyclesDialog.svelte";
+	import PaletteCoverageDialog from "$lib/components/editor/PaletteCoverageDialog.svelte";
 	import PaletteLibraryDialog from "$lib/components/editor/PaletteLibraryDialog.svelte";
 	import PaletteRampDialog from "$lib/components/editor/PaletteRampDialog.svelte";
 	import {
@@ -285,6 +286,28 @@
 		renamingPalette = false;
 		editor.deletePalette(activePalette.id);
 	}
+
+	let paletteNotice = $state("");
+	let paletteNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+	function removeUnusedPaletteColors(): void {
+		const removed = editor.removeUnusedPaletteColors();
+		paletteNotice =
+			removed > 0
+				? `Removed ${removed} unused ${removed === 1 ? "color" : "colors"}.`
+				: "Every palette color is already used.";
+		if (paletteNoticeTimer) clearTimeout(paletteNoticeTimer);
+		paletteNoticeTimer = setTimeout(() => {
+			paletteNotice = "";
+			paletteNoticeTimer = undefined;
+		}, 4000);
+	}
+
+	$effect(() => {
+		return () => {
+			if (paletteNoticeTimer) clearTimeout(paletteNoticeTimer);
+		};
+	});
 </script>
 
 <section class="shrink-0 border-t">
@@ -519,6 +542,22 @@
 							>
 								Color cycles…
 							</DropdownMenu.Item>
+							<DropdownMenu.Item
+								disabled={!paletteEditable}
+								title={paletteEditable
+									? "Remove colors that no frame or normal layer uses"
+									: activePalette.builtin
+										? "The default palette cannot be modified"
+										: "Unlock the palette to edit colors"}
+								onSelect={removeUnusedPaletteColors}
+							>
+								Remove unused colors
+							</DropdownMenu.Item>
+							<DropdownMenu.Item
+								onSelect={() => (editor.paletteCoverageOpen = true)}
+							>
+								Coverage analysis…
+							</DropdownMenu.Item>
 							<DropdownMenu.Separator />
 							<DropdownMenu.Label>Sort by</DropdownMenu.Label>
 							<DropdownMenu.RadioGroup
@@ -639,6 +678,11 @@
 			</div>
 
 			<div class="max-h-44 overflow-y-auto p-1">
+				{#if paletteNotice}
+					<p class="px-2 pb-1 text-[10px] text-muted-foreground" aria-live="polite">
+						{paletteNotice}
+					</p>
+				{/if}
 				{#if paletteColorCount === 0}
 					<p
 						class="rounded-md border border-dashed px-2 py-3 text-center text-[10px] text-muted-foreground"
@@ -687,4 +731,5 @@
 	<PaletteLibraryDialog bind:open={paletteLibraryOpen} />
 	<PaletteRampDialog bind:open={editor.paletteRampOpen} />
 	<ColorCyclesDialog bind:open={editor.paletteCyclesOpen} />
+	<PaletteCoverageDialog bind:open={editor.paletteCoverageOpen} />
 </section>

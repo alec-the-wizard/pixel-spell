@@ -120,6 +120,11 @@
 		importDialogOpen = true;
 	}
 
+	function openImportUrl(): void {
+		importFile = null;
+		importDialogOpen = true;
+	}
+
 	function openImportPicker(): void {
 		importInput?.click();
 	}
@@ -230,10 +235,46 @@
 		return !NON_TEXT_INPUT_TYPES.has((element as HTMLInputElement).type);
 	}
 
+	/** The first image file in an OS clipboard payload, if there is one. */
+	function clipboardImageFile(event: ClipboardEvent): File | null {
+		const data = event.clipboardData;
+		if (!data) return null;
+
+		for (const item of Array.from(data.items ?? [])) {
+			if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+			const file = item.getAsFile();
+			if (file) return file;
+		}
+
+		const fallback = data.files?.[0];
+		return fallback && fallback.type.startsWith("image/") ? fallback : null;
+	}
+
+	function handlePaste(event: ClipboardEvent): void {
+		// Text fields keep their native paste behavior, and dialogs own theirs.
+		if (isTypingTarget(event.target)) return;
+		const element = event.target as HTMLElement | null;
+		if (element instanceof Element && element.closest('[role="dialog"]')) return;
+
+		const image = clipboardImageFile(event);
+		if (image) {
+			event.preventDefault();
+			showImport(image);
+			return;
+		}
+
+		// No image on the OS clipboard, so paste the in-app selection instead.
+		if (editor.hasClipboard) {
+			event.preventDefault();
+			editor.pasteSelection();
+		}
+	}
+
 	setCommandHost({
 		openNewProject: () => (newDialogOpen = true),
 		openProject: openProjectPicker,
 		openImport: openImportPicker,
+		openImportUrl,
 		openExport: () => (exportDialogOpen = true),
 		openScaleCanvas: () => (scaleCanvasOpen = true),
 		openResizeCanvas: () => (resizeCanvasOpen = true),
@@ -276,6 +317,8 @@
 			return;
 		}
 		if (command.enabled && !command.enabled()) return;
+		// Paste is decided by the window paste event, which can also see files.
+		if (command.deferToPasteEvent) return;
 
 		event.preventDefault();
 		command.run();
@@ -288,6 +331,7 @@
 			onNew={() => (newDialogOpen = true)}
 			onOpen={openProjectPicker}
 			onImport={openImportPicker}
+			onImportUrl={openImportUrl}
 			onExport={() => (exportDialogOpen = true)}
 			onCommandPalette={() => (commandPaletteOpen = true)}
 			onShortcuts={() => (shortcutsOpen = true)}
@@ -358,6 +402,7 @@
 <svelte:window
 	onkeydown={handleKeydown}
 	oncontextmenucapture={(event) => event.preventDefault()}
+	onpaste={handlePaste}
 	ondragenter={handleDragEnter}
 	ondragover={handleDragOver}
 	ondragleave={handleDragLeave}

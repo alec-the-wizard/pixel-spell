@@ -17,6 +17,7 @@ export interface CommandHost {
 	openNewProject: () => void;
 	openProject: () => void;
 	openImport: () => void;
+	openImportUrl: () => void;
 	openExport: () => void;
 	openScaleCanvas: () => void;
 	openResizeCanvas: () => void;
@@ -29,6 +30,7 @@ const NOOP_HOST: CommandHost = {
 	openNewProject: () => {},
 	openProject: () => {},
 	openImport: () => {},
+	openImportUrl: () => {},
 	openExport: () => {},
 	openScaleCanvas: () => {},
 	openResizeCanvas: () => {},
@@ -54,6 +56,11 @@ export interface CommandDef {
 	defaultKeys?: string[];
 	/** Keep the shortcut from firing repeatedly while the key is held. */
 	ignoreRepeat?: boolean;
+	/**
+	 * Leave the key to the browser's native paste event. The window paste
+	 * handler then chooses between an image file and the in-app clipboard.
+	 */
+	deferToPasteEvent?: boolean;
 	enabled?: () => boolean;
 	run: () => void;
 }
@@ -89,6 +96,14 @@ const ACTION_COMMANDS: CommandDef[] = [
 		keywords: "image palette reference",
 		defaultKeys: [],
 		run: () => host.openImport(),
+	},
+	{
+		id: "file.import-url",
+		label: "Import from URL…",
+		group: "File",
+		keywords: "image web link clipboard paste",
+		defaultKeys: [],
+		run: () => host.openImportUrl(),
 	},
 	{
 		id: "file.save",
@@ -135,6 +150,7 @@ const ACTION_COMMANDS: CommandDef[] = [
 		group: "Edit",
 		defaultKeys: ["mod+v"],
 		enabled: () => editor.hasClipboard,
+		deferToPasteEvent: true,
 		run: () => editor.pasteSelection(),
 	},
 	{
@@ -374,17 +390,47 @@ const ACTION_COMMANDS: CommandDef[] = [
 		run: () => editor.pasteFrames(),
 	},
 	{
-		id: "animation.loop-selection",
-		label: "Loop selected frames",
-		group: "Animation",
-		enabled: () => editor.selectedFrameCount > 0,
-		run: () => editor.setLoopRangeToSelection(),
-	},
-	{
 		id: "layer.add",
 		label: "Add layer",
 		group: "Layers",
 		run: () => editor.addLayer(),
+	},
+	{
+		id: "layer.add-group",
+		label: "New group",
+		group: "Layers",
+		keywords: "folder container nest",
+		run: () => editor.addGroup(),
+	},
+	{
+		id: "layer.group",
+		label: "Group active layer",
+		group: "Layers",
+		keywords: "folder container nest wrap",
+		run: () => editor.groupActiveLayer(),
+	},
+	{
+		id: "layer.ungroup",
+		label: "Ungroup",
+		group: "Layers",
+		keywords: "folder flatten container",
+		enabled: () => editor.activeLayer.isGroup === true,
+		run: () => editor.ungroupLayer(),
+	},
+	{
+		id: "layer.indent",
+		label: "Move into group above",
+		group: "Layers",
+		keywords: "folder nest indent parent",
+		run: () => editor.indentActiveLayer(),
+	},
+	{
+		id: "layer.outdent",
+		label: "Move out of group",
+		group: "Layers",
+		keywords: "folder unnest outdent parent",
+		enabled: () => !!editor.activeLayer.parentId,
+		run: () => editor.outdentActiveLayer(),
 	},
 	{
 		id: "layer.duplicate",
@@ -396,7 +442,7 @@ const ACTION_COMMANDS: CommandDef[] = [
 		id: "layer.delete",
 		label: "Delete layer",
 		group: "Layers",
-		enabled: () => editor.doc.layers.length > 1,
+		enabled: () => editor.canDeleteLayer,
 		run: () => editor.deleteLayer(),
 	},
 	{
@@ -440,6 +486,21 @@ const ACTION_COMMANDS: CommandDef[] = [
 		group: "Palette",
 		keywords: "animate rotate palette range bake frames gif",
 		run: () => (editor.paletteCyclesOpen = true),
+	},
+	{
+		id: "palette.remove-unused",
+		label: "Remove unused palette colors",
+		group: "Palette",
+		keywords: "prune clean unused coverage palette analysis",
+		enabled: () => editor.paletteEditable,
+		run: () => editor.removeUnusedPaletteColors(),
+	},
+	{
+		id: "palette.coverage",
+		label: "Palette coverage analysis…",
+		group: "Palette",
+		keywords: "used unused colors report stats palette analysis",
+		run: () => (editor.paletteCoverageOpen = true),
 	},
 	{
 		id: "app.command-palette",

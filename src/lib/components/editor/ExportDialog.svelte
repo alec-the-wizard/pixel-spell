@@ -94,7 +94,6 @@
 	let videoScale = $state(1);
 	let videoFps = $state(12);
 	let videoLoop = $state(true);
-	let videoUseLoopRange = $state(true);
 	let videoBackground = $state<ExportBackground>("transparent");
 	let videoQuality = $state(90);
 	let videoFileName = $state("");
@@ -128,7 +127,7 @@
 	let videoWidth = $derived(editor.doc.width * videoScale);
 	let videoHeight = $derived(editor.doc.height * videoScale);
 	let videoFrames = $derived(
-		animationFrameIndices(editor.doc, videoUseLoopRange),
+		animationFrameIndices(editor.doc, editor.animationFrameIndices),
 	);
 	let videoFrameCount = $derived(videoFrames.length);
 	let videoSizeError = $derived(
@@ -171,11 +170,9 @@
 			return `${format(sheetFormat)} · ${sheetBackground}${metadata ? ` · ${metadata}` : ""}`;
 		}
 		if (activeTab === "video") {
-			const range = editor.loopRange;
+			const selectedCount = editor.selectedFrameIndices.length;
 			const rangeLabel =
-				videoUseLoopRange && editor.hasLoopRange
-					? ` · frames ${range.start + 1}–${range.end + 1}`
-					: "";
+				selectedCount >= 2 ? ` · ${selectedCount} selected frames` : "";
 			if (videoFormat === "gif") {
 				return `GIF · ${Math.round(videoFps)} fps fallback${videoLoop ? " · loop" : ""}${rangeLabel}`;
 			}
@@ -222,7 +219,6 @@
 			videoScale = 1;
 			videoFps = editor.doc.fps;
 			videoLoop = true;
-			videoUseLoopRange = editor.hasLoopRange;
 			videoBackground = "transparent";
 			videoQuality = 90;
 			videoFileName = `${exportBaseName(editor.name)}.gif`;
@@ -377,10 +373,8 @@
 			return;
 		}
 
-		const frames = animationFrameIndices(doc, videoUseLoopRange);
-		// Track loop and per-frame timing changes so the preview restarts.
-		editor.doc.loopStart;
-		editor.doc.loopEnd;
+		const frames = animationFrameIndices(doc, editor.animationFrameIndices);
+		// Track per-frame timing changes so the preview restarts.
 		doc.frames.map((frame) => frame.duration ?? 0).join(",");
 
 		let position = 0;
@@ -535,7 +529,7 @@
 					fps: videoFps,
 					loop: videoLoop,
 					background: videoBackground,
-					loopRange: videoUseLoopRange,
+					frames: videoFrames,
 					quality: videoQuality,
 					signal,
 				});
@@ -988,21 +982,6 @@
 							</p>
 						{/if}
 					</div>
-				{/if}
-
-				{#if editor.hasLoopRange}
-					<label
-						class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
-					>
-						<span class="grid gap-0.5">
-							<span class="text-xs font-medium">Use loop range</span>
-							<span class="text-[10px] text-muted-foreground">
-								Export frames {editor.loopRange.start + 1}–{editor.loopRange.end + 1}
-								only.
-							</span>
-						</span>
-						<Switch bind:checked={videoUseLoopRange} />
-					</label>
 				{/if}
 
 				{#if videoInfo.loop}

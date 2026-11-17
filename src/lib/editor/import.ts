@@ -34,6 +34,12 @@ export const MAX_IMPORT_DIMENSION = MAX_CANVAS_SIZE;
 /** Reject huge files before decoding them in memory. */
 export const MAX_IMPORT_FILE_BYTES = 64 * 1024 * 1024;
 
+/** Anything longer than this is pasted garbage rather than an image link. */
+export const MAX_IMPORT_URL_LENGTH = 2048;
+
+/** A stalled download should not leave the import dialog spinning forever. */
+const URL_FETCH_TIMEOUT_MS = 20_000;
+
 /**
  * Palette extraction is exact for normal-sized images. Very large images are
  * sampled down so a single import cannot lock up the tab. Bands span the full
@@ -118,6 +124,55 @@ function fileExtension(name: string): string {
 	const base = name.split(/[\\/]/).pop() ?? name;
 	const dot = base.lastIndexOf(".");
 	return dot >= 0 ? base.slice(dot + 1).toLowerCase() : "";
+}
+
+/** Best-effort file stem for a URL, used as the default import name. */
+function nameFromUrl(url: URL): string {
+	let segment = url.pathname.split("/").filter(Boolean).pop() ?? "";
+	try {
+		segment = decodeURIComponent(segment);
+	} catch {
+		// Keep the encoded segment when it is not valid percent-encoding.
+	}
+	const dot = segment.lastIndexOf(".");
+	const stem = (dot > 0 ? segment.slice(0, dot) : segment).trim();
+	return stem || url.hostname || "Imported";
+}
+
+function startsWithBytes(bytes: Uint8Array, signature: number[]): boolean {
+	if (bytes.length < signature.length) return false;
+	return signature.every((byte, index) => bytes[index] === byte);
+}
+
+function startsWithText(bytes: Uint8Array, text: string): boolean {
+	if (bytes.length < text.length) return false;
+	for (let index = 0; index < text.length; index++) {
+		if (String.fromCharCode(bytes[index]!).toLowerCase() !== text[index]) return false;
+	}
+	return true;
+}
+
+/**
+ * Detects common raster formats from their magic bytes. Some hosts serve an
+ * `application/octet-stream` body or a URL without a file extension, so the
+ * declared type alone is not always enough.
+ */
+function sniffImageExtension(bytes: Uint8Array): string {
+	if (startsWithBytes(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) {
+		return "png";
+	}
+	if (startsWithBytes(bytes, [0xff, 0xd8, 0xff])) return "jpg";
+	if (startsWithText(bytes, "gif8")) return "gif";
+	if (startsWithText(bytes, "riff") && startsWithText(bytes.subarray(8), "webp")) {
+		return "webp";
+	}
+	if (startsWithText(bytes, "bm")) return "bmp";
+	if (startsWithBytes(bytes, [0x00, 0x00, 0x01, 0x00])) return "ico";
+	if (startsWithText(bytes.subarray(4), "ftypavif") || startsWithText(bytes.subarray(4), "ftypavis")) {
+		return "avif";
+	}
+	if (startsWithText(bytes, "<?xml") || startsWithText(bytes, "<svg")) return "svg";
+	return "";
 }
 
 function mimeExtension(type: string): string {
@@ -590,4 +645,83 @@ export async function analyzeImportFile(file: File): Promise<ImportAnalysis> {
 	}
 
 	return { fileName: file.name, project, reference, palette, error };
+}
+
+function failedAnalysis(fileName: string, error: string): ImportAnalysis {
+	return { fileName, project: null, reference: null, palette: null, error };
+}
+
+/**
+ * Downloads an image URL and analyzes it exactly like a dropped file. The
+ * browser only exposes pixels for cross-origin responses that opt in to CORS,
+ * so hosts that block it produce a readable error instead of a broken import.
+ */
+export async function analyzeImportUrl(rawUrl: string): Promise<ImportAnalysis> {
+	const trimmed = rawUrl.trim();
+	if (!trimmed) return failedAnalysis("URL", "Enter an image URL.");
+	if (trimmed.length > MAX_IMPORT_URL_LENGTH) {
+		return failedAnalysis("URL", "That URL is too long to be an image link.");
+	}
+
+	let url: URL;
+	try {
+		url = new URL(trimmed);
+	} catch {
+		return failedAnalysis(trimmed, "That is not a valid URL. Include http:// or https://.");
+	}
+	if (url.protocol !== "http:" && url.protocol !== "https:") {
+		return failedAnalysis(trimmed, "Only http:// and https:// image URLs can be imported.");
+	}
+
+	const stem = nameFromUrl(url);
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), URL_FETCH_TIMEOUT_MS);
+
+	try {
+		const response = await fetch(url, {
+			mode: "cors",
+			credentials: "omit",
+			referrerPolicy: "no-referrer",
+			signal: controller.signal,
+		});
+
+		if (!response.ok) {
+			const status = `${response.status}${response.statusText ? ` ${response.statusText}` : ""}`;
+			return failedAnalysis(stem, `The server returned ${status}.`);
+		}
+
+		const blob = await response.blob();
+		if (blob.size > MAX_IMPORT_FILE_BYTES) {
+			return failedAnalysis(
+				stem,
+				`This image is larger than ${Math.round(MAX_IMPORT_FILE_BYTES / (1024 * 1024))} MB. Choose a smaller image.`,
+			);
+		}
+
+		const bytes = new Uint8Array(await blob.arrayBuffer());
+		const urlExtension = fileExtension(url.pathname);
+		const knownExtension =
+			IMAGE_EXTENSIONS.has(urlExtension) || PALETTE_EXTENSIONS.has(urlExtension)
+				? urlExtension
+				: "";
+		// The declared type and magic bytes describe the payload better than a
+		// URL that may end in a query string or a script name.
+		const extension =
+			mimeExtension(blob.type) || sniffImageExtension(bytes) || knownExtension;
+		const fileName = extension ? `${stem}.${extension}` : stem;
+
+		return await analyzeImportFile(
+			new File([bytes], fileName, { type: blob.type || undefined }),
+		);
+	} catch (error) {
+		if ((error as { name?: string } | null)?.name === "AbortError") {
+			return failedAnalysis(stem, "The image took too long to download.");
+		}
+		return failedAnalysis(
+			stem,
+			"This URL could not be loaded. The host may block cross-origin (CORS) requests, so download the image and import the file instead.",
+		);
+	} finally {
+		clearTimeout(timer);
+	}
 }

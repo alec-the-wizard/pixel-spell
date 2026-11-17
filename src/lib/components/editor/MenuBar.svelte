@@ -18,6 +18,7 @@
 	import Images from "@lucide/svelte/icons/images";
 	import Info from "@lucide/svelte/icons/info";
 	import Keyboard from "@lucide/svelte/icons/keyboard";
+	import Link2 from "@lucide/svelte/icons/link-2";
 	import Lock from "@lucide/svelte/icons/lock";
 	import Maximize2 from "@lucide/svelte/icons/maximize-2";
 	import Moon from "@lucide/svelte/icons/moon";
@@ -49,6 +50,7 @@
 		onNew,
 		onOpen,
 		onImport,
+		onImportUrl,
 		onExport,
 		onCommandPalette,
 		onShortcuts,
@@ -59,6 +61,7 @@
 		onNew: () => void;
 		onOpen: () => void;
 		onImport: () => void;
+		onImportUrl: () => void;
 		onExport: () => void;
 		onCommandPalette: () => void;
 		onShortcuts: () => void;
@@ -153,6 +156,10 @@
 				<DropdownMenu.Item onSelect={onImport}>
 					<FileInput class="size-4" />
 					Import…
+				</DropdownMenu.Item>
+				<DropdownMenu.Item onSelect={onImportUrl}>
+					<Link2 class="size-4" />
+					Import from URL…
 				</DropdownMenu.Item>
 				<DropdownMenu.Item onSelect={() => editor.saveToFile()}>
 					<Save class="size-4" />

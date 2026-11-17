@@ -1,6 +1,13 @@
 import { MAX_CANVAS_SIZE } from "./canvas.js";
+import { normalizeBlendMode } from "./blend.js";
 import { normalizeHex } from "./color.js";
-import { MAX_FRAME_DURATION, MIN_FRAME_DURATION, uid } from "./doc.js";
+import {
+	MAX_FRAME_DURATION,
+	MIN_FRAME_DURATION,
+	isGroupLayer,
+	normalizeAnimationMode,
+	uid,
+} from "./doc.js";
 import { normalizeLayerColor } from "./layer-color.js";
 import {
 	MAX_REFERENCE_BYTES,
@@ -19,7 +26,7 @@ export interface LoadedProject {
 
 const MAGIC = [0x50, 0x58, 0x53, 0x50]; // "PXSP"
 /** Only the current format is accepted; this app has no released legacy files. */
-const FORMAT_VERSION = 2;
+const FORMAT_VERSION = 4;
 const METHOD_RAW = 0;
 const METHOD_RLE = 1;
 const HEADER_SIZE = 4 + 1 + 1 + 2 + 2 + 1 + 2 + 2 + 4;
@@ -35,8 +42,8 @@ interface ProjectMeta {
 	activeFrame: number;
 	activeLayerId: string;
 	frames?: { duration?: number; tag?: string }[];
-	loopStart?: number;
-	loopEnd?: number;
+	animationMode?: "forward" | "backward" | "ping-pong";
+	animationLoop?: boolean;
 	layers: {
 		id: string;
 		name: string;
@@ -45,6 +52,11 @@ interface ProjectMeta {
 		opacity: number;
 		role?: "reference";
 		color?: string;
+		isGroup?: boolean;
+		parentId?: string;
+		blendMode?: string;
+		clipping?: boolean;
+		collapsed?: boolean;
 	}[];
 }
 
@@ -232,8 +244,8 @@ export function serializeProject(
 			...(frame.duration !== undefined ? { duration: frame.duration } : {}),
 			...(frame.tag ? { tag: frame.tag } : {}),
 		})),
-		...(doc.loopStart !== undefined ? { loopStart: doc.loopStart } : {}),
-		...(doc.loopEnd !== undefined ? { loopEnd: doc.loopEnd } : {}),
+		animationMode: normalizeAnimationMode(doc.animationMode),
+		animationLoop: doc.animationLoop !== false,
 		layers: doc.layers.map((layer) => ({
 			id: layer.id,
 			name: layer.name,
@@ -242,12 +254,20 @@ export function serializeProject(
 			opacity: layer.opacity,
 			...(layer.role ? { role: layer.role } : {}),
 			...(layer.color ? { color: layer.color } : {}),
+			...(layer.isGroup ? { isGroup: true } : {}),
+			...(layer.parentId ? { parentId: layer.parentId } : {}),
+			...(layer.blendMode && layer.blendMode !== "normal"
+				? { blendMode: layer.blendMode }
+				: {}),
+			...(layer.clipping ? { clipping: true } : {}),
+			...(layer.collapsed ? { collapsed: true } : {}),
 		})),
 	};
 	const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
 
 	const cels: EncodedCel[] = [];
 	for (const layer of doc.layers) {
+		if (isGroupLayer(layer)) continue;
 		for (let frame = 0; frame < frameCount; frame++) {
 			const cel =
 				layer.cels[frame] ?? new Uint32Array(doc.width * doc.height);
@@ -440,22 +460,25 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 	for (let layerIndex = 0; layerIndex < layerCount; layerIndex++) {
 		const rawLayer = meta.layers[layerIndex];
 		if (!rawLayer || typeof rawLayer !== "object") return null;
+		const isGroup = rawLayer.isGroup === true;
 		const cels: Uint32Array[] = [];
-		for (let frame = 0; frame < frameCount; frame++) {
-			if (offset + 5 > bytes.length) return null;
-			const method = view.getUint8(offset++);
-			const length = view.getUint32(offset, true);
-			offset += 4;
-			if (length > bytes.length - offset) return null;
-			const decoded = decodeCel(
-				bytes,
-				offset,
-				length,
-				method,
-				pixelCount,
-			);
-			cels.push(decoded.pixels);
-			offset = decoded.nextOffset;
+		if (!isGroup) {
+			for (let frame = 0; frame < frameCount; frame++) {
+				if (offset + 5 > bytes.length) return null;
+				const method = view.getUint8(offset++);
+				const length = view.getUint32(offset, true);
+				offset += 4;
+				if (length > bytes.length - offset) return null;
+				const decoded = decodeCel(
+					bytes,
+					offset,
+					length,
+					method,
+					pixelCount,
+				);
+				cels.push(decoded.pixels);
+				offset = decoded.nextOffset;
+			}
 		}
 
 		let id =
@@ -464,6 +487,13 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 		usedLayerIds.add(id);
 
 		const color = normalizeLayerColor(rawLayer.color);
+		const blendMode = normalizeBlendMode(rawLayer.blendMode);
+		// A parent must already be parsed (parents precede children), which also
+		// makes malformed or cyclic trees impossible.
+		const parentId =
+			typeof rawLayer.parentId === "string" && usedLayerIds.has(rawLayer.parentId)
+				? rawLayer.parentId
+				: undefined;
 
 		layers.push({
 			id,
@@ -477,6 +507,11 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 			cels,
 			...(rawLayer.role === "reference" ? { role: "reference" as const } : {}),
 			...(color ? { color } : {}),
+			...(isGroup ? { isGroup: true } : {}),
+			...(parentId ? { parentId } : {}),
+			...(blendMode !== "normal" ? { blendMode } : {}),
+			...(rawLayer.clipping === true ? { clipping: true } : {}),
+			...(rawLayer.collapsed === true ? { collapsed: true } : {}),
 		});
 	}
 
@@ -606,16 +641,9 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 		return frame;
 	});
 
-	const rawLoopStart = Number(meta.loopStart);
-	const rawLoopEnd = Number(meta.loopEnd);
-	let loopStart: number | undefined;
-	let loopEnd: number | undefined;
-	if (Number.isFinite(rawLoopStart) && Number.isFinite(rawLoopEnd)) {
-		const start = clamp(Math.round(rawLoopStart), 0, frameCount - 1);
-		const end = clamp(Math.round(rawLoopEnd), 0, frameCount - 1);
-		loopStart = Math.min(start, end);
-		loopEnd = Math.max(start, end);
-	}
+	const animationMode = normalizeAnimationMode(meta.animationMode);
+	const animationLoop =
+		typeof meta.animationLoop === "boolean" ? meta.animationLoop : true;
 
 	return {
 		doc: {
@@ -625,8 +653,8 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 			frames,
 			layers,
 			references,
-			...(loopStart !== undefined ? { loopStart } : {}),
-			...(loopEnd !== undefined ? { loopEnd } : {}),
+			animationMode,
+			animationLoop,
 		},
 		palette: normalizePalette(meta.palette),
 		activeFrame,

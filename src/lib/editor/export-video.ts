@@ -18,8 +18,8 @@ export interface VideoExportOptions {
 	fps: number;
 	loop: boolean;
 	background: ExportBackground;
-	/** Restrict the animation to the document loop range when one is set. */
-	loopRange?: boolean;
+	/** Frame indices to export, in playback order; missing means all frames. */
+	frames?: readonly number[];
 	/** Lossy quality 0–100 for WebP, WebM/MP4, and the JPEG video containers. */
 	quality: number;
 	/** Cancels an in-progress export (used by the real-time video recorder). */
@@ -671,7 +671,7 @@ export async function exportVideo(
 	options: VideoExportOptions,
 ): Promise<Blob> {
 	const scale = clampInt(options.scale, 1, 10);
-	const frameIndices = animationFrameIndices(doc, options.loopRange !== false);
+	const frameIndices = animationFrameIndices(doc, options.frames);
 	const width = doc.width * scale;
 	const height = doc.height * scale;
 	const sizeError = validateExportSize(width, height, frameIndices.length, true);
@@ -685,14 +685,14 @@ export async function exportVideo(
 				fps: options.fps,
 				loop: options.loop,
 				background: options.background,
-				loopRange: options.loopRange,
+				frames: options.frames,
 			});
 		case "apng":
 			return exportApng(doc, {
 				scale,
 				loop: options.loop,
 				background: options.background,
-				loopRange: options.loopRange,
+				frames: options.frames,
 			});
 		case "webp":
 			return exportAnimatedWebp(doc, {
@@ -700,7 +700,7 @@ export async function exportVideo(
 				loop: options.loop,
 				background: options.background,
 				quality: options.quality,
-				loopRange: options.loopRange,
+				frames: options.frames,
 			});
 		case "webm":
 			return encodeMediaVideo(

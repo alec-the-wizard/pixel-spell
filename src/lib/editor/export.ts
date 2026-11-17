@@ -1,5 +1,5 @@
 import type { PixelBounds } from "./canvas.js";
-import { cloneDoc, compositeFrame, frameDurationMs, loopRangeOf } from "./doc.js";
+import { cloneDoc, compositeFrame, frameDurationMs } from "./doc.js";
 import { fileBase } from "./file.js";
 import { drawPixels } from "./render.js";
 import type { PixelDoc } from "./types.js";
@@ -50,8 +50,8 @@ export interface GifExportOptions {
 	fps: number;
 	loop: boolean;
 	background: ExportBackground;
-	/** Restrict the GIF to the document loop range when one is set. */
-	loopRange?: boolean;
+	/** Frame indices to export, in playback order; missing means all frames. */
+	frames?: readonly number[];
 }
 
 export interface SheetGeometry {
@@ -264,17 +264,16 @@ export function getSheetGeometry(
 /** Frame indices included in an animation export. */
 export function animationFrameIndices(
 	doc: PixelDoc,
-	useLoopRange = true,
+	frames?: readonly number[],
 ): number[] {
-	if (!useLoopRange) {
-		return Array.from({ length: doc.frames.length }, (_, index) => index);
+	if (frames && frames.length > 0) {
+		const valid = frames.filter(
+			(index) =>
+				Number.isInteger(index) && index >= 0 && index < doc.frames.length,
+		);
+		if (valid.length > 0) return [...valid];
 	}
-	const range = loopRangeOf(doc);
-	const indices: number[] = [];
-	for (let index = range.start; index <= range.end; index++) {
-		indices.push(index);
-	}
-	return indices.length > 0 ? indices : [0];
+	return Array.from({ length: doc.frames.length }, (_, index) => index);
 }
 
 /** Returns a human-readable error when an export would exceed safe limits. */
@@ -1333,7 +1332,7 @@ export function exportGifBytes(
 	const height = doc.height * scale;
 	const fps = clampInt(options.fps, 1, 60);
 	const background = options.background;
-	const frameIndices = animationFrameIndices(doc, options.loopRange !== false);
+	const frameIndices = animationFrameIndices(doc, options.frames);
 	const sizeError = validateExportSize(
 		width,
 		height,

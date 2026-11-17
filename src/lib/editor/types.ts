@@ -60,6 +60,23 @@ export interface Frame {
 /** Reference layers are visible in the viewport but are never exported. */
 export type LayerRole = "reference";
 
+/** How a layer (or group) blends with the content already composited below it. */
+export type BlendMode =
+	| "normal"
+	| "multiply"
+	| "screen"
+	| "overlay"
+	| "darken"
+	| "lighten"
+	| "color-dodge"
+	| "color-burn"
+	| "hard-light"
+	| "soft-light"
+	| "difference"
+	| "exclusion"
+	| "add"
+	| "subtract";
+
 export interface Layer {
 	id: string;
 	name: string;
@@ -67,12 +84,22 @@ export interface Layer {
 	locked: boolean;
 	/** 0..1 */
 	opacity: number;
-	/** One pixel buffer per animation frame. */
+	/** One pixel buffer per animation frame. Empty for group nodes. */
 	cels: Uint32Array[];
 	/** Missing means a normal paint layer. */
 	role?: LayerRole;
 	/** Optional timeline identity tint, stored as a normalized `#rrggbb` hex. */
 	color?: string;
+	/** True when this node is a group container rather than a paint layer. */
+	isGroup?: boolean;
+	/** Parent group id; missing means a top-level node. */
+	parentId?: string;
+	/** Blend mode applied when this node composites onto the content below. */
+	blendMode?: BlendMode;
+	/** Clips this node's pixels to the composited content below it. */
+	clipping?: boolean;
+	/** Timeline-only collapse state for groups. */
+	collapsed?: boolean;
 }
 
 /**
@@ -101,6 +128,9 @@ export interface ReferenceImage {
 	locked: boolean;
 }
 
+/** Order the animation is played in. */
+export type AnimationMode = "forward" | "backward" | "ping-pong";
+
 export interface PixelDoc {
 	width: number;
 	height: number;
@@ -110,9 +140,10 @@ export interface PixelDoc {
 	layers: Layer[];
 	/** Project-level reference board images. */
 	references: ReferenceImage[];
-	/** Inclusive playback/export range; missing means the whole animation. */
-	loopStart?: number;
-	loopEnd?: number;
+	/** Playback order; missing means forward. */
+	animationMode?: AnimationMode;
+	/** Whether playback repeats; missing means true. */
+	animationLoop?: boolean;
 }
 
 export interface ProjectTab {

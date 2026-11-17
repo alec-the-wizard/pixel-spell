@@ -1,5 +1,6 @@
 <script lang="ts">
 	import ArrowLeft from "@lucide/svelte/icons/arrow-left";
+	import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
 	import ArrowRight from "@lucide/svelte/icons/arrow-right";
 	import ChevronDown from "@lucide/svelte/icons/chevron-down";
 	import ChevronUp from "@lucide/svelte/icons/chevron-up";
@@ -7,11 +8,17 @@
 	import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste";
 	import Copy from "@lucide/svelte/icons/copy";
 	import Film from "@lucide/svelte/icons/film";
+	import FolderInput from "@lucide/svelte/icons/folder-input";
+	import FolderOutput from "@lucide/svelte/icons/folder-output";
+	import FolderPlus from "@lucide/svelte/icons/folder-plus";
 	import Ghost from "@lucide/svelte/icons/ghost";
+	import IndentDecrease from "@lucide/svelte/icons/indent-decrease";
+	import IndentIncrease from "@lucide/svelte/icons/indent-increase";
 	import Pause from "@lucide/svelte/icons/pause";
 	import Play from "@lucide/svelte/icons/play";
 	import Plus from "@lucide/svelte/icons/plus";
 	import Repeat from "@lucide/svelte/icons/repeat";
+	import RepeatOff from "@lucide/svelte/icons/repeat-off";
 	import ScanEye from "@lucide/svelte/icons/scan-eye";
 	import Settings2 from "@lucide/svelte/icons/settings-2";
 	import SkipBack from "@lucide/svelte/icons/skip-back";
@@ -26,6 +33,8 @@
 	import { Separator } from "$lib/components/ui/separator/index.js";
 	import { Slider } from "$lib/components/ui/slider/index.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
+	import { normalizeAnimationMode } from "$lib/editor/doc.js";
+	import type { Layer } from "$lib/editor/types.js";
 	import {
 		IMAGE_IMPORT_ACCEPT,
 		analyzeImportFile,
@@ -54,12 +63,35 @@
 	let dragOverIndex = $state<number | null>(null);
 	let dragOverSide = $state<"before" | "after">("before");
 
+	let draggingLayerId = $state<string | null>(null);
+	let dropIndicator = $state<{
+		targetId: string;
+		mode: "before" | "after" | "into";
+	} | null>(null);
+
+	/** Ids of the dragged layer's subtree, used to reject invalid drop targets. */
+	let dragSourceIds = $derived.by(() => {
+		if (!draggingLayerId) return null;
+		return editor.layerSubtreeIds(draggingLayerId);
+	});
+
 	const ONION_TINT_PRESETS = [
 		{ id: "red-green", label: "Red / green", previous: "#ef4444", next: "#22c55e" },
 		{ id: "amber-blue", label: "Amber / blue", previous: "#f59e0b", next: "#3b82f6" },
 		{ id: "violet-teal", label: "Violet / teal", previous: "#8b5cf6", next: "#14b8a6" },
 		{ id: "grayscale", label: "Grayscale", previous: "#71717a", next: "#a1a1aa" },
 	];
+
+	const ANIMATION_MODE_OPTIONS = [
+		{ id: "forward", label: "Forward" },
+		{ id: "backward", label: "Backward" },
+		{ id: "ping-pong", label: "Ping-pong" },
+	] as const;
+
+	let animationModeLabel = $derived(
+		ANIMATION_MODE_OPTIONS.find((option) => option.id === editor.animationMode)
+			?.label ?? "Forward",
+	);
 
 	let tagGroups = $derived.by(() => {
 		const frames = editor.doc.frames;
@@ -123,12 +155,15 @@
 		Math.max(0, editor.doc.frames.length - 1 - lastFrame),
 	);
 
+	/** Layers in display (top-to-bottom) order, as the table renders them. */
+	let displayLayers = $derived(editor.timelineLayers);
+
 	let firstLayer = $derived(
 		Math.max(0, Math.floor(scrollTop / LAYER_ROW_HEIGHT) - OVERSCAN),
 	);
 	let lastLayer = $derived(
 		Math.min(
-			editor.doc.layers.length - 1,
+			displayLayers.length - 1,
 			Math.max(
 				firstLayer,
 				Math.ceil((scrollTop + viewportHeight) / LAYER_ROW_HEIGHT) +
@@ -137,9 +172,6 @@
 			),
 		),
 	);
-
-	/** Layers in display (top-to-bottom) order, as the table renders them. */
-	let displayLayers = $derived([...editor.doc.layers].reverse());
 	let visibleLayers = $derived(
 		lastLayer >= firstLayer
 			? displayLayers.slice(firstLayer, lastLayer + 1)
@@ -147,7 +179,7 @@
 	);
 	let leadingLayerRows = $derived(firstLayer);
 	let trailingLayerRows = $derived(
-		Math.max(0, editor.doc.layers.length - 1 - lastLayer),
+		Math.max(0, displayLayers.length - 1 - lastLayer),
 	);
 
 	let windowedTagGroups = $derived.by(() => {
@@ -251,16 +283,23 @@
 		if (!editor.playing) return;
 		if (editor.doc.frames.length <= 1) return;
 
-		// Track timing and range inputs so playback restarts when they change,
-		// but not activeFrame (the timer owns that while playing).
+		// Track everything that defines the playback sequence so changing the
+		// selection, mode, loop setting, or timing restarts it.
 		editor.doc.fps;
-		editor.doc.loopStart;
-		editor.doc.loopEnd;
+		editor.doc.animationMode;
+		editor.doc.animationLoop;
+		editor.frameSelection;
 		editor.doc.frames.map((frame) => frame.duration ?? 0).join(",");
+
+		untrack(() => editor.preparePlayback());
 
 		let timer: number | undefined;
 		const tick = (): void => {
 			const frame = editor.nextPlaybackFrame();
+			if (frame === null) {
+				editor.stopPlayback();
+				return;
+			}
 			editor.selectFrame(frame, { preserveSelection: true });
 			timer = window.setTimeout(
 				tick,
@@ -375,6 +414,38 @@
 		dragOverIndex = null;
 	}
 
+	function beginLayerDrag(event: DragEvent, layer: Layer): void {
+		editor.selectLayer(layer.id);
+		draggingLayerId = layer.id;
+		dropIndicator = null;
+		if (event.dataTransfer) {
+			event.dataTransfer.effectAllowed = "move";
+			event.dataTransfer.setData("text/plain", layer.id);
+		}
+	}
+
+	function updateLayerDrop(layer: Layer, mode: "before" | "after" | "into" | null): void {
+		dropIndicator =
+			mode === null ? null : { targetId: layer.id, mode };
+	}
+
+	function finishLayerDrop(layer: Layer, mode: "before" | "after" | "into"): void {
+		const dragged = draggingLayerId;
+		draggingLayerId = null;
+		dropIndicator = null;
+		if (!dragged || dragged === layer.id) return;
+		if (mode === "into") {
+			editor.moveLayerTo(dragged, { kind: "into", groupId: layer.id });
+		} else {
+			editor.moveLayerTo(dragged, { kind: mode, refId: layer.id });
+		}
+	}
+
+	function endLayerDrag(): void {
+		draggingLayerId = null;
+		dropIndicator = null;
+	}
+
 	function tagHue(tag: string): number {
 		let hash = 0;
 		for (let index = 0; index < tag.length; index++) {
@@ -454,6 +525,16 @@
 			variant="ghost"
 			size="icon-xs"
 			class="text-muted-foreground"
+			onclick={() => editor.addGroup()}
+			title="New group"
+			aria-label="New group"
+		>
+			<FolderPlus class="size-3.5" />
+		</Button>
+		<Button
+			variant="ghost"
+			size="icon-xs"
+			class="text-muted-foreground"
 			onclick={() => referenceInput?.click()}
 			disabled={referenceLoading}
 			title="Add or replace reference layer from image"
@@ -470,6 +551,27 @@
 			aria-label="Duplicate layer"
 		>
 			<Copy class="size-3.5" />
+		</Button>
+		<Button
+			variant="ghost"
+			size="icon-xs"
+			class="text-muted-foreground"
+			onclick={() => editor.groupActiveLayer()}
+			title="Group active layer"
+			aria-label="Group active layer"
+		>
+			<FolderInput class="size-3.5" />
+		</Button>
+		<Button
+			variant="ghost"
+			size="icon-xs"
+			class="text-muted-foreground"
+			onclick={() => editor.ungroupLayer()}
+			disabled={!editor.activeLayer.isGroup}
+			title="Ungroup"
+			aria-label="Ungroup"
+		>
+			<FolderOutput class="size-3.5" />
 		</Button>
 		<Button
 			variant="ghost"
@@ -494,9 +596,30 @@
 		<Button
 			variant="ghost"
 			size="icon-xs"
+			class="text-muted-foreground"
+			onclick={() => editor.indentActiveLayer()}
+			title="Move into group above"
+			aria-label="Move into group above"
+		>
+			<IndentIncrease class="size-3.5" />
+		</Button>
+		<Button
+			variant="ghost"
+			size="icon-xs"
+			class="text-muted-foreground"
+			onclick={() => editor.outdentActiveLayer()}
+			disabled={!editor.activeLayer.parentId}
+			title="Move out of group"
+			aria-label="Move out of group"
+		>
+			<IndentDecrease class="size-3.5" />
+		</Button>
+		<Button
+			variant="ghost"
+			size="icon-xs"
 			class="text-muted-foreground hover:text-destructive"
 			onclick={() => editor.deleteLayer()}
-			disabled={editor.doc.layers.length <= 1}
+			disabled={!editor.canDeleteLayer}
 			title="Delete layer"
 			aria-label="Delete layer"
 		>
@@ -660,51 +783,6 @@
 			</DropdownMenu.Content>
 		</DropdownMenu.Root>
 
-		<DropdownMenu.Root>
-			<DropdownMenu.Trigger
-				class={cn(
-					"grid size-7 place-items-center rounded-md outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
-					editor.hasLoopRange
-						? "bg-secondary text-foreground"
-						: "text-muted-foreground",
-				)}
-				aria-label="Loop range settings"
-				title="Loop range"
-			>
-				<Repeat class="size-3.5" />
-			</DropdownMenu.Trigger>
-			<DropdownMenu.Content class="w-56" align="start">
-				<DropdownMenu.Label>
-					{editor.hasLoopRange
-						? `Loop frames ${editor.loopRange.start + 1}–${editor.loopRange.end + 1}`
-						: "Loop: whole animation"}
-				</DropdownMenu.Label>
-				<DropdownMenu.Item
-					onSelect={() => editor.setLoopRangeToSelection()}
-					disabled={editor.selectedFrameCount === 0}
-				>
-					Use selected frames
-				</DropdownMenu.Item>
-				<DropdownMenu.Item
-					onSelect={() => editor.setLoopStartAt(editor.activeFrame)}
-				>
-					Start at active frame
-				</DropdownMenu.Item>
-				<DropdownMenu.Item
-					onSelect={() => editor.setLoopEndAt(editor.activeFrame)}
-				>
-					End at active frame
-				</DropdownMenu.Item>
-				<DropdownMenu.Separator />
-				<DropdownMenu.Item
-					onSelect={() => editor.clearLoopRange()}
-					disabled={!editor.hasLoopRange}
-				>
-					Clear loop range
-				</DropdownMenu.Item>
-			</DropdownMenu.Content>
-		</DropdownMenu.Root>
-
 		<div class="ml-auto flex items-center gap-0.5">
 			<Button
 				variant="ghost"
@@ -754,6 +832,58 @@
 				/>
 				<span>fps</span>
 			</div>
+
+			<DropdownMenu.Root>
+				<DropdownMenu.Trigger
+					class="ml-0.5 flex h-6 items-center gap-1 rounded-md px-1.5 text-[10px] text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+					aria-label={`Animation mode: ${animationModeLabel}`}
+					title={`Animation mode: ${animationModeLabel}`}
+				>
+					{#if editor.animationMode === "forward"}
+						<ArrowRight class="size-3.5" />
+					{:else if editor.animationMode === "backward"}
+						<ArrowLeft class="size-3.5" />
+					{:else}
+						<ArrowLeftRight class="size-3.5" />
+					{/if}
+					<span class="hidden sm:inline">{animationModeLabel}</span>
+					<ChevronDown class="size-3" />
+				</DropdownMenu.Trigger>
+				<DropdownMenu.Content class="w-48" align="start">
+					<DropdownMenu.Label>Animation mode</DropdownMenu.Label>
+					<DropdownMenu.RadioGroup
+						value={editor.animationMode}
+						onValueChange={(value) =>
+							editor.setAnimationMode(normalizeAnimationMode(value))}
+					>
+						{#each ANIMATION_MODE_OPTIONS as option (option.id)}
+							<DropdownMenu.RadioItem value={option.id} closeOnSelect>
+								{option.label}
+							</DropdownMenu.RadioItem>
+						{/each}
+					</DropdownMenu.RadioGroup>
+				</DropdownMenu.Content>
+			</DropdownMenu.Root>
+
+			<Button
+				variant={editor.animationLoop ? "secondary" : "ghost"}
+				size="icon-xs"
+				class="text-muted-foreground"
+				onclick={() => editor.setAnimationLoop(!editor.animationLoop)}
+				title={editor.animationLoop
+					? "Loop animation: on"
+					: "Loop animation: off"}
+				aria-label={editor.animationLoop
+					? "Disable animation looping"
+					: "Enable animation looping"}
+				aria-pressed={editor.animationLoop}
+			>
+				{#if editor.animationLoop}
+					<Repeat class="size-3.5" />
+				{:else}
+					<RepeatOff class="size-3.5" />
+				{/if}
+			</Button>
 		</div>
 	</header>
 
@@ -863,10 +993,6 @@
 					{#each visibleFrames as frame, offset (frame.id)}
 						{@const index = firstFrame + offset}
 						{@const selected = editor.isFrameSelected(index)}
-						{@const inLoop =
-							editor.hasLoopRange &&
-							index >= editor.loopRange.start &&
-							index <= editor.loopRange.end}
 						<th
 							scope="col"
 							class="sticky top-6 z-20 h-8 w-14 min-w-14 border-b border-r bg-background p-0 align-middle"
@@ -891,7 +1017,7 @@
 								ondragend={endFrameDrag}
 								aria-label={`Select frame ${index + 1}${frame.tag ? `, ${frame.tag}` : ""}`}
 								aria-pressed={index === editor.activeFrame}
-								title={`Frame ${index + 1} · ${Math.round(editor.frameDurationAt(index))} ms${frame.tag ? ` · ${frame.tag}` : ""}. Double-click for properties.`}
+								title={`Frame ${index + 1} · ${Math.round(editor.frameDurationAt(index))} ms (${frame.duration !== undefined ? "frame properties" : "project FPS"})${frame.tag ? ` · ${frame.tag}` : ""}. Double-click for properties.`}
 							>
 								<span class="flex items-center gap-1">
 									{index + 1}
@@ -901,18 +1027,14 @@
 								</span>
 								<span
 									class={cn(
-										"text-[7px] font-normal",
+										"text-[7px] font-normal whitespace-nowrap",
 										frame.duration !== undefined ? "opacity-95" : "opacity-60",
 									)}
 								>
-									{Math.round(editor.frameDurationAt(index))}
+									{frame.duration !== undefined
+										? `[ ${Math.round(editor.frameDurationAt(index))}ms ]`
+										: `${Math.round(editor.frameDurationAt(index))}ms`}
 								</span>
-								{#if inLoop}
-									<span
-										class="pointer-events-none absolute inset-x-1 bottom-0.5 h-0.5 rounded-full bg-amber-400"
-										aria-hidden="true"
-									></span>
-								{/if}
 								{#if dragOverIndex === index}
 									<span
 										class={cn(
@@ -961,12 +1083,24 @@
 						></td>
 					</tr>
 				{/if}
-				{#each visibleLayers as layer (layer.id)}
+				{#each visibleLayers as row (row.layer.id)}
+					{@const isSource = dragSourceIds?.has(row.layer.id) ?? false}
 					<TimelineLayerRow
-						{layer}
+						layer={row.layer}
+						depth={row.depth}
+						last={row.last}
+						dragging={draggingLayerId !== null}
+						isDragSource={isSource}
+						dropMode={dropIndicator?.targetId === row.layer.id
+							? dropIndicator.mode
+							: null}
 						firstFrame={firstFrame}
 						lastFrame={lastFrame}
 						onFrameContextMenu={openFrameContextMenu}
+						onDragStart={(event) => beginLayerDrag(event, row.layer)}
+						onDragOver={(mode) => updateLayerDrop(row.layer, mode)}
+						onDrop={(mode) => finishLayerDrop(row.layer, mode)}
+						onDragEnd={endLayerDrag}
 					/>
 				{/each}
 				{#if trailingLayerRows > 0}
@@ -1070,52 +1204,6 @@
 		>
 			<ArrowRight class="size-3.5 text-muted-foreground" />
 			Move frames right
-		</button>
-
-		<div class="my-1 h-px bg-border"></div>
-
-		<button
-			type="button"
-			role="menuitem"
-			class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40"
-			onclick={() => runMenuAction(() => editor.setLoopRangeToSelection())}
-			disabled={editor.selectedFrameCount === 0}
-		>
-			<Repeat class="size-3.5 text-muted-foreground" />
-			Loop selected frames
-		</button>
-		<button
-			type="button"
-			role="menuitem"
-			class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40"
-			onclick={() =>
-				runMenuAction(() =>
-					editor.setLoopStartAt(contextMenu!.frameIndex),
-				)}
-		>
-			<Repeat class="size-3.5 text-muted-foreground" />
-			Loop start here
-		</button>
-		<button
-			type="button"
-			role="menuitem"
-			class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40"
-			onclick={() =>
-				runMenuAction(() => editor.setLoopEndAt(contextMenu!.frameIndex))
-			}
-		>
-			<Repeat class="size-3.5 text-muted-foreground" />
-			Loop end here
-		</button>
-		<button
-			type="button"
-			role="menuitem"
-			class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40"
-			onclick={() => runMenuAction(() => editor.clearLoopRange())}
-			disabled={!editor.hasLoopRange}
-		>
-			<Repeat class="size-3.5 text-muted-foreground" />
-			Clear loop range
 		</button>
 
 		<div class="my-1 h-px bg-border"></div>

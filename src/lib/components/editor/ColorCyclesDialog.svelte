@@ -9,7 +9,6 @@
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { Slider } from "$lib/components/ui/slider/index.js";
-	import { Switch } from "$lib/components/ui/switch/index.js";
 	import { compositeFrameCached } from "$lib/editor/doc.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
 	import { MAX_PROJECT_FRAMES } from "$lib/editor/file.js";
@@ -58,7 +57,6 @@
 	let previewBuffer: Uint32Array | null = null;
 	let stepsText = $state("2");
 	let tag = $state("cycle");
-	let loopNewFrames = $state(true);
 	let feedback = $state("");
 	let wasOpen = false;
 
@@ -198,7 +196,6 @@
 			steps,
 			durationMs: editor.paletteCycleMs,
 			tag,
-			loop: loopNewFrames,
 		});
 		if (count > 0) {
 			phase = 0;
@@ -440,10 +437,9 @@
 							</div>
 						</div>
 						<div class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-							<label class="flex items-center gap-2 text-[11px]">
-								<Switch bind:checked={loopNewFrames} />
-								Set loop range
-							</label>
+							<span class="text-[10px] text-muted-foreground">
+								Generated frames become the animation range
+							</span>
 							<span class="text-[10px] text-muted-foreground">
 								2–{Math.max(2, period)} steps · {remainingFrames} slots left
 							</span>
