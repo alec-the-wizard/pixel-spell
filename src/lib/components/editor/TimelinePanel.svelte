@@ -1124,12 +1124,10 @@
 							<button
 								type="button"
 								class={cn(
-									"relative flex h-8 w-full flex-col items-center justify-center gap-0.5 font-mono text-[10px] leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-									index === editor.activeFrame
-										? "bg-primary text-primary-foreground"
-										: selected
-											? "bg-primary/15 text-foreground hover:bg-primary/25"
-											: "text-muted-foreground hover:bg-accent hover:text-foreground",
+									"relative flex h-8 w-full flex-col items-center justify-center gap-0.5 font-mono text-[10px] leading-none text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+									selected || index === editor.activeFrame
+										? "bg-primary/15 hover:bg-primary/25"
+										: "hover:bg-accent hover:text-foreground",
 								)}
 								draggable="true"
 								onclick={(event) => handleFrameClick(event, index)}
@@ -1146,7 +1144,7 @@
 								<span class="flex items-center gap-1">
 									{index + 1}
 									{#if index === editor.activeFrame && editor.playing}
-										<span class="size-1 rounded-full bg-primary-foreground/80"></span>
+										<span class="size-1 rounded-full bg-primary"></span>
 									{/if}
 								</span>
 								<span

@@ -64,10 +64,6 @@
 		onDragEnd?: () => void;
 	} = $props();
 
-	/** Selected frame/layer cell background: primary blue at 20% opacity. */
-	const SELECTED_CELL_BACKGROUND =
-		"color-mix(in oklab, var(--primary) 20%, transparent)";
-
 	let isGroup = $derived(isGroupLayer(layer));
 	let isReference = $derived(layer.role === "reference");
 	let activeRow = $derived(layer.id === editor.activeLayerId);
@@ -83,14 +79,13 @@
 	);
 
 	let headerBackground = $derived.by(() => {
-		if (!layer.color) return undefined;
-		return activeRow
-			? layerTint(layer.color, 26, "var(--accent)")
-			: layerTint(layer.color, 16);
+		if (selectedRow || !layer.color) return undefined;
+		return layerTint(layer.color, 16);
 	});
 
+	/** Row header use the same selection tint as selected cels. */
 	let headerClass = $derived(
-		activeRow ? "bg-accent" : selectedRow ? "bg-primary/15" : "bg-background",
+		selectedRow ? "bg-primary/15" : "bg-background",
 	);
 
 	/** Tree connector glyphs for child layers: ancestors "│", then "├" or "└". */
@@ -109,14 +104,9 @@
 	);
 	let sourceDim = $derived(dragging && isDragSource);
 
-	/** Shading strength for a cel cell; selection always wins over layer tint. */
-	function cellBackground(
-		selected: boolean,
-		activeCel: boolean,
-	): string | undefined {
-		if (selected) return SELECTED_CELL_BACKGROUND;
-		if (!layer.color) return undefined;
-		if (activeCel) return layerTint(layer.color, 26);
+	/** Layer color tint for cells that are not part of the selection. */
+	function cellBackground(selected: boolean): string | undefined {
+		if (selected || !layer.color) return undefined;
 		return layerTint(layer.color, 9);
 	}
 
@@ -383,8 +373,11 @@
 			{@const selectedCel = selectedRow || selectedFrame}
 
 			<td
-				class="h-12 w-14 min-w-14 border-b border-r p-1 text-center align-middle"
-				style:background={cellBackground(selectedCel, activeCel)}
+				class={cn(
+					"h-12 w-14 min-w-14 border-b border-r p-1 text-center align-middle",
+					selectedCel && "bg-primary/15",
+				)}
+				style:background={cellBackground(selectedCel)}
 				onpointerenter={() => onCelPointerEnter(layer.id, index)}
 			>
 				<button
