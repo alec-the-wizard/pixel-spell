@@ -9,14 +9,16 @@
  */
 import { MAX_CANVAS_SIZE } from "../src/lib/editor/canvas.js";
 import { CANVAS_SIZE_PRESETS } from "../src/lib/editor/canvas-presets.js";
-import { packColor } from "../src/lib/editor/color.js";
+import { packColor, unpackColor } from "../src/lib/editor/color.js";
 import {
 	animationSequence,
 	cloneDoc,
 	compositeFrame,
 	compositeFrameCachedIncremental,
 	createDoc,
+	createGroup,
 	createLayer,
+	isGroupLayer,
 	normalizeAnimationMode,
 } from "../src/lib/editor/doc.js";
 import {
@@ -62,7 +64,7 @@ import {
 	magicWandMask,
 	selectionBounds,
 } from "../src/lib/editor/selection.js";
-import type { MirrorAxis, PixelDoc } from "../src/lib/editor/types.js";
+import type { BlendMode, MirrorAxis, PixelDoc } from "../src/lib/editor/types.js";
 
 function mulberry32(seed: number): () => number {
 	let a = seed >>> 0;
@@ -399,6 +401,121 @@ function assertProjectRoundtrip(doc: PixelDoc, label: string): void {
 		) {
 			throw new Error(`${label}: reference transform changed`);
 		}
+	}
+}
+
+function assertLayerGroups(): void {
+	// Blend modes on a 1×1 canvas (opaque colors give exact results).
+	const blendCases: [BlendMode, string][] = [
+		["multiply", "#000000"],
+		["screen", "#ff00ff"],
+		["darken", "#000000"],
+		["lighten", "#ff00ff"],
+		["add", "#ff00ff"],
+		["subtract", "#ff0000"],
+		["difference", "#ff00ff"],
+		["exclusion", "#ff00ff"],
+	];
+	for (const [mode, expected] of blendCases) {
+		const doc = createDoc(1, 1);
+		doc.layers[0]!.cels[0]![0] = packColor("#ff0000");
+		const top = createLayer("top", 1, 1, 1);
+		top.cels[0]![0] = packColor("#0000ff");
+		top.blendMode = mode;
+		doc.layers.push(top);
+		const result = compositeFrame(doc, 0)[0]!;
+		if ((result & 0x00ffffff) !== (packColor(expected) & 0x00ffffff)) {
+			throw new Error(`blend mode ${mode} changed`);
+		}
+	}
+
+	// Clipping to the composited content below (2×1 canvas).
+	const clipDoc = createDoc(2, 1);
+	clipDoc.layers[0]!.cels[0]!.set([packColor("#ff0000"), 0]);
+	const clipped = createLayer("clipped", 2, 1, 1);
+	clipped.cels[0]!.fill(packColor("#0000ff"));
+	clipped.clipping = true;
+	clipDoc.layers.push(clipped);
+	const clipResult = compositeFrame(clipDoc, 0);
+	if (clipResult[0] !== packColor("#0000ff")) {
+		throw new Error("clipping should not hide over opaque base");
+	}
+	if (clipResult[1] !== 0) {
+		throw new Error("clipping should hide over transparent base");
+	}
+
+	// Group opacity (half-transparent blue over nothing).
+	const groupOpacityDoc = createDoc(1, 1);
+	groupOpacityDoc.layers = [];
+	const group = createGroup("G");
+	group.opacity = 0.5;
+	const child = createLayer("child", 1, 1, 1);
+	child.cels[0]![0] = packColor("#0000ff");
+	child.parentId = group.id;
+	groupOpacityDoc.layers.push(group, child);
+	const go = unpackColor(compositeFrame(groupOpacityDoc, 0)[0]!);
+	if (go.a !== 128 || go.b !== 255 || go.r !== 0) {
+		throw new Error("group opacity composite changed");
+	}
+
+	// Group blend mode (multiply over red → black).
+	const groupBlendDoc = createDoc(1, 1);
+	groupBlendDoc.layers[0]!.cels[0]![0] = packColor("#ff0000");
+	const groupBlend = createGroup("G2");
+	groupBlend.blendMode = "multiply";
+	const groupChild = createLayer("child2", 1, 1, 1);
+	groupChild.cels[0]![0] = packColor("#0000ff");
+	groupChild.parentId = groupBlend.id;
+	groupBlendDoc.layers.push(groupBlend, groupChild);
+	if ((compositeFrame(groupBlendDoc, 0)[0]! & 0x00ffffff) !== 0) {
+		throw new Error("group blend mode composite changed");
+	}
+
+	// Round-trip a grouped, blended, clipped document.
+	const round = createDoc(2, 2);
+	round.layers = [];
+	const outer = createGroup("Outer");
+	outer.blendMode = "overlay";
+	outer.clipping = true;
+	const inner = createLayer("Inner", 2, 2, 1);
+	inner.blendMode = "multiply";
+	inner.clipping = true;
+	inner.parentId = outer.id;
+	inner.cels[0]![0] = packColor("#123456", 200);
+	const plain = createLayer("Plain", 2, 2, 1);
+	plain.cels[0]![1] = packColor("#abcdef");
+	round.layers.push(plain, outer, inner);
+
+	const bytes = serializeProject(round, palette, "groups", 0, plain.id);
+	const parsed = parseProject(bytes);
+	if (!parsed) throw new Error("group round-trip parse failed");
+	if (parsed.doc.layers.length !== 3) {
+		throw new Error("group round-trip layer count changed");
+	}
+	const [restoredPlain, restoredGroup, restoredInner] = parsed.doc.layers;
+	if (!isGroupLayer(restoredGroup!)) {
+		throw new Error("group round-trip lost group flag");
+	}
+	if (restoredGroup!.parentId !== undefined) {
+		throw new Error("group round-trip parent changed");
+	}
+	if (restoredGroup!.blendMode !== "overlay") {
+		throw new Error("group round-trip blend mode changed");
+	}
+	if (restoredGroup!.clipping !== true) {
+		throw new Error("group round-trip clipping changed");
+	}
+	if (restoredInner!.parentId !== restoredGroup!.id) {
+		throw new Error("group round-trip child parent changed");
+	}
+	if (restoredInner!.blendMode !== "multiply") {
+		throw new Error("group round-trip child blend changed");
+	}
+	if (restoredInner!.cels[0]![0] !== packColor("#123456", 200)) {
+		throw new Error("group round-trip child pixel changed");
+	}
+	if (restoredPlain!.cels[0]![1] !== packColor("#abcdef")) {
+		throw new Error("group round-trip plain pixel changed");
 	}
 }
 
@@ -842,6 +959,7 @@ assertPaletteRamps();
 assertPaletteCycling();
 assertPaletteAnalysis();
 assertSheetMetadata();
+assertLayerGroups();
 assertProjectRoundtrip(makeDoc(64, 64, 2, 3, 41), "sparse");
 const opaqueDoc = makeDoc(64, 64, 1, 1, 42);
 for (const cel of opaqueDoc.layers[0]!.cels) cel.fill(0xff336699);

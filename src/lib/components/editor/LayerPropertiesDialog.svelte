@@ -1,29 +1,43 @@
 <script lang="ts">
 	import Ban from "@lucide/svelte/icons/ban";
 	import Check from "@lucide/svelte/icons/check";
+	import ChevronDown from "@lucide/svelte/icons/chevron-down";
+	import Scissors from "@lucide/svelte/icons/scissors";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import * as Dialog from "$lib/components/ui/dialog/index.js";
+	import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
+	import { Switch } from "$lib/components/ui/switch/index.js";
+	import { BLEND_MODE_LABELS, BLEND_MODES } from "$lib/editor/blend.js";
+	import { isGroupLayer } from "$lib/editor/doc.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
 	import {
 		LAYER_COLOR_PRESETS,
 		layerColorName,
 	} from "$lib/editor/layer-color.js";
+	import type { BlendMode } from "$lib/editor/types.js";
 	import { cn } from "$lib/utils.js";
 
 	let { open = $bindable(false) } = $props();
 
 	let name = $state("");
 	let color = $state<string | null>(null);
+	let blendMode = $state<BlendMode>("normal");
+	let clipping = $state(false);
 	let wasOpen = false;
 
 	let layer = $derived(editor.activeLayer);
+	let isGroup = $derived(isGroupLayer(editor.activeLayer));
+
+	let blendLabel = $derived(BLEND_MODE_LABELS[blendMode] ?? "Normal");
 
 	$effect(() => {
 		if (open && !wasOpen) {
 			name = editor.activeLayer.name;
 			color = editor.activeLayer.color ?? null;
+			blendMode = editor.activeLayer.blendMode ?? "normal";
+			clipping = editor.activeLayer.clipping === true;
 		}
 		wasOpen = open;
 	});
@@ -39,6 +53,10 @@
 			editor.renameLayer(active.id, trimmed);
 		}
 		editor.setLayerColor(active.id, color);
+		editor.setLayerBlendMode(active.id, blendMode);
+		if (clipping !== (active.clipping === true)) {
+			editor.toggleLayerClipping(active.id);
+		}
 		open = false;
 	}
 </script>
@@ -46,9 +64,9 @@
 <Dialog.Root bind:open>
 	<Dialog.Content class="sm:max-w-md">
 		<Dialog.Header>
-			<Dialog.Title>Layer properties</Dialog.Title>
+			<Dialog.Title>{isGroup ? "Group properties" : "Layer properties"}</Dialog.Title>
 			<Dialog.Description>
-				Set the name and timeline identity color for {layer.name}.
+				Set the name, blend mode, and timeline identity color for {layer.name}.
 			</Dialog.Description>
 		</Dialog.Header>
 
@@ -61,6 +79,49 @@
 					maxlength={60}
 					autocomplete="off"
 				/>
+			</div>
+
+			<div class="grid grid-cols-2 gap-3">
+				<div class="grid gap-1.5">
+					<Label>Blend mode</Label>
+					<DropdownMenu.Root>
+						<DropdownMenu.Trigger
+							class="flex h-8 items-center justify-between gap-1 rounded-md border px-2 text-xs outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+						>
+							<span class="truncate">{blendLabel}</span>
+							<ChevronDown class="size-3.5 text-muted-foreground" />
+						</DropdownMenu.Trigger>
+						<DropdownMenu.Content class="max-h-72 w-44 overflow-y-auto">
+							<DropdownMenu.Label>Blend mode</DropdownMenu.Label>
+							<DropdownMenu.RadioGroup
+								value={blendMode}
+								onValueChange={(value) => (blendMode = value as BlendMode)}
+							>
+								{#each BLEND_MODES as mode (mode)}
+									<DropdownMenu.RadioItem value={mode} closeOnSelect>
+										{BLEND_MODE_LABELS[mode]}
+									</DropdownMenu.RadioItem>
+								{/each}
+							</DropdownMenu.RadioGroup>
+						</DropdownMenu.Content>
+					</DropdownMenu.Root>
+				</div>
+
+				<div class="grid content-between gap-1.5">
+					<Label>Clipping</Label>
+					<label
+						class="flex h-8 cursor-pointer items-center gap-2 rounded-md text-xs text-muted-foreground"
+						title="Clip this layer to the composited content below it"
+					>
+						<Scissors class="size-3.5" />
+						Clip to below
+						<Switch
+							class="ml-auto"
+							checked={clipping}
+							onCheckedChange={(value) => (clipping = value)}
+						/>
+					</label>
+				</div>
 			</div>
 
 			<div class="grid gap-2">
@@ -119,8 +180,8 @@
 				</div>
 
 				<p class="text-[10px] text-muted-foreground">
-					The color shades this layer's header and timeline track. It is never
-					exported.
+					The color shades this {isGroup ? "group's" : "layer's"} header and
+					timeline track. It is never exported.
 				</p>
 			</div>
 		</div>

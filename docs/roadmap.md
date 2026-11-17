@@ -41,6 +41,7 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Import from URL & paste-from-clipboard | 6 | 2 | 3.00 | | Implemented: **File → Import from URL…** (also in the command palette) opens the import dialog with a URL field that downloads the image and runs it through the normal import analysis, so it can still become a project, layer, frame, reference layer, reference-board image, or palette. Cross-origin hosts must allow CORS; failures explain that and suggest downloading the file. Pasting an image from the OS clipboard anywhere outside a text field opens the same dialog with the pasted image. When the clipboard holds an image, `Ctrl+V` imports it; otherwise `Ctrl+V` still pastes the in-app selection. |
 | Frame duration badges and colored tag ranges | 5 | 2 | 2.50 | | Implemented: each frame header shows its duration in milliseconds in the timeline, with `ms` appended so the unit is unambiguous. A duration that comes from frame properties is wrapped in square brackets (`[ 123ms ]`); a duration derived from the project FPS stays bare (`123ms`). Tags carry a generated color, so contiguous tag ranges are easy to distinguish in the tag row. |
 | Unused-color pruning and palette analysis | 5 | 2 | 2.50 | | Implemented: the palette tools menu can remove every palette color that no frame or normal layer uses (reference layers are ignored, and the built-in, locked, and read-only palettes are never modified). **Coverage analysis…** opens a read-only dialog with used/unused totals, the share of painted pixels covered by the palette, per-color usage bars, twelve-bin hue coverage with dashed gaps, eight-bin brightness coverage, and the most-used off-palette colors. |
+| Layer groups, blend modes, clipping masks | 8 | 6 | 1.33 | | Implemented: the layer model is now a tree. Group nodes (`isGroup`, no cels) nest via `parentId`, render as collapsible rows in the timeline, and composite their children into an offscreen buffer that is blended with the group's own opacity and blend mode. Every layer and group can carry a `blendMode` (normal, multiply, screen, overlay, darken, lighten, color dodge, color burn, hard light, soft light, difference, exclusion, add, subtract) and a `clipping` toggle that masks pixels to the composited content below. Compositing, `compositePixel`, the incremental fast path (with a full-composite fallback for grouped/blended documents), undo cloning, and the `PXSP` container (version 4) all support the tree. The timeline toolbar adds new group, group-into, ungroup, indent, and outdent actions; Layer properties exposes blend mode and clipping. Blend modes and clipping apply on every export path. |
 
 ## Planned features
 
@@ -65,7 +66,6 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Recent files / project library | 6 | 4 | 1.50 | | A local project browser backed by IndexedDB/File System Access API, with thumbnails and recent projects. Complements autosave and is the offline prerequisite for any later cloud sync. |
 | Isometric / seamless tiled drawing | 7 | 5 | 1.40 | | Wrap drawing across canvas edges and add an isometric tile mode. Requires careful coordinate wrapping in every drawing tool and preview. |
 | Sprite atlas packing (MaxRects) | 7 | 5 | 1.40 | | Pack frames or tagged animations into an atlas with padding, trim, and rotation options. Build on the sprite-sheet geometry code. |
-| Layer groups, blend modes, clipping masks | 8 | 6 | 1.33 | | Change the layer model to a tree, add blend modes (multiply, screen, overlay, add, etc.), group opacity/blend, and clipping or mask layers. High artist value but touches compositing, UI, undo, and file format. |
 | Selection transform (scale/rotate/flip) | 8 | 6 | 1.33 | | Add transform handles to floating selections with nearest-neighbor scaling and 90° rotation. Reuse the floating-selection pipeline; add a transform matrix and commit path. Consider pixel-preserving rotation (RotSprite/cleanEdge) later. |
 | WebGL shader filters | 8 | 6 | 1.33 | ★ | Real-time fragment-shader filters (scanlines, glow, palette posterize, outline) previewed on the canvas, user-loadable. Pixelorama ships Godot shaders; a WebGL path is a strong browser-native differentiator. |
 | Tweening (position/scale/rotation/opacity, easing) | 8 | 6 | 1.33 | | Interpolate between frames with easing curves to generate in-betweens. One of the most-requested Aseprite features (v1.4 plan #96); a browser editor can ship it as a non-destructive “tween layer” or baked frames. |
@@ -124,7 +124,7 @@ These add the most day-to-day value per unit of risk. Onion skinning and referen
 
 ### Phase 2 — professional editing (1–2 months)
 
-1. Layer groups, blend modes, and clipping masks
+1. Layer groups, blend modes, and clipping masks — done
 2. Selection transform (scale/rotate/flip)
 3. Custom brushes and dithering patterns
 4. Outline/shadow/color-replace filters

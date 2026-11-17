@@ -18,11 +18,16 @@ import {
 	animationSequence,
 	cloneDoc,
 	createDoc,
+	createGroup,
 	createLayer,
+	flattenLayersTopFirst,
 	frameDurationMs,
+	isGroupLayer,
 	normalizeAnimationMode,
 	uid,
+	type LayerRow,
 } from "./doc.js";
+import { normalizeBlendMode } from "./blend.js";
 import {
 	MAX_PROJECT_FRAMES,
 	MAX_PROJECT_LAYERS,
@@ -66,6 +71,7 @@ import {
 import type {
 	AnimationMode,
 	BackgroundKind,
+	BlendMode,
 	ColorSlot,
 	Frame,
 	GradientDither,
@@ -95,6 +101,63 @@ export const RADIAL_SYMMETRY_MAX = 16;
 
 const clamp = (value: number, min: number, max: number) =>
 	Math.max(min, Math.min(max, value));
+
+/**
+ * Depth of every layer in the flat array, following `parentId` links. Group
+ * nodes and their descendants are stored contiguously, so depth lets us reason
+ * about subtree extents for reorder/delete/reparent operations.
+ */
+function layerDepths(layers: readonly Layer[]): number[] {
+	const byId = new Map<string, Layer>();
+	for (const layer of layers) byId.set(layer.id, layer);
+	const memo = new Map<string, number>();
+	const depthOf = (id: string): number => {
+		const cached = memo.get(id);
+		if (cached !== undefined) return cached;
+		const layer = byId.get(id);
+		if (!layer || !layer.parentId) {
+			memo.set(id, 0);
+			return 0;
+		}
+		const depth = depthOf(layer.parentId) + 1;
+		memo.set(id, depth);
+		return depth;
+	};
+	return layers.map((layer) => depthOf(layer.id));
+}
+
+/** Inclusive-exclusive range of the contiguous subtree rooted at `index`. */
+function subtreeRange(
+	layers: readonly Layer[],
+	index: number,
+): { start: number; end: number } {
+	const depths = layerDepths(layers);
+	const depth = depths[index]!;
+	let end = index + 1;
+	while (end < layers.length && depths[end]! > depth) end++;
+	return { start: index, end };
+}
+
+/** Contiguous sibling blocks at a given depth (each a node plus its subtree). */
+function siblingBlocks(
+	layers: readonly Layer[],
+	depth: number,
+): { start: number; end: number }[] {
+	const depths = layerDepths(layers);
+	const blocks: { start: number; end: number }[] = [];
+	let index = 0;
+	while (index < layers.length) {
+		if (depths[index]! === depth) {
+			let end = index + 1;
+			while (end < layers.length && depths[end]! > depth) end++;
+			blocks.push({ start: index, end });
+			index = end;
+		} else {
+			index++;
+		}
+	}
+	return blocks;
+}
 
 function readStoredTheme(): "light" | "dark" {
 	try {
@@ -375,10 +438,32 @@ export class EditorState {
 		const layer = this.activeLayer;
 		return (
 			!!layer &&
+			!isGroupLayer(layer) &&
 			layer.role !== "reference" &&
 			!layer.locked &&
 			layer.visible
 		);
+	}
+
+	/** The timeline's flattened, top-to-bottom layer list (groups expanded). */
+	get timelineLayers(): LayerRow[] {
+		return flattenLayersTopFirst(this.doc.layers);
+	}
+
+	/** True when deleting the active layer would leave a drawable layer behind. */
+	get canDeleteLayer(): boolean {
+		const layers = this.doc.layers;
+		const index = layers.findIndex((layer) => layer.id === this.activeLayerId);
+		if (index < 0) return false;
+		const { start, end } = subtreeRange(layers, index);
+		let total = 0;
+		let inSubtree = 0;
+		layers.forEach((layer, layerIndex) => {
+			if (isGroupLayer(layer)) return;
+			total++;
+			if (layerIndex >= start && layerIndex < end) inSubtree++;
+		});
+		return total - inSubtree >= 1;
 	}
 
 	get referenceLayerCount(): number {
@@ -1122,7 +1207,7 @@ export class EditorState {
 			(index) => index >= 0 && index < this.doc.frames.length,
 		);
 		const layers = this.doc.layers.filter(
-			(layer) => layer.role !== "reference" && layer.visible,
+			(layer) => !isGroupLayer(layer) && layer.role !== "reference" && layer.visible,
 		);
 		if (targets.length === 0 || layers.length === 0) return 0;
 
@@ -1200,6 +1285,7 @@ export class EditorState {
 
 			this.doc.frames.splice(target, 0, frame);
 			for (const layer of this.doc.layers) {
+				if (isGroupLayer(layer)) continue;
 				const source = layer.cels[sourceIndex];
 				let pixels: Uint32Array;
 				if (!source) {
@@ -2127,6 +2213,7 @@ export class EditorState {
 		};
 		this.doc.frames.splice(index, 0, frame);
 		for (const layer of this.doc.layers) {
+			if (isGroupLayer(layer)) continue;
 			const source =
 				layer.role === "reference" ? layer.cels[this.activeFrame] : undefined;
 			layer.cels.splice(
@@ -2491,75 +2578,350 @@ export class EditorState {
 		if (this.doc.layers.length >= MAX_PROJECT_LAYERS) return;
 		this.pushHistory();
 		const layer = createLayer(
-			`Layer ${this.doc.layers.length + 1}`,
+			this.#nextLayerName(),
 			this.doc.width,
 			this.doc.height,
 			this.doc.frames.length,
 		);
 		this.doc.layers.push(layer);
 		this.activeLayerId = layer.id;
+		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
 	}
 
+	#nextLayerName(): string {
+		const names = new Set(this.doc.layers.map((layer) => layer.name.toLowerCase()));
+		let index = 1;
+		while (names.has(`layer ${index}`)) index++;
+		return `Layer ${index}`;
+	}
+
+	#nextGroupName(): string {
+		const names = new Set(this.doc.layers.map((layer) => layer.name.toLowerCase()));
+		let index = 1;
+		while (names.has(`group ${index}`)) index++;
+		return `Group ${index}`;
+	}
+
+	/** Adds a new empty group above the active layer (or at the top). */
+	addGroup(): void {
+		if (this.doc.layers.length >= MAX_PROJECT_LAYERS) return;
+		this.pushHistory();
+		const group = createGroup(this.#nextGroupName());
+		this.doc.layers.push(group);
+		this.activeLayerId = group.id;
+		this.activeReferenceId = null;
+		this.structureRevision++;
+		this.revision++;
+	}
+
+	/** Wraps the active layer (and its subtree) in a new group. */
+	groupActiveLayer(): void {
+		if (this.doc.layers.length >= MAX_PROJECT_LAYERS) return;
+		const layers = this.doc.layers;
+		const index = layers.findIndex((layer) => layer.id === this.activeLayerId);
+		if (index < 0) return;
+		this.pushHistory();
+		const active = layers[index]!;
+		const group = createGroup(this.#nextGroupName(), active.parentId);
+		active.parentId = group.id;
+		layers.splice(index, 0, group);
+		this.activeReferenceId = null;
+		this.structureRevision++;
+		this.revision++;
+	}
+
+	/** Removes the active group, promoting its direct children to its level. */
+	ungroupLayer(): void {
+		const layer = this.activeLayer;
+		if (!layer || !isGroupLayer(layer)) return;
+		const layers = this.doc.layers;
+		const index = layers.findIndex((item) => item.id === layer.id);
+		if (index < 0) return;
+		this.pushHistory();
+		const { end } = subtreeRange(layers, index);
+		const parentId = layer.parentId;
+		for (let position = index + 1; position < end; position++) {
+			const child = layers[position]!;
+			if (child.parentId === layer.id) child.parentId = parentId;
+		}
+		layers.splice(index, 1);
+		this.activeLayerId =
+			layers[Math.min(index, layers.length - 1)]?.id ?? this.activeLayerId;
+		this.activeReferenceId = null;
+		this.structureRevision++;
+		this.revision++;
+	}
+
+	/** Moves the active layer into the group immediately above it, if any. */
+	indentActiveLayer(): void {
+		const layers = this.doc.layers;
+		const index = layers.findIndex((layer) => layer.id === this.activeLayerId);
+		if (index < 0) return;
+		const depths = layerDepths(layers);
+		const depth = depths[index]!;
+		let blockEnd = index + 1;
+		while (blockEnd < layers.length && depths[blockEnd]! > depth) blockEnd++;
+
+		// Only indent when the very next sibling above is a group.
+		const target = layers[blockEnd];
+		if (!target || depths[blockEnd]! !== depth || !isGroupLayer(target)) return;
+		this.pushHistory();
+		this.#reparentActiveBlock(target.id, target.id);
+		this.activeReferenceId = null;
+		this.structureRevision++;
+		this.revision++;
+	}
+
+	/** Moves the active layer out of its group, above that group. */
+	outdentActiveLayer(): void {
+		const layer = this.activeLayer;
+		if (!layer || !layer.parentId) return;
+		const parent = this.doc.layers.find((item) => item.id === layer.parentId);
+		if (!parent) return;
+		this.pushHistory();
+		this.#reparentActiveBlock(parent.parentId, parent.id);
+		this.activeReferenceId = null;
+		this.structureRevision++;
+		this.revision++;
+	}
+
+	/**
+	 * Re-parents the active layer's subtree to `parentId`, placing it right
+	 * after the node `placeAfterId` (or at the top when that is undefined).
+	 */
+	#reparentActiveBlock(
+		parentId: string | undefined,
+		placeAfterId?: string,
+	): void {
+		const layers = this.doc.layers;
+		const index = layers.findIndex((layer) => layer.id === this.activeLayerId);
+		if (index < 0) return;
+		const { end } = subtreeRange(layers, index);
+		const block = layers.splice(index, end - index);
+		block[0]!.parentId = parentId;
+		const afterIndex =
+			placeAfterId !== undefined
+				? layers.findIndex((layer) => layer.id === placeAfterId)
+				: -1;
+		const insertAt = afterIndex >= 0 ? afterIndex + 1 : layers.length;
+		layers.splice(insertAt, 0, ...block);
+	}
+
 	duplicateLayer(): void {
 		if (this.doc.layers.length >= MAX_PROJECT_LAYERS) return;
-		const source = this.activeLayer;
-		if (!source) return;
+		const layers = this.doc.layers;
+		const index = layers.findIndex((layer) => layer.id === this.activeLayerId);
+		if (index < 0) return;
+		const source = layers[index]!;
+		const { end } = subtreeRange(layers, index);
+		const block = layers.slice(index, end);
+		if (layers.length + block.length > MAX_PROJECT_LAYERS) return;
+
 		this.pushHistory();
-		const copy: Layer = {
-			id: uid("layer"),
-			name: `${source.name} copy`,
-			visible: source.visible,
-			locked: source.role === "reference",
-			opacity: source.opacity,
-			cels: source.cels.map((cel) => new Uint32Array(cel)),
-			...(source.role ? { role: source.role } : {}),
-			...(source.color ? { color: source.color } : {}),
-		};
-		const index = this.doc.layers.findIndex((layer) => layer.id === source.id);
-		this.doc.layers.splice(index + 1, 0, copy);
-		this.activeLayerId = copy.id;
+		const idMap = new Map<string, string>();
+		for (const item of block) {
+			idMap.set(item.id, uid(isGroupLayer(item) ? "group" : "layer"));
+		}
+		const clones = block.map((item) => {
+			const nextId = idMap.get(item.id)!;
+			const nextParentId = item.parentId
+				? (idMap.get(item.parentId) ?? item.parentId)
+				: item.parentId;
+			return {
+				...item,
+				id: nextId,
+				name: item.id === source.id ? `${item.name} copy` : item.name,
+				cels: isGroupLayer(item)
+					? []
+					: item.cels.map((cel) => new Uint32Array(cel)),
+				...(nextParentId ? { parentId: nextParentId } : {}),
+			};
+		});
+		layers.splice(end, 0, ...clones);
+		this.activeLayerId = idMap.get(source.id)!;
+		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
 	}
 
 	deleteLayer(): void {
-		if (this.doc.layers.length <= 1) return;
-		const index = this.doc.layers.findIndex(
-			(layer) => layer.id === this.activeLayerId,
-		);
+		if (!this.canDeleteLayer) return;
+		const layers = this.doc.layers;
+		const index = layers.findIndex((layer) => layer.id === this.activeLayerId);
 		if (index < 0) return;
 		this.pushHistory();
-		this.doc.layers.splice(index, 1);
+		const { end } = subtreeRange(layers, index);
+		layers.splice(index, end - index);
 		this.activeLayerId =
-			this.doc.layers[Math.min(index, this.doc.layers.length - 1)]!.id;
+			layers[Math.min(index, layers.length - 1)]?.id ?? this.activeLayerId;
+		this.activeReferenceId = null;
+		this.structureRevision++;
+		this.revision++;
+	}
+
+	#moveActiveBlock(direction: 1 | -1): void {
+		const layers = this.doc.layers;
+		const index = layers.findIndex((layer) => layer.id === this.activeLayerId);
+		if (index < 0) return;
+		const depths = layerDepths(layers);
+		const depth = depths[index]!;
+		const blocks = siblingBlocks(layers, depth);
+		const blockIndex = blocks.findIndex(
+			(block) => block.start <= index && index < block.end,
+		);
+		if (blockIndex < 0) return;
+		const target = blockIndex + direction;
+		if (target < 0 || target >= blocks.length) return;
+
+		this.pushHistory();
+		const a = blocks[blockIndex]!;
+		const b = blocks[target]!;
+		const aLayers = layers.slice(a.start, a.end);
+		const bLayers = layers.slice(b.start, b.end);
+		const minStart = Math.min(a.start, b.start);
+		const maxEnd = Math.max(a.end, b.end);
+		const replacement =
+			a.start < b.start ? [...bLayers, ...aLayers] : [...aLayers, ...bLayers];
+		layers.splice(minStart, maxEnd - minStart, ...replacement);
+		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
 	}
 
 	moveLayerUp(): void {
-		const index = this.doc.layers.findIndex(
-			(layer) => layer.id === this.activeLayerId,
-		);
-		if (index < 0 || index >= this.doc.layers.length - 1) return;
-		this.pushHistory();
-		const [layer] = this.doc.layers.splice(index, 1);
-		this.doc.layers.splice(index + 1, 0, layer!);
-		this.structureRevision++;
-		this.revision++;
+		this.#moveActiveBlock(1);
 	}
 
 	moveLayerDown(): void {
-		const index = this.doc.layers.findIndex(
-			(layer) => layer.id === this.activeLayerId,
-		);
-		if (index <= 0) return;
+		this.#moveActiveBlock(-1);
+	}
+
+	/**
+	 * Moves a layer (and its subtree) to a drop position produced by timeline
+	 * drag-and-drop. `before`/`after` reorder the block as a sibling of the
+	 * reference node; `into` nests it as the last child of a group.
+	 */
+	moveLayerTo(
+		id: string,
+		spec:
+			| { kind: "before" | "after"; refId: string }
+			| { kind: "into"; groupId: string },
+	): boolean {
+		const layers = this.doc.layers;
+		const index = layers.findIndex((layer) => layer.id === id);
+		if (index < 0) return false;
+		const { start, end } = subtreeRange(layers, index);
+		const block = layers.slice(start, end);
+		const root = block[0]!;
+
+		let newParentId: string | undefined;
+		let anchorId: string;
+		let anchorBefore: boolean;
+
+		if (spec.kind === "into") {
+			const groupIndex = layers.findIndex(
+				(layer) => layer.id === spec.groupId,
+			);
+			if (groupIndex < 0 || !isGroupLayer(layers[groupIndex]!)) return false;
+			if (groupIndex >= start && groupIndex < end) return false;
+			newParentId = spec.groupId;
+			anchorId = layers[subtreeRange(layers, groupIndex).end - 1]!.id;
+			anchorBefore = false;
+		} else {
+			const refIndex = layers.findIndex((layer) => layer.id === spec.refId);
+			if (refIndex < 0) return false;
+			if (refIndex >= start && refIndex < end) return false;
+			newParentId = layers[refIndex]!.parentId;
+			if (spec.kind === "before") {
+				// Above the reference in display order = after its subtree in the
+				// bottom-to-top flat array.
+				anchorId = layers[subtreeRange(layers, refIndex).end - 1]!.id;
+				anchorBefore = false;
+			} else {
+				// Below the reference in display order = before it in flat.
+				anchorId = layers[refIndex]!.id;
+				anchorBefore = true;
+			}
+		}
+
+		// Build the desired final order and skip a no-op move.
+		const rest = [...layers.slice(0, start), ...layers.slice(end)];
+		const anchorIndex = rest.findIndex((layer) => layer.id === anchorId);
+		const insertAt = anchorBefore ? anchorIndex : anchorIndex + 1;
+		const desired = [
+			...rest.slice(0, insertAt),
+			...block,
+			...rest.slice(insertAt),
+		];
+		if (
+			root.parentId === newParentId &&
+			desired.every((layer, layerIndex) => layer.id === layers[layerIndex]!.id)
+		) {
+			return false;
+		}
+
 		this.pushHistory();
-		const [layer] = this.doc.layers.splice(index, 1);
-		this.doc.layers.splice(index - 1, 0, layer!);
+		layers.splice(0, layers.length, ...desired);
+		if (newParentId) root.parentId = newParentId;
+		else delete root.parentId;
+		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
+		return true;
+	}
+
+	/**
+	 * Returns the ids of a layer's subtree (itself included), or null when the
+	 * id is unknown. Used by timeline drag-and-drop to reject dropping a node
+	 * onto itself or one of its own descendants.
+	 */
+	layerSubtreeIds(id: string): Set<string> | null {
+		const layers = this.doc.layers;
+		const index = layers.findIndex((layer) => layer.id === id);
+		if (index < 0) return null;
+		const { start, end } = subtreeRange(layers, index);
+		const ids = new Set<string>();
+		for (let position = start; position < end; position++) {
+			ids.add(layers[position]!.id);
+		}
+		return ids;
+	}
+
+	setLayerBlendMode(id: string, mode: BlendMode): void {
+		const layer = this.doc.layers.find((item) => item.id === id);
+		if (!layer) return;
+		const next = normalizeBlendMode(mode);
+		if ((layer.blendMode ?? "normal") === next) return;
+		if (next === "normal") delete layer.blendMode;
+		else layer.blendMode = next;
+		this.dirty = true;
+		this.modified = true;
+		this.revision++;
+		this.layerAppearanceRevision++;
+	}
+
+	toggleLayerClipping(id: string): void {
+		const layer = this.doc.layers.find((item) => item.id === id);
+		if (!layer) return;
+		const next = layer.clipping !== true;
+		if (next) layer.clipping = true;
+		else delete layer.clipping;
+		this.dirty = true;
+		this.modified = true;
+		this.revision++;
+		this.layerAppearanceRevision++;
+	}
+
+	toggleGroupCollapsed(id: string): void {
+		const layer = this.doc.layers.find((item) => item.id === id);
+		if (!layer || !isGroupLayer(layer)) return;
+		const next = layer.collapsed !== true;
+		if (next) layer.collapsed = true;
+		else delete layer.collapsed;
+		this.dirty = true;
+		this.modified = true;
 	}
 
 	deleteSelection(): void {
@@ -2598,7 +2960,7 @@ export class EditorState {
 
 	clearLayer(): void {
 		const layer = this.activeLayer;
-		if (!layer || layer.role === "reference") return;
+		if (!layer || isGroupLayer(layer) || layer.role === "reference") return;
 		this.pushHistoryCel(layer.id, this.activeFrame);
 		const cel = layer.cels[this.activeFrame];
 		if (cel) this.#clearCel(cel);
@@ -2608,7 +2970,7 @@ export class EditorState {
 	clearFrame(): void {
 		const frame = this.activeFrame;
 		const editableLayers = this.doc.layers.filter(
-			(layer) => layer.role !== "reference",
+			(layer) => !isGroupLayer(layer) && layer.role !== "reference",
 		);
 		this.pushHistoryCels(
 			editableLayers.map((layer) => ({ layerId: layer.id, frame })),
@@ -2988,6 +3350,7 @@ export class EditorState {
 			pasted.push(frame);
 			this.doc.frames.splice(target, 0, frame);
 			for (const layer of this.doc.layers) {
+				if (isGroupLayer(layer)) continue;
 				const sourceCel = source.cels.get(layer.id);
 				layer.cels.splice(
 					target,
@@ -3043,6 +3406,7 @@ export class EditorState {
 			duplicated.push(frame);
 			this.doc.frames.splice(target, 0, frame);
 			for (const layer of this.doc.layers) {
+				if (isGroupLayer(layer)) continue;
 				const sourceCel = layer.cels[sourceIndex];
 				layer.cels.splice(
 					target,
@@ -3077,6 +3441,7 @@ export class EditorState {
 			const index = indices[position]!;
 			this.doc.frames.splice(index, 1);
 			for (const layer of this.doc.layers) {
+				if (isGroupLayer(layer)) continue;
 				layer.cels.splice(index, 1);
 			}
 		}
@@ -3151,6 +3516,7 @@ export class EditorState {
 			...order.map((index) => frames[index]!),
 		);
 		for (const layer of this.doc.layers) {
+			if (isGroupLayer(layer)) continue;
 			const cels = layer.cels.slice();
 			layer.cels.splice(
 				0,
@@ -3270,6 +3636,7 @@ export class EditorState {
 		};
 		this.doc.frames.splice(index, 0, frame);
 		for (const layer of this.doc.layers) {
+			if (isGroupLayer(layer)) continue;
 			// A static reference should stay visible on a newly inserted frame.
 			const source =
 				layer.role === "reference" ? layer.cels[this.activeFrame] : undefined;

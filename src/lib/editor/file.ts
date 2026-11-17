@@ -1,8 +1,10 @@
 import { MAX_CANVAS_SIZE } from "./canvas.js";
+import { normalizeBlendMode } from "./blend.js";
 import { normalizeHex } from "./color.js";
 import {
 	MAX_FRAME_DURATION,
 	MIN_FRAME_DURATION,
+	isGroupLayer,
 	normalizeAnimationMode,
 	uid,
 } from "./doc.js";
@@ -24,7 +26,7 @@ export interface LoadedProject {
 
 const MAGIC = [0x50, 0x58, 0x53, 0x50]; // "PXSP"
 /** Only the current format is accepted; this app has no released legacy files. */
-const FORMAT_VERSION = 3;
+const FORMAT_VERSION = 4;
 const METHOD_RAW = 0;
 const METHOD_RLE = 1;
 const HEADER_SIZE = 4 + 1 + 1 + 2 + 2 + 1 + 2 + 2 + 4;
@@ -50,6 +52,11 @@ interface ProjectMeta {
 		opacity: number;
 		role?: "reference";
 		color?: string;
+		isGroup?: boolean;
+		parentId?: string;
+		blendMode?: string;
+		clipping?: boolean;
+		collapsed?: boolean;
 	}[];
 }
 
@@ -247,12 +254,20 @@ export function serializeProject(
 			opacity: layer.opacity,
 			...(layer.role ? { role: layer.role } : {}),
 			...(layer.color ? { color: layer.color } : {}),
+			...(layer.isGroup ? { isGroup: true } : {}),
+			...(layer.parentId ? { parentId: layer.parentId } : {}),
+			...(layer.blendMode && layer.blendMode !== "normal"
+				? { blendMode: layer.blendMode }
+				: {}),
+			...(layer.clipping ? { clipping: true } : {}),
+			...(layer.collapsed ? { collapsed: true } : {}),
 		})),
 	};
 	const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
 
 	const cels: EncodedCel[] = [];
 	for (const layer of doc.layers) {
+		if (isGroupLayer(layer)) continue;
 		for (let frame = 0; frame < frameCount; frame++) {
 			const cel =
 				layer.cels[frame] ?? new Uint32Array(doc.width * doc.height);
@@ -445,22 +460,25 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 	for (let layerIndex = 0; layerIndex < layerCount; layerIndex++) {
 		const rawLayer = meta.layers[layerIndex];
 		if (!rawLayer || typeof rawLayer !== "object") return null;
+		const isGroup = rawLayer.isGroup === true;
 		const cels: Uint32Array[] = [];
-		for (let frame = 0; frame < frameCount; frame++) {
-			if (offset + 5 > bytes.length) return null;
-			const method = view.getUint8(offset++);
-			const length = view.getUint32(offset, true);
-			offset += 4;
-			if (length > bytes.length - offset) return null;
-			const decoded = decodeCel(
-				bytes,
-				offset,
-				length,
-				method,
-				pixelCount,
-			);
-			cels.push(decoded.pixels);
-			offset = decoded.nextOffset;
+		if (!isGroup) {
+			for (let frame = 0; frame < frameCount; frame++) {
+				if (offset + 5 > bytes.length) return null;
+				const method = view.getUint8(offset++);
+				const length = view.getUint32(offset, true);
+				offset += 4;
+				if (length > bytes.length - offset) return null;
+				const decoded = decodeCel(
+					bytes,
+					offset,
+					length,
+					method,
+					pixelCount,
+				);
+				cels.push(decoded.pixels);
+				offset = decoded.nextOffset;
+			}
 		}
 
 		let id =
@@ -469,6 +487,13 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 		usedLayerIds.add(id);
 
 		const color = normalizeLayerColor(rawLayer.color);
+		const blendMode = normalizeBlendMode(rawLayer.blendMode);
+		// A parent must already be parsed (parents precede children), which also
+		// makes malformed or cyclic trees impossible.
+		const parentId =
+			typeof rawLayer.parentId === "string" && usedLayerIds.has(rawLayer.parentId)
+				? rawLayer.parentId
+				: undefined;
 
 		layers.push({
 			id,
@@ -482,6 +507,11 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 			cels,
 			...(rawLayer.role === "reference" ? { role: "reference" as const } : {}),
 			...(color ? { color } : {}),
+			...(isGroup ? { isGroup: true } : {}),
+			...(parentId ? { parentId } : {}),
+			...(blendMode !== "normal" ? { blendMode } : {}),
+			...(rawLayer.clipping === true ? { clipping: true } : {}),
+			...(rawLayer.collapsed === true ? { collapsed: true } : {}),
 		});
 	}
 

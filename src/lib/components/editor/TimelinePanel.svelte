@@ -8,7 +8,12 @@
 	import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste";
 	import Copy from "@lucide/svelte/icons/copy";
 	import Film from "@lucide/svelte/icons/film";
+	import FolderInput from "@lucide/svelte/icons/folder-input";
+	import FolderOutput from "@lucide/svelte/icons/folder-output";
+	import FolderPlus from "@lucide/svelte/icons/folder-plus";
 	import Ghost from "@lucide/svelte/icons/ghost";
+	import IndentDecrease from "@lucide/svelte/icons/indent-decrease";
+	import IndentIncrease from "@lucide/svelte/icons/indent-increase";
 	import Pause from "@lucide/svelte/icons/pause";
 	import Play from "@lucide/svelte/icons/play";
 	import Plus from "@lucide/svelte/icons/plus";
@@ -29,6 +34,7 @@
 	import { Slider } from "$lib/components/ui/slider/index.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
 	import { normalizeAnimationMode } from "$lib/editor/doc.js";
+	import type { Layer } from "$lib/editor/types.js";
 	import {
 		IMAGE_IMPORT_ACCEPT,
 		analyzeImportFile,
@@ -56,6 +62,18 @@
 	let draggingFrames = $state(false);
 	let dragOverIndex = $state<number | null>(null);
 	let dragOverSide = $state<"before" | "after">("before");
+
+	let draggingLayerId = $state<string | null>(null);
+	let dropIndicator = $state<{
+		targetId: string;
+		mode: "before" | "after" | "into";
+	} | null>(null);
+
+	/** Ids of the dragged layer's subtree, used to reject invalid drop targets. */
+	let dragSourceIds = $derived.by(() => {
+		if (!draggingLayerId) return null;
+		return editor.layerSubtreeIds(draggingLayerId);
+	});
 
 	const ONION_TINT_PRESETS = [
 		{ id: "red-green", label: "Red / green", previous: "#ef4444", next: "#22c55e" },
@@ -137,12 +155,15 @@
 		Math.max(0, editor.doc.frames.length - 1 - lastFrame),
 	);
 
+	/** Layers in display (top-to-bottom) order, as the table renders them. */
+	let displayLayers = $derived(editor.timelineLayers);
+
 	let firstLayer = $derived(
 		Math.max(0, Math.floor(scrollTop / LAYER_ROW_HEIGHT) - OVERSCAN),
 	);
 	let lastLayer = $derived(
 		Math.min(
-			editor.doc.layers.length - 1,
+			displayLayers.length - 1,
 			Math.max(
 				firstLayer,
 				Math.ceil((scrollTop + viewportHeight) / LAYER_ROW_HEIGHT) +
@@ -151,9 +172,6 @@
 			),
 		),
 	);
-
-	/** Layers in display (top-to-bottom) order, as the table renders them. */
-	let displayLayers = $derived([...editor.doc.layers].reverse());
 	let visibleLayers = $derived(
 		lastLayer >= firstLayer
 			? displayLayers.slice(firstLayer, lastLayer + 1)
@@ -161,7 +179,7 @@
 	);
 	let leadingLayerRows = $derived(firstLayer);
 	let trailingLayerRows = $derived(
-		Math.max(0, editor.doc.layers.length - 1 - lastLayer),
+		Math.max(0, displayLayers.length - 1 - lastLayer),
 	);
 
 	let windowedTagGroups = $derived.by(() => {
@@ -396,6 +414,38 @@
 		dragOverIndex = null;
 	}
 
+	function beginLayerDrag(event: DragEvent, layer: Layer): void {
+		editor.selectLayer(layer.id);
+		draggingLayerId = layer.id;
+		dropIndicator = null;
+		if (event.dataTransfer) {
+			event.dataTransfer.effectAllowed = "move";
+			event.dataTransfer.setData("text/plain", layer.id);
+		}
+	}
+
+	function updateLayerDrop(layer: Layer, mode: "before" | "after" | "into" | null): void {
+		dropIndicator =
+			mode === null ? null : { targetId: layer.id, mode };
+	}
+
+	function finishLayerDrop(layer: Layer, mode: "before" | "after" | "into"): void {
+		const dragged = draggingLayerId;
+		draggingLayerId = null;
+		dropIndicator = null;
+		if (!dragged || dragged === layer.id) return;
+		if (mode === "into") {
+			editor.moveLayerTo(dragged, { kind: "into", groupId: layer.id });
+		} else {
+			editor.moveLayerTo(dragged, { kind: mode, refId: layer.id });
+		}
+	}
+
+	function endLayerDrag(): void {
+		draggingLayerId = null;
+		dropIndicator = null;
+	}
+
 	function tagHue(tag: string): number {
 		let hash = 0;
 		for (let index = 0; index < tag.length; index++) {
@@ -475,6 +525,16 @@
 			variant="ghost"
 			size="icon-xs"
 			class="text-muted-foreground"
+			onclick={() => editor.addGroup()}
+			title="New group"
+			aria-label="New group"
+		>
+			<FolderPlus class="size-3.5" />
+		</Button>
+		<Button
+			variant="ghost"
+			size="icon-xs"
+			class="text-muted-foreground"
 			onclick={() => referenceInput?.click()}
 			disabled={referenceLoading}
 			title="Add or replace reference layer from image"
@@ -491,6 +551,27 @@
 			aria-label="Duplicate layer"
 		>
 			<Copy class="size-3.5" />
+		</Button>
+		<Button
+			variant="ghost"
+			size="icon-xs"
+			class="text-muted-foreground"
+			onclick={() => editor.groupActiveLayer()}
+			title="Group active layer"
+			aria-label="Group active layer"
+		>
+			<FolderInput class="size-3.5" />
+		</Button>
+		<Button
+			variant="ghost"
+			size="icon-xs"
+			class="text-muted-foreground"
+			onclick={() => editor.ungroupLayer()}
+			disabled={!editor.activeLayer.isGroup}
+			title="Ungroup"
+			aria-label="Ungroup"
+		>
+			<FolderOutput class="size-3.5" />
 		</Button>
 		<Button
 			variant="ghost"
@@ -515,9 +596,30 @@
 		<Button
 			variant="ghost"
 			size="icon-xs"
+			class="text-muted-foreground"
+			onclick={() => editor.indentActiveLayer()}
+			title="Move into group above"
+			aria-label="Move into group above"
+		>
+			<IndentIncrease class="size-3.5" />
+		</Button>
+		<Button
+			variant="ghost"
+			size="icon-xs"
+			class="text-muted-foreground"
+			onclick={() => editor.outdentActiveLayer()}
+			disabled={!editor.activeLayer.parentId}
+			title="Move out of group"
+			aria-label="Move out of group"
+		>
+			<IndentDecrease class="size-3.5" />
+		</Button>
+		<Button
+			variant="ghost"
+			size="icon-xs"
 			class="text-muted-foreground hover:text-destructive"
 			onclick={() => editor.deleteLayer()}
-			disabled={editor.doc.layers.length <= 1}
+			disabled={!editor.canDeleteLayer}
 			title="Delete layer"
 			aria-label="Delete layer"
 		>
@@ -981,12 +1083,24 @@
 						></td>
 					</tr>
 				{/if}
-				{#each visibleLayers as layer (layer.id)}
+				{#each visibleLayers as row (row.layer.id)}
+					{@const isSource = dragSourceIds?.has(row.layer.id) ?? false}
 					<TimelineLayerRow
-						{layer}
+						layer={row.layer}
+						depth={row.depth}
+						last={row.last}
+						dragging={draggingLayerId !== null}
+						isDragSource={isSource}
+						dropMode={dropIndicator?.targetId === row.layer.id
+							? dropIndicator.mode
+							: null}
 						firstFrame={firstFrame}
 						lastFrame={lastFrame}
 						onFrameContextMenu={openFrameContextMenu}
+						onDragStart={(event) => beginLayerDrag(event, row.layer)}
+						onDragOver={(mode) => updateLayerDrop(row.layer, mode)}
+						onDrop={(mode) => finishLayerDrop(row.layer, mode)}
+						onDragEnd={endLayerDrag}
 					/>
 				{/each}
 				{#if trailingLayerRows > 0}

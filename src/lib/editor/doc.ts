@@ -1,7 +1,9 @@
+import { blendPixelPacked, normalizeBlendMode } from "./blend.js";
 import { packColor } from "./color.js";
 import type {
 	AnimationMode,
 	BackgroundKind,
+	BlendMode,
 	Layer,
 	LayerRole,
 	PixelDoc,
@@ -35,6 +37,95 @@ export function createLayer(
 /** True for timeline reference layers, which cannot be drawn on. */
 export function isReferenceLayer(layer: Layer): boolean {
 	return layer.role === "reference";
+}
+
+/** True for group container nodes, which hold no pixels of their own. */
+export function isGroupLayer(layer: Layer): boolean {
+	return layer.isGroup === true;
+}
+
+/** Creates a group container node. Groups store no cels of their own. */
+export function createGroup(
+	name: string,
+	parentId?: string,
+	blendMode: BlendMode = "normal",
+): Layer {
+	return {
+		id: uid("group"),
+		name,
+		visible: true,
+		locked: false,
+		opacity: 1,
+		cels: [],
+		isGroup: true,
+		...(parentId ? { parentId } : {}),
+		...(blendMode !== "normal" ? { blendMode } : {}),
+	};
+}
+
+/** A layer (or group) node resolved from the flat layer list. */
+export interface LayerNode {
+	layer: Layer;
+	children: LayerNode[];
+}
+
+/** Builds the layer tree from a flat, bottom-to-top `doc.layers` array. */
+export function buildLayerTree(layers: readonly Layer[]): {
+	roots: LayerNode[];
+	byId: Map<string, LayerNode>;
+} {
+	const byId = new Map<string, LayerNode>();
+	for (const layer of layers) byId.set(layer.id, { layer, children: [] });
+	const roots: LayerNode[] = [];
+	for (const layer of layers) {
+		const node = byId.get(layer.id)!;
+		const parent = layer.parentId ? byId.get(layer.parentId) : undefined;
+		if (parent && parent !== node) parent.children.push(node);
+		else roots.push(node);
+	}
+	return { roots, byId };
+}
+
+/** A row in the timeline's flattened, top-to-bottom layer list. */
+export interface LayerRow {
+	layer: Layer;
+	depth: number;
+	/** True when this row is the last child of its parent (bottom of the group). */
+	last: boolean;
+}
+
+/**
+ * Flattens the layer tree into timeline display order (top first), expanding
+ * groups in place and honoring each group's collapse state.
+ */
+export function flattenLayersTopFirst(layers: readonly Layer[]): LayerRow[] {
+	const { roots } = buildLayerTree(layers);
+	const rows: LayerRow[] = [];
+
+	const visit = (node: LayerNode, depth: number, last: boolean): void => {
+		rows.push({ layer: node.layer, depth, last });
+		if (node.layer.collapsed) return;
+		for (let index = node.children.length - 1; index >= 0; index--) {
+			visit(node.children[index]!, depth + 1, index === 0);
+		}
+	};
+
+	for (let index = roots.length - 1; index >= 0; index--) {
+		visit(roots[index]!, 0, index === 0);
+	}
+	return rows;
+}
+
+/**
+ * True when a document uses any tree/blend feature that prevents the flat
+ * incremental compositing path from being correct.
+ */
+export function hasCompositeFeatures(doc: PixelDoc): boolean {
+	for (const layer of doc.layers) {
+		if (layer.isGroup || layer.clipping) return true;
+		if (layer.blendMode && layer.blendMode !== "normal") return true;
+	}
+	return false;
 }
 
 export function createDoc(
@@ -133,6 +224,13 @@ export function cloneDoc(doc: PixelDoc): PixelDoc {
 			cels: layer.cels.map((cel) => new Uint32Array(cel)),
 			...(layer.role ? { role: layer.role } : {}),
 			...(layer.color ? { color: layer.color } : {}),
+			...(layer.isGroup ? { isGroup: true } : {}),
+			...(layer.parentId ? { parentId: layer.parentId } : {}),
+			...(layer.blendMode && layer.blendMode !== "normal"
+				? { blendMode: layer.blendMode }
+				: {}),
+			...(layer.clipping ? { clipping: true } : {}),
+			...(layer.collapsed ? { collapsed: true } : {}),
 		})),
 		// Reference bytes are immutable, so history and project snapshots can
 		// share them while cloning the small transform metadata.
@@ -181,7 +279,7 @@ function blendPixelSlow(
 	return (((a & 0xff) << 24) | (b << 16) | (g << 8) | r) >>> 0;
 }
 
-/** One visible layer participating in a composite, pre-resolved to its cel. */
+/** One visible layer participating in a flat composite, pre-resolved to its cel. */
 interface CompositeLayer {
 	id: string;
 	cel: Uint32Array;
@@ -189,9 +287,11 @@ interface CompositeLayer {
 }
 
 /**
- * Resolves the ordered list of visible layers that participate in a composite.
- * Reference layers are excluded by default so every export path is safe; pass
- * `includeReferences` for viewport rendering only.
+ * Resolves the ordered list of visible, flat layers that participate in a
+ * composite. Only used by the incremental fast path, which is limited to
+ * documents without groups, blend modes, or clipping. Reference layers are
+ * excluded by default so every export path is safe; pass `includeReferences`
+ * for viewport rendering only.
  */
 function compositeLayers(
 	doc: PixelDoc,
@@ -200,6 +300,7 @@ function compositeLayers(
 ): CompositeLayer[] {
 	const layers: CompositeLayer[] = [];
 	for (const layer of doc.layers) {
+		if (isGroupLayer(layer)) continue;
 		if (!includeReferences && layer.role === "reference") continue;
 		if (!layer.visible || layer.opacity <= 0) continue;
 		const cel = layer.cels[frameIndex];
@@ -207,38 +308,111 @@ function compositeLayers(
 		layers.push({
 			id: layer.id,
 			cel,
-			opacityByte: Math.max(0, Math.min(255, Math.round(layer.opacity * 255))),
+			opacityByte: opacityByteOf(layer),
 		});
 	}
 	return layers;
 }
 
-/** Blends one layer cel over `output` in place. */
+function opacityByteOf(layer: Layer): number {
+	return Math.max(0, Math.min(255, Math.round(layer.opacity * 255)));
+}
+
+/** Blends one buffer over `output` in place with an optional blend mode/clip. */
 function blendLayerInto(
 	output: Uint32Array,
 	cel: Uint32Array,
 	count: number,
 	opacityByte: number,
+	mode: BlendMode = "normal",
+	clipping = false,
 ): void {
+	if (mode === "normal" && !clipping) {
+		for (let index = 0; index < count; index++) {
+			const source = cel[index]!;
+			const sourceAlpha = source >>> 24;
+			if (sourceAlpha === 0) continue;
+			const sa = ALPHA_PRODUCT[(sourceAlpha << 8) | opacityByte]!;
+			if (sa === 0) continue;
+
+			const destination = output[index]!;
+			const destinationAlpha = destination >>> 24;
+			if (destinationAlpha === 0) {
+				output[index] = ((sa << 24) | (source & 0x00ffffff)) >>> 0;
+				continue;
+			}
+			if (sa === 255) {
+				output[index] = (0xff000000 | (source & 0x00ffffff)) >>> 0;
+				continue;
+			}
+			output[index] = blendPixelSlow(source, destination, sa);
+		}
+		return;
+	}
+
 	for (let index = 0; index < count; index++) {
 		const source = cel[index]!;
 		const sourceAlpha = source >>> 24;
 		if (sourceAlpha === 0) continue;
-		const sa = ALPHA_PRODUCT[(sourceAlpha << 8) | opacityByte]!;
+		let sa = ALPHA_PRODUCT[(sourceAlpha << 8) | opacityByte]!;
 		if (sa === 0) continue;
 
 		const destination = output[index]!;
-		const destinationAlpha = destination >>> 24;
-		if (destinationAlpha === 0) {
-			output[index] = ((sa << 24) | (source & 0x00ffffff)) >>> 0;
-			continue;
+		if (clipping) {
+			sa = ALPHA_PRODUCT[(sa << 8) | (destination >>> 24)]!;
+			if (sa === 0) continue;
 		}
-		if (sa === 255) {
-			output[index] = (0xff000000 | (source & 0x00ffffff)) >>> 0;
-			continue;
-		}
-		output[index] = blendPixelSlow(source, destination, sa);
+		output[index] = blendPixelPacked(mode, source, destination, sa);
 	}
+}
+
+/** Composites one node (and its subtree) into `output` in place. */
+function compositeNodeInto(
+	node: LayerNode,
+	doc: PixelDoc,
+	frameIndex: number,
+	includeReferences: boolean,
+	output: Uint32Array,
+	count: number,
+): void {
+	const layer = node.layer;
+
+	if (isGroupLayer(layer)) {
+		if (!layer.visible || layer.opacity <= 0) return;
+		const groupBuffer = new Uint32Array(count);
+		for (const child of node.children) {
+			compositeNodeInto(
+				child,
+				doc,
+				frameIndex,
+				includeReferences,
+				groupBuffer,
+				count,
+			);
+		}
+		blendLayerInto(
+			output,
+			groupBuffer,
+			count,
+			opacityByteOf(layer),
+			layer.blendMode ?? "normal",
+			layer.clipping === true,
+		);
+		return;
+	}
+
+	if (!includeReferences && layer.role === "reference") return;
+	if (!layer.visible || layer.opacity <= 0) return;
+	const cel = layer.cels[frameIndex];
+	if (!cel) return;
+	blendLayerInto(
+		output,
+		cel,
+		count,
+		opacityByteOf(layer),
+		layer.blendMode ?? "normal",
+		layer.clipping === true,
+	);
 }
 
 /**
@@ -256,11 +430,53 @@ export function compositeFrame(
 	const count = doc.width * doc.height;
 	const output = new Uint32Array(count);
 
-	for (const layer of compositeLayers(doc, frameIndex, includeReferences)) {
-		blendLayerInto(output, layer.cel, count, layer.opacityByte);
+	const { roots } = buildLayerTree(doc.layers);
+	for (const root of roots) {
+		compositeNodeInto(root, doc, frameIndex, includeReferences, output, count);
 	}
 
 	return output;
+}
+
+/** Blends one source pixel over `output` with the node's opacity/blend/clip. */
+function blendPixelInto(layer: Layer, source: number, output: number): number {
+	const sourceAlpha = source >>> 24;
+	if (sourceAlpha === 0) return output;
+	let sa = ALPHA_PRODUCT[(sourceAlpha << 8) | opacityByteOf(layer)]!;
+	if (sa === 0) return output;
+	if (layer.clipping) {
+		sa = ALPHA_PRODUCT[(sa << 8) | (output >>> 24)]!;
+		if (sa === 0) return output;
+	}
+	return blendPixelPacked(layer.blendMode ?? "normal", source, output, sa);
+}
+
+/** Composites one node's subtree into a single pixel. */
+function blendNodePixelInto(
+	node: LayerNode,
+	doc: PixelDoc,
+	frameIndex: number,
+	index: number,
+	output: number,
+): number {
+	const layer = node.layer;
+
+	if (isGroupLayer(layer)) {
+		if (!layer.visible || layer.opacity <= 0) return output;
+		let acc = 0;
+		for (const child of node.children) {
+			acc = blendNodePixelInto(child, doc, frameIndex, index, acc);
+		}
+		if (acc === 0) return output;
+		return blendPixelInto(layer, acc, output);
+	}
+
+	if (!layer.visible || layer.opacity <= 0) return output;
+	const cel = layer.cels[frameIndex];
+	if (!cel) return output;
+	const source = cel[index];
+	if (source === undefined) return output;
+	return blendPixelInto(layer, source, output);
 }
 
 /** Composites a single pixel; used by the eyedropper instead of a full frame. */
@@ -272,33 +488,12 @@ export function compositePixel(
 ): number {
 	if (x < 0 || x >= doc.width || y < 0 || y >= doc.height) return 0;
 	const index = y * doc.width + x;
+
+	const { roots } = buildLayerTree(doc.layers);
 	let output = 0;
-
-	for (const layer of doc.layers) {
-		if (!layer.visible || layer.opacity <= 0) continue;
-		const cel = layer.cels[frameIndex];
-		if (!cel) continue;
-		const source = cel[index]!;
-		const sourceAlpha = source >>> 24;
-		if (sourceAlpha === 0) continue;
-		const opacityByte = Math.max(
-			0,
-			Math.min(255, Math.round(layer.opacity * 255)),
-		);
-		const sa = ALPHA_PRODUCT[(sourceAlpha << 8) | opacityByte]!;
-		if (sa === 0) continue;
-		const destinationAlpha = output >>> 24;
-		if (destinationAlpha === 0) {
-			output = ((sa << 24) | (source & 0x00ffffff)) >>> 0;
-			continue;
-		}
-		if (sa === 255) {
-			output = (0xff000000 | (source & 0x00ffffff)) >>> 0;
-			continue;
-		}
-		output = blendPixelSlow(source, output, sa);
+	for (const root of roots) {
+		output = blendNodePixelInto(root, doc, frameIndex, index, output);
 	}
-
 	return output;
 }
 
@@ -427,6 +622,12 @@ export function compositeFrameCachedIncremental(
 	appearanceRevision: number,
 	editedLayerId: string | null,
 ): Uint32Array {
+	// The flat prefix path is only correct without groups, blend modes, and
+	// clipping; fall back to a full composite when any of those are present.
+	if (hasCompositeFeatures(doc)) {
+		return compositeFrame(doc, frameIndex, includeReferences);
+	}
+
 	const count = doc.width * doc.height;
 	const layers = compositeLayers(doc, frameIndex, includeReferences);
 
