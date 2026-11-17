@@ -1,5 +1,6 @@
 <script lang="ts">
 	import ArrowLeft from "@lucide/svelte/icons/arrow-left";
+	import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
 	import ArrowRight from "@lucide/svelte/icons/arrow-right";
 	import ChevronDown from "@lucide/svelte/icons/chevron-down";
 	import ChevronUp from "@lucide/svelte/icons/chevron-up";
@@ -12,6 +13,7 @@
 	import Play from "@lucide/svelte/icons/play";
 	import Plus from "@lucide/svelte/icons/plus";
 	import Repeat from "@lucide/svelte/icons/repeat";
+	import RepeatOff from "@lucide/svelte/icons/repeat-off";
 	import ScanEye from "@lucide/svelte/icons/scan-eye";
 	import Settings2 from "@lucide/svelte/icons/settings-2";
 	import SkipBack from "@lucide/svelte/icons/skip-back";
@@ -26,6 +28,7 @@
 	import { Separator } from "$lib/components/ui/separator/index.js";
 	import { Slider } from "$lib/components/ui/slider/index.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
+	import { normalizeAnimationMode } from "$lib/editor/doc.js";
 	import {
 		IMAGE_IMPORT_ACCEPT,
 		analyzeImportFile,
@@ -60,6 +63,17 @@
 		{ id: "violet-teal", label: "Violet / teal", previous: "#8b5cf6", next: "#14b8a6" },
 		{ id: "grayscale", label: "Grayscale", previous: "#71717a", next: "#a1a1aa" },
 	];
+
+	const ANIMATION_MODE_OPTIONS = [
+		{ id: "forward", label: "Forward" },
+		{ id: "backward", label: "Backward" },
+		{ id: "ping-pong", label: "Ping-pong" },
+	] as const;
+
+	let animationModeLabel = $derived(
+		ANIMATION_MODE_OPTIONS.find((option) => option.id === editor.animationMode)
+			?.label ?? "Forward",
+	);
 
 	let tagGroups = $derived.by(() => {
 		const frames = editor.doc.frames;
@@ -251,16 +265,23 @@
 		if (!editor.playing) return;
 		if (editor.doc.frames.length <= 1) return;
 
-		// Track timing and range inputs so playback restarts when they change,
-		// but not activeFrame (the timer owns that while playing).
+		// Track everything that defines the playback sequence so changing the
+		// selection, mode, loop setting, or timing restarts it.
 		editor.doc.fps;
-		editor.doc.loopStart;
-		editor.doc.loopEnd;
+		editor.doc.animationMode;
+		editor.doc.animationLoop;
+		editor.frameSelection;
 		editor.doc.frames.map((frame) => frame.duration ?? 0).join(",");
+
+		untrack(() => editor.preparePlayback());
 
 		let timer: number | undefined;
 		const tick = (): void => {
 			const frame = editor.nextPlaybackFrame();
+			if (frame === null) {
+				editor.stopPlayback();
+				return;
+			}
 			editor.selectFrame(frame, { preserveSelection: true });
 			timer = window.setTimeout(
 				tick,
@@ -660,51 +681,6 @@
 			</DropdownMenu.Content>
 		</DropdownMenu.Root>
 
-		<DropdownMenu.Root>
-			<DropdownMenu.Trigger
-				class={cn(
-					"grid size-7 place-items-center rounded-md outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
-					editor.hasLoopRange
-						? "bg-secondary text-foreground"
-						: "text-muted-foreground",
-				)}
-				aria-label="Loop range settings"
-				title="Loop range"
-			>
-				<Repeat class="size-3.5" />
-			</DropdownMenu.Trigger>
-			<DropdownMenu.Content class="w-56" align="start">
-				<DropdownMenu.Label>
-					{editor.hasLoopRange
-						? `Loop frames ${editor.loopRange.start + 1}–${editor.loopRange.end + 1}`
-						: "Loop: whole animation"}
-				</DropdownMenu.Label>
-				<DropdownMenu.Item
-					onSelect={() => editor.setLoopRangeToSelection()}
-					disabled={editor.selectedFrameCount === 0}
-				>
-					Use selected frames
-				</DropdownMenu.Item>
-				<DropdownMenu.Item
-					onSelect={() => editor.setLoopStartAt(editor.activeFrame)}
-				>
-					Start at active frame
-				</DropdownMenu.Item>
-				<DropdownMenu.Item
-					onSelect={() => editor.setLoopEndAt(editor.activeFrame)}
-				>
-					End at active frame
-				</DropdownMenu.Item>
-				<DropdownMenu.Separator />
-				<DropdownMenu.Item
-					onSelect={() => editor.clearLoopRange()}
-					disabled={!editor.hasLoopRange}
-				>
-					Clear loop range
-				</DropdownMenu.Item>
-			</DropdownMenu.Content>
-		</DropdownMenu.Root>
-
 		<div class="ml-auto flex items-center gap-0.5">
 			<Button
 				variant="ghost"
@@ -754,6 +730,58 @@
 				/>
 				<span>fps</span>
 			</div>
+
+			<DropdownMenu.Root>
+				<DropdownMenu.Trigger
+					class="ml-0.5 flex h-6 items-center gap-1 rounded-md px-1.5 text-[10px] text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+					aria-label={`Animation mode: ${animationModeLabel}`}
+					title={`Animation mode: ${animationModeLabel}`}
+				>
+					{#if editor.animationMode === "forward"}
+						<ArrowRight class="size-3.5" />
+					{:else if editor.animationMode === "backward"}
+						<ArrowLeft class="size-3.5" />
+					{:else}
+						<ArrowLeftRight class="size-3.5" />
+					{/if}
+					<span class="hidden sm:inline">{animationModeLabel}</span>
+					<ChevronDown class="size-3" />
+				</DropdownMenu.Trigger>
+				<DropdownMenu.Content class="w-48" align="start">
+					<DropdownMenu.Label>Animation mode</DropdownMenu.Label>
+					<DropdownMenu.RadioGroup
+						value={editor.animationMode}
+						onValueChange={(value) =>
+							editor.setAnimationMode(normalizeAnimationMode(value))}
+					>
+						{#each ANIMATION_MODE_OPTIONS as option (option.id)}
+							<DropdownMenu.RadioItem value={option.id} closeOnSelect>
+								{option.label}
+							</DropdownMenu.RadioItem>
+						{/each}
+					</DropdownMenu.RadioGroup>
+				</DropdownMenu.Content>
+			</DropdownMenu.Root>
+
+			<Button
+				variant={editor.animationLoop ? "secondary" : "ghost"}
+				size="icon-xs"
+				class="text-muted-foreground"
+				onclick={() => editor.setAnimationLoop(!editor.animationLoop)}
+				title={editor.animationLoop
+					? "Loop animation: on"
+					: "Loop animation: off"}
+				aria-label={editor.animationLoop
+					? "Disable animation looping"
+					: "Enable animation looping"}
+				aria-pressed={editor.animationLoop}
+			>
+				{#if editor.animationLoop}
+					<Repeat class="size-3.5" />
+				{:else}
+					<RepeatOff class="size-3.5" />
+				{/if}
+			</Button>
 		</div>
 	</header>
 
@@ -863,10 +891,6 @@
 					{#each visibleFrames as frame, offset (frame.id)}
 						{@const index = firstFrame + offset}
 						{@const selected = editor.isFrameSelected(index)}
-						{@const inLoop =
-							editor.hasLoopRange &&
-							index >= editor.loopRange.start &&
-							index <= editor.loopRange.end}
 						<th
 							scope="col"
 							class="sticky top-6 z-20 h-8 w-14 min-w-14 border-b border-r bg-background p-0 align-middle"
@@ -907,12 +931,6 @@
 								>
 									{Math.round(editor.frameDurationAt(index))}
 								</span>
-								{#if inLoop}
-									<span
-										class="pointer-events-none absolute inset-x-1 bottom-0.5 h-0.5 rounded-full bg-amber-400"
-										aria-hidden="true"
-									></span>
-								{/if}
 								{#if dragOverIndex === index}
 									<span
 										class={cn(
@@ -1070,52 +1088,6 @@
 		>
 			<ArrowRight class="size-3.5 text-muted-foreground" />
 			Move frames right
-		</button>
-
-		<div class="my-1 h-px bg-border"></div>
-
-		<button
-			type="button"
-			role="menuitem"
-			class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40"
-			onclick={() => runMenuAction(() => editor.setLoopRangeToSelection())}
-			disabled={editor.selectedFrameCount === 0}
-		>
-			<Repeat class="size-3.5 text-muted-foreground" />
-			Loop selected frames
-		</button>
-		<button
-			type="button"
-			role="menuitem"
-			class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40"
-			onclick={() =>
-				runMenuAction(() =>
-					editor.setLoopStartAt(contextMenu!.frameIndex),
-				)}
-		>
-			<Repeat class="size-3.5 text-muted-foreground" />
-			Loop start here
-		</button>
-		<button
-			type="button"
-			role="menuitem"
-			class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40"
-			onclick={() =>
-				runMenuAction(() => editor.setLoopEndAt(contextMenu!.frameIndex))
-			}
-		>
-			<Repeat class="size-3.5 text-muted-foreground" />
-			Loop end here
-		</button>
-		<button
-			type="button"
-			role="menuitem"
-			class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40"
-			onclick={() => runMenuAction(() => editor.clearLoopRange())}
-			disabled={!editor.hasLoopRange}
-		>
-			<Repeat class="size-3.5 text-muted-foreground" />
-			Clear loop range
 		</button>
 
 		<div class="my-1 h-px bg-border"></div>

@@ -101,6 +101,9 @@ export interface ReferenceImage {
 	locked: boolean;
 }
 
+/** Order the animation is played in. */
+export type AnimationMode = "forward" | "backward" | "ping-pong";
+
 export interface PixelDoc {
 	width: number;
 	height: number;
@@ -110,9 +113,10 @@ export interface PixelDoc {
 	layers: Layer[];
 	/** Project-level reference board images. */
 	references: ReferenceImage[];
-	/** Inclusive playback/export range; missing means the whole animation. */
-	loopStart?: number;
-	loopEnd?: number;
+	/** Playback order; missing means forward. */
+	animationMode?: AnimationMode;
+	/** Whether playback repeats; missing means true. */
+	animationLoop?: boolean;
 }
 
 export interface ProjectTab {

@@ -15,11 +15,12 @@ import { isTransparent, normalizeHex, packColor, rgbToHex, unpackColor } from ".
 import {
 	MAX_FRAME_DURATION,
 	MIN_FRAME_DURATION,
+	animationSequence,
 	cloneDoc,
 	createDoc,
 	createLayer,
 	frameDurationMs,
-	loopRangeOf,
+	normalizeAnimationMode,
 	uid,
 } from "./doc.js";
 import {
@@ -59,6 +60,7 @@ import {
 	type PaletteCycleRange,
 } from "./palette-cycle.js";
 import type {
+	AnimationMode,
 	BackgroundKind,
 	ColorSlot,
 	Frame,
@@ -311,6 +313,8 @@ export class EditorState {
 	#clipboard: SelectionClipboard | null = null;
 	#frameClipboard: FrameClipboard | null = null;
 	#frameAnchorId: string | null = this.doc.frames[0]!.id;
+	#playbackSequence: number[] = [];
+	#playbackCursor = -1;
 
 	constructor() {
 		const id = uid("project");
@@ -440,13 +444,34 @@ export class EditorState {
 		return this.selectedFrameIndices.length;
 	}
 
-	get loopRange(): { start: number; end: number } {
-		return loopRangeOf(this.doc);
+	/** Playback order of the animation. */
+	get animationMode(): AnimationMode {
+		return normalizeAnimationMode(this.doc.animationMode);
 	}
 
-	get hasLoopRange(): boolean {
-		const range = loopRangeOf(this.doc);
-		return range.start > 0 || range.end < this.doc.frames.length - 1;
+	/** Whether playback repeats after the sequence ends. */
+	get animationLoop(): boolean {
+		return this.doc.animationLoop !== false;
+	}
+
+	/**
+	 * Frames included in the animation. A single selected frame means the whole
+	 * timeline; two or more selected frames restrict playback and export to the
+	 * selection, in timeline order.
+	 */
+	get animationFrameIndices(): number[] {
+		const selected = this.selectedFrameIndices;
+		if (selected.length >= 2) return selected;
+		return this.doc.frames.map((_, index) => index);
+	}
+
+	/** Frame order the playback timer walks, including ping-pong reversal. */
+	get animationSequence(): number[] {
+		return animationSequence(
+			this.animationFrameIndices,
+			this.animationMode,
+			this.animationLoop,
+		);
 	}
 
 	/** Neighboring frames drawn as onion skins around the active frame. */
@@ -458,8 +483,6 @@ export class EditorState {
 		if (!this.onionEnabled || this.playing || this.doc.frames.length <= 1) {
 			return [];
 		}
-		const range = loopRangeOf(this.doc);
-		if (range.end <= range.start) return [];
 
 		const skins: {
 			frame: number;
@@ -467,6 +490,7 @@ export class EditorState {
 			distance: number;
 		}[] = [];
 		const seen = new Set<number>([this.activeFrame]);
+		const frameCount = this.doc.frames.length;
 
 		const walk = (direction: "previous" | "next"): void => {
 			if (direction === "previous" && !this.onionShowPrevious) return;
@@ -476,12 +500,8 @@ export class EditorState {
 			for (let distance = 1; distance <= this.onionRange; distance++) {
 				index =
 					direction === "previous"
-						? index - 1 < range.start
-							? range.end
-							: index - 1
-						: index + 1 > range.end
-							? range.start
-							: index + 1;
+						? (index - 1 + frameCount) % frameCount
+						: (index + 1) % frameCount;
 				if (seen.has(index)) break;
 				seen.add(index);
 				skins.push({ frame: index, direction, distance });
@@ -1125,14 +1145,14 @@ export class EditorState {
 	 * Inserts one full palette-cycle pass as new frames after the active frame.
 	 * Every frame gets its own rotated copy of the active frame's cels, plus the
 	 * requested duration and tag, so PNG, spritesheet, and GIF export animate
-	 * without needing to store cycling metadata. Returns the inserted count.
+	 * without needing to store cycling metadata. The generated frames become the
+	 * current selection, which also makes them the animation range. Returns the
+	 * inserted count.
 	 */
 	generatePaletteCycleAnimation(options: {
 		steps: number;
 		durationMs?: number;
 		tag?: string;
-		/** Restrict the document loop range to the generated frames. */
-		loop?: boolean;
 	}): number {
 		const range = this.paletteCycleRange;
 		if (!range) return 0;
@@ -1156,7 +1176,6 @@ export class EditorState {
 		const height = this.doc.height;
 
 		this.pushHistory();
-		this.#shiftLoopForInsert(insertAt, count);
 
 		const inserted: Frame[] = [];
 		for (let step = 0; step < count; step++) {
@@ -1187,11 +1206,6 @@ export class EditorState {
 				}
 				layer.cels.splice(target, 0, pixels);
 			}
-		}
-
-		if (options.loop) {
-			this.doc.loopStart = insertAt;
-			this.doc.loopEnd = insertAt + count - 1;
 		}
 
 		this.activeFrame = insertAt;
@@ -2074,7 +2088,6 @@ export class EditorState {
 				? { duration: sourceFrame.duration }
 				: {}),
 		};
-		this.#shiftLoopForInsert(index, 1);
 		this.doc.frames.splice(index, 0, frame);
 		for (const layer of this.doc.layers) {
 			const source =
@@ -2881,40 +2894,6 @@ export class EditorState {
 		return output;
 	}
 
-	#shiftLoopForInsert(index: number, count: number): void {
-		if (!this.hasLoopRange) return;
-		const start = this.doc.loopStart ?? 0;
-		const end = this.doc.loopEnd ?? this.doc.frames.length - 1;
-		if (index <= start) {
-			this.doc.loopStart = start + count;
-			this.doc.loopEnd = end + count;
-		} else if (index <= end) {
-			this.doc.loopEnd = end + count;
-		}
-	}
-
-	#shiftLoopForDelete(indices: readonly number[]): void {
-		if (!this.hasLoopRange) return;
-		const start = this.doc.loopStart ?? 0;
-		const end = this.doc.loopEnd ?? this.doc.frames.length - 1;
-		let before = 0;
-		let within = 0;
-		for (const index of indices) {
-			if (index < start) before++;
-			else if (index <= end) within++;
-		}
-		if (before === 0 && within === 0) return;
-		const nextStart = start - before;
-		const nextEnd = end - before - within;
-		if (nextEnd < nextStart) {
-			this.doc.loopStart = undefined;
-			this.doc.loopEnd = undefined;
-		} else {
-			this.doc.loopStart = nextStart;
-			this.doc.loopEnd = nextEnd;
-		}
-	}
-
 	copyFrames(): boolean {
 		const indices = this.selectedFrameIndices;
 		if (indices.length === 0) return false;
@@ -2959,7 +2938,6 @@ export class EditorState {
 		const height = this.doc.height;
 
 		this.pushHistory();
-		this.#shiftLoopForInsert(insertAt, clipboard.frames.length);
 		const pasted: Frame[] = [];
 		for (const [offset, source] of clipboard.frames.entries()) {
 			const target = insertAt + offset;
@@ -3014,7 +2992,6 @@ export class EditorState {
 		const dy = Number.isFinite(offsetY) ? Math.round(offsetY) : 0;
 
 		this.pushHistory();
-		this.#shiftLoopForInsert(insertAt, indices.length);
 		const duplicated: Frame[] = [];
 		for (const [offset, sourceIndex] of indices.entries()) {
 			const source = this.doc.frames[sourceIndex]!;
@@ -3059,7 +3036,6 @@ export class EditorState {
 
 		const activeId = this.doc.frames[this.activeFrame]?.id;
 		this.pushHistory();
-		this.#shiftLoopForDelete(indices);
 		for (let position = indices.length - 1; position >= 0; position--) {
 			const index = indices[position]!;
 			this.doc.frames.splice(index, 1);
@@ -3193,58 +3169,55 @@ export class EditorState {
 		}
 	}
 
-	setLoopRange(start: number, end: number): void {
-		const last = this.doc.frames.length - 1;
-		const a = clamp(Math.round(start), 0, last);
-		const b = clamp(Math.round(end), 0, last);
-		const nextStart = Math.min(a, b);
-		const nextEnd = Math.max(a, b);
-		if (
-			this.doc.loopStart === nextStart &&
-			this.doc.loopEnd === nextEnd
-		) {
-			return;
+	setAnimationMode(mode: AnimationMode): void {
+		const next = normalizeAnimationMode(mode);
+		if (this.animationMode === next) return;
+		this.doc.animationMode = next;
+		this.dirty = true;
+		this.modified = true;
+	}
+
+	setAnimationLoop(loop: boolean): void {
+		if (this.animationLoop === loop) return;
+		this.doc.animationLoop = loop;
+		this.dirty = true;
+		this.modified = true;
+	}
+
+	/**
+	 * Rebuilds the playback cursor from the current selection, mode, and loop
+	 * setting. Called when playback starts and whenever those inputs change.
+	 */
+	preparePlayback(): void {
+		this.#playbackSequence = this.animationSequence;
+		this.#playbackCursor = this.#playbackSequence.indexOf(this.activeFrame);
+	}
+
+	/**
+	 * Advances the playback cursor. Returns `null` when a non-looping animation
+	 * reaches the end of its single pass.
+	 */
+	nextPlaybackFrame(): number | null {
+		let sequence = this.#playbackSequence;
+		if (sequence.length === 0) {
+			this.preparePlayback();
+			sequence = this.#playbackSequence;
+			if (sequence.length === 0) return null;
 		}
-		this.pushHistory();
-		if (nextStart === 0 && nextEnd === last) {
-			this.doc.loopStart = undefined;
-			this.doc.loopEnd = undefined;
-		} else {
-			this.doc.loopStart = nextStart;
-			this.doc.loopEnd = nextEnd;
+
+		if (this.#playbackCursor < 0) {
+			this.#playbackCursor = 0;
+			return sequence[0]!;
 		}
-	}
 
-	setLoopStartAt(index: number): void {
-		const range = loopRangeOf(this.doc);
-		const start = clamp(Math.round(index), 0, this.doc.frames.length - 1);
-		this.setLoopRange(start, Math.max(start, range.end));
-	}
-
-	setLoopEndAt(index: number): void {
-		const range = loopRangeOf(this.doc);
-		const end = clamp(Math.round(index), 0, this.doc.frames.length - 1);
-		this.setLoopRange(Math.min(range.start, end), end);
-	}
-
-	setLoopRangeToSelection(): void {
-		const indices = this.selectedFrameIndices;
-		if (indices.length === 0) return;
-		this.setLoopRange(indices[0]!, indices[indices.length - 1]!);
-	}
-
-	clearLoopRange(): void {
-		if (!this.hasLoopRange) return;
-		this.pushHistory();
-		this.doc.loopStart = undefined;
-		this.doc.loopEnd = undefined;
-	}
-
-	nextPlaybackFrame(): number {
-		const range = loopRangeOf(this.doc);
-		const current = this.activeFrame;
-		if (current < range.start || current >= range.end) return range.start;
-		return current + 1;
+		const next = this.#playbackCursor + 1;
+		if (next < sequence.length) {
+			this.#playbackCursor = next;
+			return sequence[next]!;
+		}
+		if (!this.animationLoop) return null;
+		this.#playbackCursor = 0;
+		return sequence[0]!;
 	}
 
 	addFrame(): void {
@@ -3258,7 +3231,6 @@ export class EditorState {
 				? { duration: sourceFrame.duration }
 				: {}),
 		};
-		this.#shiftLoopForInsert(index, 1);
 		this.doc.frames.splice(index, 0, frame);
 		for (const layer of this.doc.layers) {
 			// A static reference should stay visible on a newly inserted frame.
@@ -3307,21 +3279,25 @@ export class EditorState {
 		else this.onionTintNext = color;
 	}
 
+	stopPlayback(): void {
+		if (!this.playing) return;
+		this.playing = false;
+		this.#playbackSequence = [];
+		this.#playbackCursor = -1;
+	}
+
 	togglePlayback(): void {
 		if (this.playing) {
-			this.playing = false;
-			const activeId = this.doc.frames[this.activeFrame]?.id;
-			if (activeId && !this.frameSelection.includes(activeId)) {
-				this.frameSelection = [activeId];
-				this.#frameAnchorId = activeId;
-			}
+			this.stopPlayback();
 			return;
 		}
 
-		const range = loopRangeOf(this.doc);
-		if (this.activeFrame < range.start || this.activeFrame > range.end) {
-			this.selectFrame(range.start, { preserveSelection: true });
+		const sequence = this.animationSequence;
+		if (sequence.length === 0) return;
+		if (!sequence.includes(this.activeFrame)) {
+			this.selectFrame(sequence[0]!, { preserveSelection: true });
 		}
+		this.preparePlayback();
 		this.playing = true;
 	}
 }

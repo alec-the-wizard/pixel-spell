@@ -1,6 +1,11 @@
 import { MAX_CANVAS_SIZE } from "./canvas.js";
 import { normalizeHex } from "./color.js";
-import { MAX_FRAME_DURATION, MIN_FRAME_DURATION, uid } from "./doc.js";
+import {
+	MAX_FRAME_DURATION,
+	MIN_FRAME_DURATION,
+	normalizeAnimationMode,
+	uid,
+} from "./doc.js";
 import { normalizeLayerColor } from "./layer-color.js";
 import {
 	MAX_REFERENCE_BYTES,
@@ -19,7 +24,7 @@ export interface LoadedProject {
 
 const MAGIC = [0x50, 0x58, 0x53, 0x50]; // "PXSP"
 /** Only the current format is accepted; this app has no released legacy files. */
-const FORMAT_VERSION = 2;
+const FORMAT_VERSION = 3;
 const METHOD_RAW = 0;
 const METHOD_RLE = 1;
 const HEADER_SIZE = 4 + 1 + 1 + 2 + 2 + 1 + 2 + 2 + 4;
@@ -35,8 +40,8 @@ interface ProjectMeta {
 	activeFrame: number;
 	activeLayerId: string;
 	frames?: { duration?: number; tag?: string }[];
-	loopStart?: number;
-	loopEnd?: number;
+	animationMode?: "forward" | "backward" | "ping-pong";
+	animationLoop?: boolean;
 	layers: {
 		id: string;
 		name: string;
@@ -232,8 +237,8 @@ export function serializeProject(
 			...(frame.duration !== undefined ? { duration: frame.duration } : {}),
 			...(frame.tag ? { tag: frame.tag } : {}),
 		})),
-		...(doc.loopStart !== undefined ? { loopStart: doc.loopStart } : {}),
-		...(doc.loopEnd !== undefined ? { loopEnd: doc.loopEnd } : {}),
+		animationMode: normalizeAnimationMode(doc.animationMode),
+		animationLoop: doc.animationLoop !== false,
 		layers: doc.layers.map((layer) => ({
 			id: layer.id,
 			name: layer.name,
@@ -606,16 +611,9 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 		return frame;
 	});
 
-	const rawLoopStart = Number(meta.loopStart);
-	const rawLoopEnd = Number(meta.loopEnd);
-	let loopStart: number | undefined;
-	let loopEnd: number | undefined;
-	if (Number.isFinite(rawLoopStart) && Number.isFinite(rawLoopEnd)) {
-		const start = clamp(Math.round(rawLoopStart), 0, frameCount - 1);
-		const end = clamp(Math.round(rawLoopEnd), 0, frameCount - 1);
-		loopStart = Math.min(start, end);
-		loopEnd = Math.max(start, end);
-	}
+	const animationMode = normalizeAnimationMode(meta.animationMode);
+	const animationLoop =
+		typeof meta.animationLoop === "boolean" ? meta.animationLoop : true;
 
 	return {
 		doc: {
@@ -625,8 +623,8 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 			frames,
 			layers,
 			references,
-			...(loopStart !== undefined ? { loopStart } : {}),
-			...(loopEnd !== undefined ? { loopEnd } : {}),
+			animationMode,
+			animationLoop,
 		},
 		palette: normalizePalette(meta.palette),
 		activeFrame,

@@ -374,13 +374,6 @@ const ACTION_COMMANDS: CommandDef[] = [
 		run: () => editor.pasteFrames(),
 	},
 	{
-		id: "animation.loop-selection",
-		label: "Loop selected frames",
-		group: "Animation",
-		enabled: () => editor.selectedFrameCount > 0,
-		run: () => editor.setLoopRangeToSelection(),
-	},
-	{
 		id: "layer.add",
 		label: "Add layer",
 		group: "Layers",

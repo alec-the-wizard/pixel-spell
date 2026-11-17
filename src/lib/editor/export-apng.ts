@@ -11,8 +11,8 @@ export interface ApngExportOptions {
 	scale: number;
 	loop: boolean;
 	background: ExportBackground;
-	/** Restrict the animation to the document loop range when one is set. */
-	loopRange?: boolean;
+	/** Frame indices to export, in playback order; missing means all frames. */
+	frames?: readonly number[];
 }
 
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -179,7 +179,7 @@ export async function exportApng(
 	options: ApngExportOptions,
 ): Promise<Blob> {
 	const scale = Math.max(1, Math.min(10, Math.round(options.scale)));
-	const frameIndices = animationFrameIndices(doc, options.loopRange !== false);
+	const frameIndices = animationFrameIndices(doc, options.frames);
 	const width = doc.width * scale;
 	const height = doc.height * scale;
 	const sizeError = validateExportSize(width, height, frameIndices.length, true);

@@ -11,11 +11,13 @@ import { MAX_CANVAS_SIZE } from "../src/lib/editor/canvas.js";
 import { CANVAS_SIZE_PRESETS } from "../src/lib/editor/canvas-presets.js";
 import { packColor } from "../src/lib/editor/color.js";
 import {
+	animationSequence,
 	cloneDoc,
 	compositeFrame,
 	compositeFrameCachedIncremental,
 	createDoc,
 	createLayer,
+	normalizeAnimationMode,
 } from "../src/lib/editor/doc.js";
 import {
 	blurPixels,
@@ -339,10 +341,11 @@ function assertProjectRoundtrip(doc: PixelDoc, label: string): void {
 		}
 	}
 	if (
-		(doc.loopStart ?? null) !== (parsed.doc.loopStart ?? null) ||
-		(doc.loopEnd ?? null) !== (parsed.doc.loopEnd ?? null)
+		normalizeAnimationMode(doc.animationMode) !==
+			normalizeAnimationMode(parsed.doc.animationMode) ||
+		(doc.animationLoop !== false) !== (parsed.doc.animationLoop !== false)
 	) {
-		throw new Error(`${label}: loop range changed`);
+		throw new Error(`${label}: animation settings changed`);
 	}
 	for (let layerIndex = 0; layerIndex < doc.layers.length; layerIndex++) {
 		const originalLayer = doc.layers[layerIndex]!;
@@ -802,8 +805,8 @@ timingDoc.frames[1]!.tag = "walk";
 timingDoc.frames[2]!.tag = "walk";
 timingDoc.frames[3]!.duration = 40;
 timingDoc.frames[3]!.tag = "run";
-timingDoc.loopStart = 1;
-timingDoc.loopEnd = 2;
+timingDoc.animationMode = "ping-pong";
+timingDoc.animationLoop = false;
 assertProjectRoundtrip(timingDoc, "frame metadata");
 
 // --- Palette ramps and cycling -------------------------------------------
@@ -851,6 +854,37 @@ measure("exportGif 128x128x12", 4, 1, () => {
 		max: blob.size,
 	};
 });
+
+// --- Animation sequencing ------------------------------------------------
+function assertAnimationSequence(): void {
+	const expected: [readonly number[], "forward" | "backward" | "ping-pong", boolean, number[]][] = [
+		[[0, 1, 2], "forward", true, [0, 1, 2]],
+		[[0, 1, 2], "forward", false, [0, 1, 2]],
+		[[0, 1, 2], "backward", true, [2, 1, 0]],
+		[[0, 1, 2], "ping-pong", true, [0, 1, 2, 1]],
+		[[0, 1, 2], "ping-pong", false, [0, 1, 2, 1, 0]],
+		[[4, 5], "ping-pong", true, [4, 5]],
+		[[4, 5], "ping-pong", false, [4, 5, 4]],
+		[[7], "ping-pong", true, [7]],
+		[[7], "backward", false, [7]],
+		[[], "forward", true, []],
+	];
+	for (const [indices, mode, loop, sequence] of expected) {
+		const actual = animationSequence(indices, mode, loop);
+		if (actual.join(",") !== sequence.join(",")) {
+			throw new Error(
+				`animationSequence(${indices.join(",")}, ${mode}, ${loop}) = ${actual.join(",")}`,
+			);
+		}
+	}
+	if (normalizeAnimationMode("nope") !== "forward") {
+		throw new Error("normalizeAnimationMode fallback changed");
+	}
+	if (normalizeAnimationMode("backward") !== "backward") {
+		throw new Error("normalizeAnimationMode rejected backward");
+	}
+}
+assertAnimationSequence();
 
 // --- Report ---------------------------------------------------------------
 const report = {
