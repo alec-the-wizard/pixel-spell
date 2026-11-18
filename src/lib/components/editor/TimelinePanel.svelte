@@ -44,7 +44,7 @@
 	import DuplicateFramesDialog from "./DuplicateFramesDialog.svelte";
 	import FramePropertiesDialog from "./FramePropertiesDialog.svelte";
 	import LayerPropertiesDialog from "./LayerPropertiesDialog.svelte";
-	import TimelineLayerRow from "./TimelineLayerRow.svelte";
+	import TimelineLayerRow, { LAYER_INDENT } from "./TimelineLayerRow.svelte";
 
 	let framePropertiesOpen = $state(false);
 	let layerPropertiesOpen = $state(false);
@@ -124,10 +124,32 @@
 	// Timeline virtualization: only the layer rows and frame columns that are
 	// actually visible (plus a little overscan) are rendered. The sticky header
 	// and layer column remain, and spacer cells preserve the scroll extents.
-	const LAYER_COLUMN_WIDTH = 240; // w-60
+	const BASE_LAYER_COLUMN_WIDTH = 240;
 	const FRAME_COLUMN_WIDTH = 56; // w-14
 	const LAYER_ROW_HEIGHT = 48; // h-12
 	const OVERSCAN = 4;
+
+	/** Deepest nesting level, so the layer column can grow to fit its guides. */
+	let maxLayerDepth = $derived.by(() => {
+		const parents = new Map(
+			editor.doc.layers.map((layer) => [layer.id, layer.parentId]),
+		);
+		let max = 0;
+		for (const layer of editor.doc.layers) {
+			let depth = 0;
+			let parentId = layer.parentId;
+			// Guard against corrupted or cyclic parent links.
+			while (parentId && depth < 64) {
+				depth++;
+				parentId = parents.get(parentId);
+			}
+			max = Math.max(max, depth);
+		}
+		return max;
+	});
+	let layerColumnWidth = $derived(
+		BASE_LAYER_COLUMN_WIDTH + maxLayerDepth * LAYER_INDENT,
+	);
 
 	let scrollElement = $state<HTMLDivElement | null>(null);
 	let scrollLeft = $state(0);
@@ -149,7 +171,7 @@
 			Math.max(
 				firstFrame,
 				Math.ceil(
-					(scrollLeft + viewportWidth - LAYER_COLUMN_WIDTH) /
+					(scrollLeft + viewportWidth - layerColumnWidth) /
 						FRAME_COLUMN_WIDTH,
 				) +
 					OVERSCAN -
@@ -934,13 +956,16 @@
 		class="min-h-0 flex-1 overflow-auto"
 		onscroll={updateScroll}
 	>
-		<table class="w-full border-separate border-spacing-0">
+		<table
+			class="w-full border-separate border-spacing-0"
+			style="--layer-col-width: {layerColumnWidth}px"
+		>
 			<caption class="sr-only">Timeline: layers as rows, animation frames as columns</caption>
 			<thead>
 				<tr>
 					<th
 						scope="col"
-						class="sticky left-0 top-0 z-40 h-6 w-60 min-w-60 max-w-60 border-b border-r bg-background px-3 text-left align-middle"
+						class="sticky left-0 top-0 z-40 h-6 w-[var(--layer-col-width)] min-w-[var(--layer-col-width)] max-w-[var(--layer-col-width)] border-b border-r bg-background px-3 text-left align-middle"
 					>
 						<span class="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
 							<Tag class="size-2.5" />
@@ -1008,13 +1033,49 @@
 				<tr>
 					<th
 						scope="col"
-						class="sticky left-0 top-6 z-30 h-8 w-60 min-w-60 max-w-60 border-b border-r bg-background px-3 text-left align-middle"
+						class="sticky left-0 top-6 z-30 h-8 w-[var(--layer-col-width)] min-w-[var(--layer-col-width)] max-w-[var(--layer-col-width)] border-b border-r bg-background px-1.5 text-left align-middle"
 					>
-						<span
-							class="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground"
-						>
-							Layers
-						</span>
+						<div class="flex items-center gap-0.5">
+							<Button
+								variant="ghost"
+								size="icon-xs"
+								class="size-6 text-muted-foreground"
+								onclick={() =>
+									editor.setAllLayersVisible(!editor.anyLayerVisible)}
+								title={editor.anyLayerVisible
+									? "Hide all layers"
+									: "Show all layers"}
+								aria-label={editor.anyLayerVisible
+									? "Hide all layers"
+									: "Show all layers"}
+							>
+								{#if editor.anyLayerVisible}
+									<Eye class="size-3.5" />
+								{:else}
+									<EyeOff class="size-3.5" />
+								{/if}
+							</Button>
+							<Button
+								variant="ghost"
+								size="icon-xs"
+								class="size-6 text-muted-foreground"
+								onclick={() =>
+									editor.setAllLayersLocked(editor.anyLayerUnlocked)}
+								title={editor.anyLayerUnlocked
+									? "Lock all layers"
+									: "Unlock all layers"}
+								aria-label={editor.anyLayerUnlocked
+									? "Lock all layers"
+									: "Unlock all layers"}
+								aria-pressed={!editor.anyLayerUnlocked}
+							>
+								{#if editor.anyLayerUnlocked}
+									<LockOpen class="size-3.5" />
+								{:else}
+									<Lock class="size-3.5" />
+								{/if}
+							</Button>
+						</div>
 					</th>
 
 					{#if leadingFrameCols > 0}
@@ -1120,7 +1181,6 @@
 					<TimelineLayerRow
 						layer={row.layer}
 						depth={row.depth}
-						last={row.last}
 						dragging={draggingLayerId !== null}
 						isDragSource={isSource}
 						dropMode={dropIndicator?.targetId === row.layer.id
@@ -1151,7 +1211,7 @@
 				<tr>
 					<th
 						scope="row"
-						class="sticky left-0 z-10 h-9 w-60 min-w-60 max-w-60 border-b border-r bg-background p-0 text-left align-middle"
+						class="sticky left-0 z-10 h-9 w-[var(--layer-col-width)] min-w-[var(--layer-col-width)] max-w-[var(--layer-col-width)] border-b border-r bg-background p-0 text-left align-middle"
 					>
 						<div class="flex items-center gap-0.5 pl-1">
 							<Button

@@ -483,6 +483,18 @@ export class EditorState {
 		return this.doc.layers.filter((layer) => layer.role === "reference").length;
 	}
 
+	/** True when at least one layer (including groups and references) is visible. */
+	get anyLayerVisible(): boolean {
+		return this.doc.layers.some((layer) => layer.visible);
+	}
+
+	/** True when at least one layer or group is not locked. */
+	get anyLayerUnlocked(): boolean {
+		return this.doc.layers.some(
+			(layer) => layer.role !== "reference" && !layer.locked,
+		);
+	}
+
 	get activePalette(): Palette {
 		return (
 			this.palettes.find((palette) => palette.id === this.activePaletteId) ??
@@ -2703,7 +2715,20 @@ export class EditorState {
 	toggleLayerVisibility(id: string): void {
 		const layer = this.doc.layers.find((item) => item.id === id);
 		if (!layer) return;
-		layer.visible = !layer.visible;
+		const visible = !layer.visible;
+		// Groups show or hide their whole subtree, mirroring the group lock
+		// toggle and the timeline-header bulk visibility button.
+		const subtree = isGroupLayer(layer)
+			? this.layerSubtreeIds(layer.id)
+			: null;
+		let changed = false;
+		for (const item of this.doc.layers) {
+			if (subtree ? !subtree.has(item.id) : item !== layer) continue;
+			if (item.visible === visible) continue;
+			item.visible = visible;
+			changed = true;
+		}
+		if (!changed) return;
 		this.dirty = true;
 		this.modified = true;
 		this.revision++;
@@ -2713,7 +2738,53 @@ export class EditorState {
 	toggleLayerLock(id: string): void {
 		const layer = this.doc.layers.find((item) => item.id === id);
 		if (!layer || layer.role === "reference") return;
-		layer.locked = !layer.locked;
+		const locked = !layer.locked;
+		// Groups lock and unlock their whole subtree, like the timeline-header
+		// bulk toggle. Reference layers stay locked either way.
+		const subtree = isGroupLayer(layer)
+			? this.layerSubtreeIds(layer.id)
+			: null;
+		let changed = false;
+		for (const item of this.doc.layers) {
+			if (subtree ? !subtree.has(item.id) : item !== layer) continue;
+			if (item.role === "reference") continue;
+			if (item.locked === locked) continue;
+			item.locked = locked;
+			changed = true;
+		}
+		if (!changed) return;
+		this.dirty = true;
+		this.modified = true;
+	}
+
+	/** Shows or hides every layer in one step. */
+	setAllLayersVisible(visible: boolean): void {
+		let changed = false;
+		for (const layer of this.doc.layers) {
+			if (layer.visible === visible) continue;
+			layer.visible = visible;
+			changed = true;
+		}
+		if (!changed) return;
+		this.dirty = true;
+		this.modified = true;
+		this.revision++;
+		this.layerAppearanceRevision++;
+	}
+
+	/**
+	 * Locks or unlocks every layer and group. Reference layers are always
+	 * locked, so they are skipped.
+	 */
+	setAllLayersLocked(locked: boolean): void {
+		let changed = false;
+		for (const layer of this.doc.layers) {
+			if (layer.role === "reference") continue;
+			if (layer.locked === locked) continue;
+			layer.locked = locked;
+			changed = true;
+		}
+		if (!changed) return;
 		this.dirty = true;
 		this.modified = true;
 	}

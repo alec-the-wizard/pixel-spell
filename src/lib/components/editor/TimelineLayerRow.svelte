@@ -1,3 +1,8 @@
+<script module lang="ts">
+	/** Horizontal pixels added per nesting level in the layer column. */
+	export const LAYER_INDENT = 12;
+</script>
+
 <script lang="ts">
 	import ChevronDown from "@lucide/svelte/icons/chevron-down";
 	import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -21,7 +26,6 @@
 	let {
 		layer,
 		depth = 0,
-		last = false,
 		dragging = false,
 		isDragSource = false,
 		dropMode = null,
@@ -39,7 +43,6 @@
 	}: {
 		layer: Layer;
 		depth?: number;
-		last?: boolean;
 		dragging?: boolean;
 		isDragSource?: boolean;
 		dropMode?: "before" | "after" | "into" | null;
@@ -88,9 +91,9 @@
 		selectedRow ? "bg-primary/15" : "bg-background",
 	);
 
-	/** Tree connector glyphs for child layers: ancestors "│", then "├" or "└". */
-	let treeGuide = $derived(
-		"│".repeat(Math.max(0, depth - 1)) + (last ? "└" : "├"),
+	/** One entry per nesting level, used to draw IDE-style indent guides. */
+	let indentLevels = $derived(
+		Array.from({ length: Math.max(0, depth) }, (_, level) => level),
 	);
 
 	let dropShadow = $derived(
@@ -173,6 +176,19 @@
 	}
 </script>
 
+{#snippet indentGuides()}
+	{#if indentLevels.length > 0}
+		<span class="pointer-events-none absolute inset-0" aria-hidden="true">
+			{#each indentLevels as level (level)}
+				<span
+					class="absolute inset-y-2.5 w-px rounded-full bg-muted-foreground/30"
+					style:left={`${10 + level * LAYER_INDENT}px`}
+				></span>
+			{/each}
+		</span>
+	{/if}
+{/snippet}
+
 {#if isGroup}
 	<tr
 		class={cn(sourceDim && "opacity-40")}
@@ -182,7 +198,7 @@
 		<th
 			scope="row"
 			class={cn(
-				"sticky left-0 z-10 h-12 w-60 min-w-60 max-w-60 border-b border-r p-0 text-left align-middle",
+				"sticky left-0 z-10 h-12 w-[var(--layer-col-width)] min-w-[var(--layer-col-width)] max-w-[var(--layer-col-width)] border-b border-r p-0 text-left align-middle",
 				!layer.color && headerClass,
 			)}
 			style:background={headerBackground}
@@ -195,9 +211,10 @@
 			oncontextmenu={handleHeaderContextMenu}
 		>
 			<div
-				class="flex h-12 items-center gap-0.5"
-				style:padding-left={`${depth * 12 + 4}px`}
+				class="relative flex h-12 items-center gap-0.5"
+				style:padding-left={`${4 + depth * LAYER_INDENT}px`}
 			>
+				{@render indentGuides()}
 				<Button
 					variant="ghost"
 					size="icon-xs"
@@ -239,6 +256,26 @@
 					{/if}
 				</Button>
 
+				<Button
+					variant="ghost"
+					size="icon-xs"
+					class={cn(
+						"size-7 shrink-0",
+						layer.locked ? "text-foreground" : "text-muted-foreground",
+					)}
+					title={layer.locked ? "Unlock group" : "Lock group"}
+					aria-label={layer.locked ? "Unlock group" : "Lock group"}
+					aria-pressed={layer.locked}
+					data-layer-control
+					onclick={() => editor.toggleLayerLock(layer.id)}
+				>
+					{#if layer.locked}
+						<Lock class="size-3.5" />
+					{:else}
+						<LockOpen class="size-3.5" />
+					{/if}
+				</Button>
+
 				<div class="min-w-0 flex-1 pr-2">
 					<span class="block truncate text-xs font-medium">
 						{layer.name}
@@ -264,7 +301,7 @@
 		<th
 			scope="row"
 			class={cn(
-				"sticky left-0 z-10 h-12 w-60 min-w-60 max-w-60 border-b border-r p-0 text-left align-middle",
+				"sticky left-0 z-10 h-12 w-[var(--layer-col-width)] min-w-[var(--layer-col-width)] max-w-[var(--layer-col-width)] border-b border-r p-0 text-left align-middle",
 				!layer.color && headerClass,
 			)}
 			style:background={headerBackground}
@@ -276,16 +313,11 @@
 			ondblclick={handleHeaderDoubleClick}
 			oncontextmenu={handleHeaderContextMenu}
 		>
-			<div class="flex h-12 items-center gap-1.5 pr-2">
-				{#if depth > 0}
-					<span
-						class="shrink-0 select-none whitespace-pre font-mono text-[11px] leading-none text-muted-foreground/60"
-						aria-hidden="true"
-						title="Part of a group"
-					>
-						{treeGuide}
-					</span>
-				{/if}
+			<div
+				class="relative flex h-12 items-center gap-1.5 pr-2"
+				style:padding-left={`${4 + depth * LAYER_INDENT}px`}
+			>
+				{@render indentGuides()}
 
 				<Button
 					variant="ghost"
