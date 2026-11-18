@@ -461,20 +461,22 @@ export class EditorState {
 		return flattenLayersTopFirst(this.doc.layers);
 	}
 
-	/** True when deleting the active layer would leave a drawable layer behind. */
-	get canDeleteLayer(): boolean {
+	/** True when deleting the selected layers would leave a drawable layer behind. */
+	get canDeleteSelectedLayers(): boolean {
 		const layers = this.doc.layers;
-		const index = layers.findIndex((layer) => layer.id === this.activeLayerId);
-		if (index < 0) return false;
-		const { start, end } = subtreeRange(layers, index);
-		let total = 0;
-		let inSubtree = 0;
-		layers.forEach((layer, layerIndex) => {
-			if (isGroupLayer(layer)) return;
-			total++;
-			if (layerIndex >= start && layerIndex < end) inSubtree++;
+		const selected = new Set(this.layerSelection);
+		if (!layers.some((layer) => selected.has(layer.id))) return false;
+		return layers.some(
+			(layer) => !isGroupLayer(layer) && !selected.has(layer.id),
+		);
+	}
+
+	/** True when at least one selected layer belongs to a group. */
+	get canOutdentSelectedLayers(): boolean {
+		return this.layerSelection.some((id) => {
+			const layer = this.doc.layers.find((item) => item.id === id);
+			return !!layer?.parentId;
 		});
-		return total - inSubtree >= 1;
 	}
 
 	get referenceLayerCount(): number {
@@ -2755,6 +2757,7 @@ export class EditorState {
 		this.layerAppearanceRevision++;
 	}
 
+	/** Adds an empty layer at the bottom of the stack and makes it active. */
 	addLayer(): void {
 		if (this.doc.layers.length >= MAX_PROJECT_LAYERS) return;
 		this.pushHistory();
@@ -2764,7 +2767,7 @@ export class EditorState {
 			this.doc.height,
 			this.doc.frames.length,
 		);
-		this.doc.layers.push(layer);
+		this.doc.layers.unshift(layer);
 		this.#setActiveLayer(layer.id);
 		this.activeReferenceId = null;
 		this.structureRevision++;
@@ -2785,52 +2788,97 @@ export class EditorState {
 		return `Group ${index}`;
 	}
 
-	/** Adds a new empty group above the active layer (or at the top). */
+	/** Adds a new empty group at the bottom of the stack. */
 	addGroup(): void {
 		if (this.doc.layers.length >= MAX_PROJECT_LAYERS) return;
 		this.pushHistory();
 		const group = createGroup(this.#nextGroupName());
-		this.doc.layers.push(group);
+		this.doc.layers.unshift(group);
 		this.#setActiveLayer(group.id);
 		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
 	}
 
-	/** Wraps the active layer (and its subtree) in a new group. */
-	groupActiveLayer(): void {
-		if (this.doc.layers.length >= MAX_PROJECT_LAYERS) return;
+	/** Wraps every selected layer in a new group at the topmost selection. */
+	groupSelectedLayers(): void {
 		const layers = this.doc.layers;
-		const index = layers.findIndex((layer) => layer.id === this.activeLayerId);
-		if (index < 0) return;
-		this.pushHistory();
-		const active = layers[index]!;
-		const group = createGroup(this.#nextGroupName(), active.parentId);
-		active.parentId = group.id;
-		layers.splice(index, 0, group);
-		this.activeReferenceId = null;
-		this.structureRevision++;
-		this.revision++;
-	}
+		const selected = new Set(this.layerSelection);
+		if (layers.length >= MAX_PROJECT_LAYERS) return;
+		if (!layers.some((layer) => selected.has(layer.id))) return;
 
-	/** Removes the active group, promoting its direct children to its level. */
-	ungroupLayer(): void {
-		const layer = this.activeLayer;
-		if (!layer || !isGroupLayer(layer)) return;
-		const layers = this.doc.layers;
-		const index = layers.findIndex((item) => item.id === layer.id);
-		if (index < 0) return;
-		this.pushHistory();
-		const { end } = subtreeRange(layers, index);
-		const parentId = layer.parentId;
-		for (let position = index + 1; position < end; position++) {
-			const child = layers[position]!;
-			if (child.parentId === layer.id) child.parentId = parentId;
-		}
-		layers.splice(index, 1);
-		this.#setActiveLayer(
-			layers[Math.min(index, layers.length - 1)]?.id ?? this.activeLayerId,
+		const parentById = new Map(
+			layers.map((layer) => [layer.id, layer.parentId]),
 		);
+		const hasSelectedAncestor = (id: string): boolean => {
+			let parentId = parentById.get(id);
+			while (parentId) {
+				if (selected.has(parentId)) return true;
+				parentId = parentById.get(parentId);
+			}
+			return false;
+		};
+
+		// Nested selections are represented by their topmost selected ancestor.
+		const roots = layers.filter(
+			(layer) => selected.has(layer.id) && !hasSelectedAncestor(layer.id),
+		);
+		if (roots.length === 0) return;
+
+		this.pushHistory();
+		const topmost = roots[roots.length - 1]!;
+		const parentId = topmost.parentId;
+		const removedIds = new Set<string>();
+		const blocks: Layer[][] = [];
+		for (const root of roots) {
+			const index = layers.findIndex((layer) => layer.id === root.id);
+			if (index < 0) continue;
+			const { end } = subtreeRange(layers, index);
+			const block = layers.slice(index, end);
+			blocks.push(block);
+			for (const item of block) removedIds.add(item.id);
+		}
+
+		const remaining = layers.filter((layer) => !removedIds.has(layer.id));
+		const group = createGroup(this.#nextGroupName(), parentId);
+		for (const block of blocks) block[0]!.parentId = group.id;
+
+		let insertAt = remaining.length;
+		if (parentId) {
+			const parentIndex = remaining.findIndex(
+				(layer) => layer.id === parentId,
+			);
+			if (parentIndex >= 0) {
+				insertAt = subtreeRange(remaining, parentIndex).end;
+			}
+		} else {
+			// Keep the group where the topmost selected block was.
+			const topmostIndex = layers.findIndex(
+				(layer) => layer.id === topmost.id,
+			);
+			let anchorId: string | undefined;
+			for (let index = topmostIndex - 1; index >= 0; index--) {
+				const candidate = layers[index]!;
+				if (!removedIds.has(candidate.id)) {
+					anchorId = candidate.id;
+					break;
+				}
+			}
+			if (anchorId) {
+				const anchorIndex = remaining.findIndex(
+					(layer) => layer.id === anchorId,
+				);
+				if (anchorIndex >= 0) {
+					insertAt = subtreeRange(remaining, anchorIndex).end;
+				}
+			} else {
+				insertAt = 0;
+			}
+		}
+
+		remaining.splice(insertAt, 0, group, ...blocks.flat());
+		layers.splice(0, layers.length, ...remaining);
+		this.#setActiveLayer(group.id);
 		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
@@ -2858,12 +2906,40 @@ export class EditorState {
 
 	/** Moves the active layer out of its group, above that group. */
 	outdentActiveLayer(): void {
-		const layer = this.activeLayer;
-		if (!layer || !layer.parentId) return;
-		const parent = this.doc.layers.find((item) => item.id === layer.parentId);
-		if (!parent) return;
+		this.#outdentLayers([this.activeLayerId]);
+	}
+
+	/** Moves every selected layer one level out of its group. */
+	outdentSelectedLayers(): void {
+		this.#outdentLayers(this.layerSelection);
+	}
+
+	#outdentLayers(ids: readonly string[]): void {
+		const layers = this.doc.layers;
+		const moving = layers.filter(
+			(layer) => ids.includes(layer.id) && layer.parentId !== undefined,
+		);
+		if (moving.length === 0) return;
 		this.pushHistory();
-		this.#reparentActiveBlock(parent.parentId, parent.id);
+		// Move topmost layers first so sibling order survives the moves.
+		for (const source of moving.reverse()) {
+			const index = layers.findIndex((layer) => layer.id === source.id);
+			if (index < 0) continue;
+			const layer = layers[index]!;
+			const parent = layers.find((item) => item.id === layer.parentId);
+			if (!parent) continue;
+			const { end } = subtreeRange(layers, index);
+			const block = layers.splice(index, end - index);
+			block[0]!.parentId = parent.parentId;
+			const parentIndex = layers.findIndex((item) => item.id === parent.id);
+			if (parentIndex < 0) {
+				layers.push(...block);
+				continue;
+			}
+			// Land above the whole group so the flat list stays contiguous.
+			const insertAt = subtreeRange(layers, parentIndex).end;
+			layers.splice(insertAt, 0, ...block);
+		}
 		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
@@ -2928,17 +3004,48 @@ export class EditorState {
 		this.revision++;
 	}
 
-	deleteLayer(): void {
-		if (!this.canDeleteLayer) return;
+	/**
+	 * Deletes every selected layer. A selected group is dissolved instead:
+	 * its children are promoted one level and only the group node is removed.
+	 */
+	deleteSelectedLayers(): void {
+		if (!this.canDeleteSelectedLayers) return;
 		const layers = this.doc.layers;
-		const index = layers.findIndex((layer) => layer.id === this.activeLayerId);
-		if (index < 0) return;
-		this.pushHistory();
-		const { end } = subtreeRange(layers, index);
-		layers.splice(index, end - index);
-		this.#setActiveLayer(
-			layers[Math.min(index, layers.length - 1)]?.id ?? this.activeLayerId,
+		const selected = new Set(this.layerSelection);
+		const anchorIndex = Math.max(
+			0,
+			layers.findIndex((layer) => selected.has(layer.id)),
 		);
+		this.pushHistory();
+
+		const groupIds = layers
+			.filter((layer) => selected.has(layer.id) && isGroupLayer(layer))
+			.map((layer) => layer.id);
+		for (const id of groupIds.reverse()) {
+			const index = layers.findIndex((layer) => layer.id === id);
+			if (index < 0) continue;
+			const group = layers[index]!;
+			for (const child of layers) {
+				if (child.parentId === group.id) child.parentId = group.parentId;
+			}
+			layers.splice(index, 1);
+		}
+
+		const deleteIds = layers
+			.filter((layer) => selected.has(layer.id) && !isGroupLayer(layer))
+			.map((layer) => layer.id);
+		for (const id of deleteIds.reverse()) {
+			const index = layers.findIndex((layer) => layer.id === id);
+			if (index < 0) continue;
+			const { end } = subtreeRange(layers, index);
+			layers.splice(index, end - index);
+		}
+
+		if (layers.length > 0) {
+			this.#setActiveLayer(
+				layers[Math.min(anchorIndex, layers.length - 1)]!.id,
+			);
+		}
 		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
@@ -3806,10 +3913,11 @@ export class EditorState {
 		return sequence[0]!;
 	}
 
+	/** Adds an empty frame at the end of the timeline and makes it active. */
 	addFrame(): void {
 		if (this.doc.frames.length >= MAX_PROJECT_FRAMES) return;
 		this.pushHistory();
-		const index = this.activeFrame + 1;
+		const index = this.doc.frames.length;
 		const sourceFrame = this.doc.frames[this.activeFrame]!;
 		const frame: Frame = {
 			id: uid("frame"),

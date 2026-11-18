@@ -146,7 +146,6 @@
 		if (layer.clipping) parts.push("Clipped");
 		if (isGroup) parts.push("Group");
 		else if (isReference) parts.push("Reference");
-		else parts.push(layer.visible ? "Visible" : "Hidden");
 		return parts.join(" · ");
 	}
 

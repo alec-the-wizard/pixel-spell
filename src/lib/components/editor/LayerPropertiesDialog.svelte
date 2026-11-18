@@ -8,6 +8,7 @@
 	import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
+	import { Slider } from "$lib/components/ui/slider/index.js";
 	import { Switch } from "$lib/components/ui/switch/index.js";
 	import { BLEND_MODE_LABELS, BLEND_MODES } from "$lib/editor/blend.js";
 	import { isGroupLayer } from "$lib/editor/doc.js";
@@ -22,6 +23,7 @@
 	let { open = $bindable(false) } = $props();
 
 	let name = $state("");
+	let opacity = $state(100);
 	let color = $state<string | null>(null);
 	let blendMode = $state<BlendMode>("normal");
 	let clipping = $state(false);
@@ -35,6 +37,7 @@
 	$effect(() => {
 		if (open && !wasOpen) {
 			name = editor.activeLayer.name;
+			opacity = Math.round(editor.activeLayer.opacity * 100);
 			color = editor.activeLayer.color ?? null;
 			blendMode = editor.activeLayer.blendMode ?? "normal";
 			clipping = editor.activeLayer.clipping === true;
@@ -52,6 +55,9 @@
 		if (trimmed && trimmed !== active.name) {
 			editor.renameLayer(active.id, trimmed);
 		}
+		if (opacity !== Math.round(active.opacity * 100)) {
+			editor.setLayerOpacity(active.id, opacity / 100);
+		}
 		editor.setLayerColor(active.id, color);
 		editor.setLayerBlendMode(active.id, blendMode);
 		if (clipping !== (active.clipping === true)) {
@@ -66,7 +72,7 @@
 		<Dialog.Header>
 			<Dialog.Title>{isGroup ? "Group properties" : "Layer properties"}</Dialog.Title>
 			<Dialog.Description>
-				Set the name, blend mode, and timeline identity color for {layer.name}.
+				Set the name, opacity, blend mode, and timeline identity color for {layer.name}.
 			</Dialog.Description>
 		</Dialog.Header>
 
@@ -78,6 +84,23 @@
 					bind:value={name}
 					maxlength={60}
 					autocomplete="off"
+				/>
+			</div>
+
+			<div class="grid gap-1.5">
+				<div class="flex items-center justify-between">
+					<Label for="layer-opacity">Opacity</Label>
+					<span class="font-mono text-[10px] tabular-nums text-muted-foreground">
+						{opacity}%
+					</span>
+				</div>
+				<Slider
+					id="layer-opacity"
+					type="single"
+					min={0}
+					max={100}
+					step={1}
+					bind:value={opacity}
 				/>
 			</div>
 

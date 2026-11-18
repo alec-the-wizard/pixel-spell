@@ -3,6 +3,8 @@
 	import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
 	import ArrowRight from "@lucide/svelte/icons/arrow-right";
 	import ChevronDown from "@lucide/svelte/icons/chevron-down";
+	import ChevronLeft from "@lucide/svelte/icons/chevron-left";
+	import ChevronRight from "@lucide/svelte/icons/chevron-right";
 	import ChevronUp from "@lucide/svelte/icons/chevron-up";
 	import ClipboardCopy from "@lucide/svelte/icons/clipboard-copy";
 	import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste";
@@ -35,23 +37,14 @@
 	import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Separator } from "$lib/components/ui/separator/index.js";
-	import { Slider } from "$lib/components/ui/slider/index.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
 	import { normalizeAnimationMode } from "$lib/editor/doc.js";
 	import type { Layer } from "$lib/editor/types.js";
-	import {
-		IMAGE_IMPORT_ACCEPT,
-		analyzeImportFile,
-	} from "$lib/editor/import.js";
 	import { cn } from "$lib/utils.js";
 	import DuplicateFramesDialog from "./DuplicateFramesDialog.svelte";
 	import FramePropertiesDialog from "./FramePropertiesDialog.svelte";
 	import LayerPropertiesDialog from "./LayerPropertiesDialog.svelte";
 	import TimelineLayerRow from "./TimelineLayerRow.svelte";
-
-	let opacity = $state(100);
-	let referenceInput = $state<HTMLInputElement>();
-	let referenceLoading = $state(false);
 
 	let framePropertiesOpen = $state(false);
 	let layerPropertiesOpen = $state(false);
@@ -264,48 +257,6 @@
 		}
 		return frameLabel;
 	});
-
-	async function addReferenceLayer(event: Event): Promise<void> {
-		const input = event.currentTarget as HTMLInputElement;
-		const file = input.files?.[0];
-		input.value = "";
-		if (!file) return;
-
-		referenceLoading = true;
-		try {
-			const result = await analyzeImportFile(file);
-			if (result.reference) {
-				const image = {
-					name: result.reference.name,
-					width: result.reference.pixelWidth,
-					height: result.reference.pixelHeight,
-					pixels: result.reference.pixels,
-				};
-				// Replacing the current cel makes it easy to build a per-frame
-				// reference sequence without creating a layer per image.
-				if (!editor.setReferenceLayerImage(image)) {
-					editor.importReferenceLayer(image, { allFrames: true });
-				}
-			} else {
-				window.alert(
-					result.error ?? "This file can't be used as a reference layer.",
-				);
-			}
-			if (result.project) URL.revokeObjectURL(result.project.previewUrl);
-		} catch {
-			window.alert("This image could not be read.");
-		} finally {
-			referenceLoading = false;
-		}
-	}
-
-	$effect(() => {
-		opacity = Math.round(editor.activeLayer.opacity * 100);
-	});
-
-	function changeOpacity(value: number): void {
-		editor.setLayerOpacity(editor.activeLayerId, value / 100);
-	}
 
 	$effect(() => {
 		if (!editor.playing) return;
@@ -659,17 +610,6 @@
 			variant="ghost"
 			size="icon-xs"
 			class="text-muted-foreground"
-			onclick={() => referenceInput?.click()}
-			disabled={referenceLoading}
-			title="Add or replace reference layer from image"
-			aria-label="Add or replace reference layer from image"
-		>
-			<ScanEye class="size-3.5" />
-		</Button>
-		<Button
-			variant="ghost"
-			size="icon-xs"
-			class="text-muted-foreground"
 			onclick={() => editor.duplicateLayer()}
 			title="Duplicate layer"
 			aria-label="Duplicate layer"
@@ -680,9 +620,9 @@
 			variant="ghost"
 			size="icon-xs"
 			class="text-muted-foreground"
-			onclick={() => editor.groupActiveLayer()}
-			title="Group active layer"
-			aria-label="Group active layer"
+			onclick={() => editor.groupSelectedLayers()}
+			title="Group selected layers"
+			aria-label="Group selected layers"
 		>
 			<FolderInput class="size-3.5" />
 		</Button>
@@ -690,10 +630,10 @@
 			variant="ghost"
 			size="icon-xs"
 			class="text-muted-foreground"
-			onclick={() => editor.ungroupLayer()}
-			disabled={!editor.activeLayer.isGroup}
-			title="Ungroup"
-			aria-label="Ungroup"
+			onclick={() => editor.outdentSelectedLayers()}
+			disabled={!editor.canOutdentSelectedLayers}
+			title="Ungroup selected layers"
+			aria-label="Ungroup selected layers"
 		>
 			<FolderOutput class="size-3.5" />
 		</Button>
@@ -720,32 +660,11 @@
 		<Button
 			variant="ghost"
 			size="icon-xs"
-			class="text-muted-foreground"
-			onclick={() => editor.indentActiveLayer()}
-			title="Move into group above"
-			aria-label="Move into group above"
-		>
-			<IndentIncrease class="size-3.5" />
-		</Button>
-		<Button
-			variant="ghost"
-			size="icon-xs"
-			class="text-muted-foreground"
-			onclick={() => editor.outdentActiveLayer()}
-			disabled={!editor.activeLayer.parentId}
-			title="Move out of group"
-			aria-label="Move out of group"
-		>
-			<IndentDecrease class="size-3.5" />
-		</Button>
-		<Button
-			variant="ghost"
-			size="icon-xs"
 			class="text-muted-foreground hover:text-destructive"
-			onclick={() => editor.deleteLayer()}
-			disabled={!editor.canDeleteLayer}
-			title="Delete layer"
-			aria-label="Delete layer"
+			onclick={() => editor.deleteSelectedLayers()}
+			disabled={!editor.canDeleteSelectedLayers}
+			title="Delete selected layers"
+			aria-label="Delete selected layers"
 		>
 			<Trash2 class="size-3.5" />
 		</Button>
@@ -785,22 +704,21 @@
 			variant="ghost"
 			size="icon-xs"
 			class="text-muted-foreground"
-			onclick={() => editor.copyFrames()}
-			title="Copy selected frames"
-			aria-label="Copy selected frames"
+			onclick={() => editor.moveSelectedFrames(-1)}
+			title="Move frames left"
+			aria-label="Move selected frames left"
 		>
-			<ClipboardCopy class="size-3.5" />
+			<ChevronLeft class="size-3.5" />
 		</Button>
 		<Button
 			variant="ghost"
 			size="icon-xs"
 			class="text-muted-foreground"
-			onclick={() => editor.pasteFrames()}
-			disabled={!editor.hasFrameClipboard}
-			title="Paste frames after selection"
-			aria-label="Paste frames"
+			onclick={() => editor.moveSelectedFrames(1)}
+			title="Move frames right"
+			aria-label="Move selected frames right"
 		>
-			<ClipboardPaste class="size-3.5" />
+			<ChevronRight class="size-3.5" />
 		</Button>
 		<Button
 			variant="ghost"
@@ -1010,14 +928,6 @@
 			</Button>
 		</div>
 	</header>
-
-	<input
-		bind:this={referenceInput}
-		type="file"
-		accept={IMAGE_IMPORT_ACCEPT}
-		class="hidden"
-		onchange={addReferenceLayer}
-	/>
 
 	<div
 		bind:this={scrollElement}
@@ -1238,27 +1148,39 @@
 						></td>
 					</tr>
 				{/if}
+				<tr>
+					<th
+						scope="row"
+						class="sticky left-0 z-10 h-9 w-60 min-w-60 max-w-60 border-b border-r bg-background p-0 text-left align-middle"
+					>
+						<div class="flex items-center gap-0.5 pl-1">
+							<Button
+								variant="ghost"
+								size="icon-xs"
+								class="flex size-7 text-muted-foreground"
+								onclick={() => editor.addLayer()}
+								title="Add layer"
+								aria-label="Add layer"
+							>
+								<Plus class="size-3.5" />
+							</Button>
+							<Button
+								variant="ghost"
+								size="icon-xs"
+								class="flex size-7 text-muted-foreground"
+								onclick={() => editor.addGroup()}
+								title="New group"
+								aria-label="New group"
+							>
+								<FolderPlus class="size-3.5" />
+							</Button>
+						</div>
+					</th>
+					<td colspan={editor.doc.frames.length + 2} class="h-9 border-b"></td>
+				</tr>
 			</tbody>
 		</table>
 	</div>
-
-	<footer class="flex h-10 shrink-0 items-center gap-3 border-t px-3">
-		<span class="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-			Opacity
-		</span>
-		<Slider
-			type="single"
-			min={0}
-			max={100}
-			step={1}
-			bind:value={opacity}
-			onValueChange={changeOpacity}
-			class="max-w-64 flex-1"
-		/>
-		<span class="w-9 text-right font-mono text-[10px] tabular-nums text-muted-foreground">
-			{Math.round(editor.activeLayer.opacity * 100)}%
-		</span>
-	</footer>
 </section>
 
 {#snippet layerMenuActions()}
@@ -1318,10 +1240,10 @@
 		type="button"
 		role="menuitem"
 		class={MENU_ITEM_CLASS}
-		onclick={() => runMenuAction(() => editor.groupActiveLayer())}
+		onclick={() => runMenuAction(() => editor.groupSelectedLayers())}
 	>
 		<FolderInput class="size-3.5 text-muted-foreground" />
-		Group layer
+		Group selected layers
 	</button>
 	<button
 		type="button"
@@ -1367,11 +1289,11 @@
 		type="button"
 		role="menuitem"
 		class={MENU_DANGER_CLASS}
-		disabled={!editor.canDeleteLayer}
-		onclick={() => runMenuAction(() => editor.deleteLayer())}
+		disabled={!editor.canDeleteSelectedLayers}
+		onclick={() => runMenuAction(() => editor.deleteSelectedLayers())}
 	>
 		<Trash2 class="size-3.5" />
-		Delete layer
+		Delete selected layers
 	</button>
 {/snippet}
 

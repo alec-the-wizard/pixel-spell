@@ -404,18 +404,18 @@ const ACTION_COMMANDS: CommandDef[] = [
 	},
 	{
 		id: "layer.group",
-		label: "Group active layer",
+		label: "Group selected layers",
 		group: "Layers",
 		keywords: "folder container nest wrap",
-		run: () => editor.groupActiveLayer(),
+		run: () => editor.groupSelectedLayers(),
 	},
 	{
 		id: "layer.ungroup",
-		label: "Ungroup",
+		label: "Ungroup selected layers",
 		group: "Layers",
-		keywords: "folder flatten container",
-		enabled: () => editor.activeLayer.isGroup === true,
-		run: () => editor.ungroupLayer(),
+		keywords: "folder flatten container outdent",
+		enabled: () => editor.canOutdentSelectedLayers,
+		run: () => editor.outdentSelectedLayers(),
 	},
 	{
 		id: "layer.indent",
@@ -440,10 +440,10 @@ const ACTION_COMMANDS: CommandDef[] = [
 	},
 	{
 		id: "layer.delete",
-		label: "Delete layer",
+		label: "Delete selected layers",
 		group: "Layers",
-		enabled: () => editor.canDeleteLayer,
-		run: () => editor.deleteLayer(),
+		enabled: () => editor.canDeleteSelectedLayers,
+		run: () => editor.deleteSelectedLayers(),
 	},
 	{
 		id: "layer.move-up",
