@@ -32,9 +32,11 @@
 		isSelectionPoint,
 		lassoSelectionMask,
 		magicWandMask,
+		selectionBounds,
 		shapeSelectionMask,
 		unionSelectionMasks,
 	} from "$lib/editor/selection.js";
+	import { transformSelection } from "$lib/editor/transform.js";
 	import { drawPixels, drawScaled } from "$lib/editor/render.js";
 	import { editor, type FloatingSelection } from "$lib/editor/editor.svelte.js";
 	import { isSelectionTool } from "$lib/editor/tools.js";
@@ -148,6 +150,51 @@
 	/** True when the drag started on content that was already floating. */
 	let moveExistingFloating = false;
 
+	/** Which selection-transform handle is currently being dragged, if any. */
+	type TransformHandle =
+		| "nw"
+		| "n"
+		| "ne"
+		| "e"
+		| "se"
+		| "s"
+		| "sw"
+		| "w"
+		| "rotate";
+
+	/** Captured selection content plus its document-space bounds. */
+	interface TransformSource {
+		pixels: Uint32Array;
+		mask: Uint8Array;
+		width: number;
+		height: number;
+		x: number;
+		y: number;
+	}
+
+	/** True while a selection is being scaled, rotated, flipped, or skewed. */
+	let transformActive = $state(false);
+	/** Handle under the pointer while not dragging, for cursor/feedback. */
+	let hoveredHandle = $state<TransformHandle | null>(null);
+	/** True when the pointer is inside the selection (but not on a handle). */
+	let hoveringSelection = $state(false);
+
+	let transformHandle: TransformHandle | null = null;
+	let transformSource: TransformSource | null = null;
+	let transformPivotX = 0;
+	let transformPivotY = 0;
+	let transformScaleX = 1;
+	let transformScaleY = 1;
+	let transformAngle = 0;
+	let transformSkewX = 0;
+	let transformSkewY = 0;
+	let transformStartScaleX = 1;
+	let transformStartScaleY = 1;
+	let transformStartAngle = 0;
+	let transformStartSkewX = 0;
+	let transformStartSkewY = 0;
+	let transformDragStart: Point | null = null;
+
 	let hoveringMirror = $state<MirrorKind | null>(null);
 	let draggingMirror = $state<MirrorKind | null>(null);
 	let hoveringRadialCenter = $state(false);
@@ -209,25 +256,36 @@
 			!draggingRadialCenter &&
 			!hoveringRadialCenter &&
 			!draggingReference &&
-			!hoveringReference,
+			!hoveringReference &&
+			!transformActive &&
+			!hoveredHandle &&
+			!hoveringSelection,
 	);
 
 	let canvasCursor = $derived(
-		draggingReference
-			? "cursor-grabbing"
-			: hoveringReference
-				? "cursor-move"
-				: draggingRadialCenter
-					? "cursor-grabbing"
-					: hoveringRadialCenter
-						? "cursor-grab"
-						: draggingMirror
-							? mirrorCursor(draggingMirror)
-							: hoveringMirror
-								? mirrorCursor(hoveringMirror)
-								: panning
-									? "cursor-grabbing"
-									: "cursor-crosshair",
+		transformActive
+			? transformHandle
+				? handleCursor(transformHandle)
+				: "cursor-move"
+			: hoveredHandle
+				? handleCursor(hoveredHandle)
+				: hoveringSelection
+					? "cursor-move"
+					: draggingReference
+						? "cursor-grabbing"
+						: hoveringReference
+							? "cursor-move"
+							: draggingRadialCenter
+								? "cursor-grabbing"
+								: hoveringRadialCenter
+									? "cursor-grab"
+									: draggingMirror
+										? mirrorCursor(draggingMirror)
+										: hoveringMirror
+											? mirrorCursor(hoveringMirror)
+											: panning
+												? "cursor-grabbing"
+												: "cursor-crosshair",
 	);
 
 	let stageCursor = $derived(
@@ -404,6 +462,11 @@
 		editor.selectionRevision;
 		const lasso = lassoPoints;
 		const hover = lassoHover;
+		transformActive;
+		hoveredHandle;
+		// Handles depend on the active tool and whether the layer is editable.
+		editor.tool;
+		editor.activeLayerDrawable;
 
 		if (!overlayCanvas) return;
 		const id = requestAnimationFrame(() => {
@@ -459,6 +522,11 @@
 		if (tool !== "spray") stopSpray();
 		if (tool !== "lasso") resetLasso();
 		if (tool !== "curve" && curvePhase !== "idle") finishCurve();
+		if (transformActive && !isSelectionTool(tool)) finishSelectionTransform();
+		if (!isSelectionTool(tool)) {
+			hoveredHandle = null;
+			hoveringSelection = false;
+		}
 	});
 
 	$effect(() => () => stopSpray());
@@ -468,6 +536,7 @@
 		stopSpray();
 		resetLasso();
 		resetCurveState(false);
+		resetTransformState();
 		draggingReference = null;
 		hoveringReference = false;
 		selecting = false;
@@ -478,12 +547,14 @@
 		editor.activeLayerId;
 		editor.activeFrame;
 		stopSpray();
+		resetTransformState();
 		if (curvePhase !== "idle") finishCurve();
 	});
 
 	$effect(() => {
 		editor.historyActionRevision;
 		stopSpray();
+		resetTransformState();
 		if (curvePhase !== "idle") resetCurveState(false);
 	});
 
@@ -1404,6 +1475,360 @@
 		moveExistingFloating = false;
 	}
 
+	/** Bounds of the current selection or floating content, or null. */
+	function currentSelectionBounds(): {
+		x: number;
+		y: number;
+		width: number;
+		height: number;
+	} | null {
+		if (editor.floating) {
+			return {
+				x: editor.floating.originX,
+				y: editor.floating.originY,
+				width: editor.floating.width,
+				height: editor.floating.height,
+			};
+		}
+		return selectionBounds(editor.selection, editor.doc.width, editor.doc.height);
+	}
+
+	/** Handle positions for the current selection box, or null without one. */
+	function transformBoxInfo(): {
+		corners: { id: TransformHandle; x: number; y: number }[];
+		edges: { id: TransformHandle; x: number; y: number }[];
+		rotate: { x: number; y: number };
+		center: { x: number; y: number };
+		polygon: { x: number; y: number }[];
+	} | null {
+		const source = transformSource;
+		const bounds = source
+			? { x: source.x, y: source.y, w: source.width, h: source.height }
+			: (() => {
+					const b = currentSelectionBounds();
+					return b ? { x: b.x, y: b.y, w: b.width, h: b.height } : null;
+				})();
+		if (!bounds) return null;
+
+		const active = transformActive && source;
+		const pivotX = active ? transformPivotX : bounds.x + bounds.w / 2;
+		const pivotY = active ? transformPivotY : bounds.y + bounds.h / 2;
+		const scaleX = active ? transformScaleX : 1;
+		const scaleY = active ? transformScaleY : 1;
+		const angle = active ? transformAngle : 0;
+		const skewX = active ? transformSkewX : 0;
+		const skewY = active ? transformSkewY : 0;
+
+		const halfWidth = bounds.w / 2;
+		const halfHeight = bounds.h / 2;
+		const cos = Math.cos(angle);
+		const sin = Math.sin(angle);
+		const map = (localX: number, localY: number) => {
+			const scaledX = localX * scaleX;
+			const scaledY = localY * scaleY;
+			const kx = scaledX + skewX * scaledY;
+			const ky = scaledY + skewY * scaledX;
+			return {
+				x: pivotX + kx * cos - ky * sin,
+				y: pivotY + kx * sin + ky * cos,
+			};
+		};
+
+		const nw = map(-halfWidth, -halfHeight);
+		const ne = map(halfWidth, -halfHeight);
+		const se = map(halfWidth, halfHeight);
+		const sw = map(-halfWidth, halfHeight);
+		const mid = (
+			a: { x: number; y: number },
+			b: { x: number; y: number },
+		) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+		const n = mid(nw, ne);
+		const e = mid(ne, se);
+		const s = mid(se, sw);
+		const w = mid(sw, nw);
+
+		const center = { x: pivotX, y: pivotY };
+		const dirX = n.x - center.x;
+		const dirY = n.y - center.y;
+		const length = Math.hypot(dirX, dirY) || 1;
+		const gap = 18 / zoom;
+		const rotate = {
+			x: clampToDoc(n.x + (dirX / length) * gap, editor.doc.width),
+			y: clampToDoc(n.y + (dirY / length) * gap, editor.doc.height),
+		};
+
+		return {
+			corners: [
+				{ id: "nw", x: nw.x, y: nw.y },
+				{ id: "ne", x: ne.x, y: ne.y },
+				{ id: "se", x: se.x, y: se.y },
+				{ id: "sw", x: sw.x, y: sw.y },
+			],
+			edges: [
+				{ id: "n", x: n.x, y: n.y },
+				{ id: "e", x: e.x, y: e.y },
+				{ id: "s", x: s.x, y: s.y },
+				{ id: "w", x: w.x, y: w.y },
+			],
+			rotate,
+			center,
+			polygon: [nw, ne, se, sw],
+		};
+	}
+
+	function clampToDoc(value: number, size: number): number {
+		return Math.max(0, Math.min(size, value));
+	}
+
+	function handleAtPoint(point: Point): TransformHandle | null {
+		const info = transformBoxInfo();
+		if (!info) return null;
+		const hit = 6 / zoom;
+		const within = (p: { x: number; y: number }) =>
+			Math.hypot(p.x - point.x, p.y - point.y) <= hit;
+		if (within(info.rotate)) return "rotate";
+		for (const corner of info.corners) if (within(corner)) return corner.id;
+		for (const edge of info.edges) if (within(edge)) return edge.id;
+		return null;
+	}
+
+	function pointInPolygon(
+		polygon: { x: number; y: number }[],
+		point: Point,
+	): boolean {
+		let inside = false;
+		for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+			const a = polygon[i]!;
+			const b = polygon[j]!;
+			if (
+				a.y > point.y !== b.y > point.y &&
+				point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x
+			) {
+				inside = !inside;
+			}
+		}
+		return inside;
+	}
+
+	function transformHandleDir(handle: TransformHandle): { x: number; y: number } {
+		switch (handle) {
+			case "nw":
+				return { x: -1, y: -1 };
+			case "n":
+				return { x: 0, y: -1 };
+			case "ne":
+				return { x: 1, y: -1 };
+			case "e":
+				return { x: 1, y: 0 };
+			case "se":
+				return { x: 1, y: 1 };
+			case "s":
+				return { x: 0, y: 1 };
+			case "sw":
+				return { x: -1, y: 1 };
+			case "w":
+				return { x: -1, y: 0 };
+			default:
+				return { x: 0, y: 0 };
+		}
+	}
+
+	function handleCursor(handle: TransformHandle): string {
+		switch (handle) {
+			case "nw":
+			case "se":
+				return "cursor-nwse-resize";
+			case "ne":
+			case "sw":
+				return "cursor-nesw-resize";
+			case "n":
+			case "s":
+				return "cursor-ns-resize";
+			case "e":
+			case "w":
+				return "cursor-ew-resize";
+			case "rotate":
+				return "cursor-alias";
+			default:
+				return "cursor-move";
+		}
+	}
+
+	/** Keeps the scale magnitude at least one document pixel per axis. */
+	function clampTransformScale(value: number, halfExtent: number): number {
+		const minimum = 1 / (2 * halfExtent);
+		if (value >= 0) return Math.max(value, minimum);
+		return Math.min(value, -minimum);
+	}
+
+	function clampTransformSkew(value: number): number {
+		return Math.max(-2, Math.min(2, value));
+	}
+
+	function recomputeTransform(): void {
+		const source = transformSource;
+		if (!source || !editor.floating) return;
+		const result = transformSelection(
+			{
+				pixels: source.pixels,
+				mask: source.mask,
+				width: source.width,
+				height: source.height,
+			},
+			{
+				scaleX: transformScaleX,
+				scaleY: transformScaleY,
+				skewX: transformSkewX,
+				skewY: transformSkewY,
+				angle: transformAngle,
+			},
+		);
+		const originX = Math.round(transformPivotX - result.width / 2);
+		const originY = Math.round(transformPivotY - result.height / 2);
+		editor.setFloatingTransform(
+			editor.floating,
+			result.pixels,
+			result.mask,
+			originX,
+			originY,
+			result.width,
+			result.height,
+		);
+	}
+
+	function beginSelectionTransform(handle: TransformHandle, point: Point): void {
+		let source: TransformSource;
+		if (editor.floating) {
+			const floating = editor.floating;
+			source = {
+				pixels: new Uint32Array(floating.pixels),
+				mask: new Uint8Array(floating.mask),
+				width: floating.width,
+				height: floating.height,
+				x: floating.originX,
+				y: floating.originY,
+			};
+		} else {
+			const floating = editor.beginFloatingTransform();
+			if (!floating) return;
+			source = {
+				pixels: new Uint32Array(floating.pixels),
+				mask: new Uint8Array(floating.mask),
+				width: floating.width,
+				height: floating.height,
+				x: floating.originX,
+				y: floating.originY,
+			};
+		}
+
+		transformSource = source;
+		transformPivotX = source.x + source.width / 2;
+		transformPivotY = source.y + source.height / 2;
+		transformScaleX = 1;
+		transformScaleY = 1;
+		transformAngle = 0;
+		transformSkewX = 0;
+		transformSkewY = 0;
+		transformStartScaleX = 1;
+		transformStartScaleY = 1;
+		transformStartAngle = 0;
+		transformStartSkewX = 0;
+		transformStartSkewY = 0;
+		transformHandle = handle;
+		transformDragStart = point;
+		transformActive = true;
+		hoveredHandle = handle;
+	}
+
+	function updateTransform(point: Point, event: PointerEvent): void {
+		if (!transformActive || !transformHandle || !transformSource || !transformDragStart) {
+			return;
+		}
+		const source = transformSource;
+		const halfWidth = source.width / 2;
+		const halfHeight = source.height / 2;
+		const cos = Math.cos(transformAngle);
+		const sin = Math.sin(transformAngle);
+
+		// Pointer positions in the unrotated (local) frame around the pivot.
+		const unrotate = (p: Point) => {
+			const dx = p.x - transformPivotX;
+			const dy = p.y - transformPivotY;
+			return { x: dx * cos + dy * sin, y: -dx * sin + dy * cos };
+		};
+		const current = unrotate(point);
+		const start = unrotate(transformDragStart);
+		const deltaX = current.x - start.x;
+		const deltaY = current.y - start.y;
+
+		const ctrl = event.ctrlKey || event.metaKey;
+		const shift = event.shiftKey;
+
+		if (transformHandle === "rotate") {
+			const startAngle = Math.atan2(
+				transformDragStart.y - transformPivotY,
+				transformDragStart.x - transformPivotX,
+			);
+			const currentAngle = Math.atan2(
+				point.y - transformPivotY,
+				point.x - transformPivotX,
+			);
+			let next = transformStartAngle + (currentAngle - startAngle);
+			if (shift) next = Math.round(next / (Math.PI / 12)) * (Math.PI / 12);
+			transformAngle = next;
+			recomputeTransform();
+			return;
+		}
+
+		const dir = transformHandleDir(transformHandle);
+
+		if (ctrl && dir.x !== 0 && dir.y !== 0) {
+			const baseX = dir.x * halfWidth * transformScaleX;
+			const baseY = dir.y * halfHeight * transformScaleY;
+			transformSkewX = clampTransformSkew(
+				transformStartSkewX + deltaX / (baseY || 1),
+			);
+			transformSkewY = clampTransformSkew(
+				transformStartSkewY + deltaY / (baseX || 1),
+			);
+			recomputeTransform();
+			return;
+		}
+
+		let scaleX = transformStartScaleX;
+		let scaleY = transformStartScaleY;
+		if (dir.x !== 0) scaleX = transformStartScaleX + deltaX / (dir.x * halfWidth);
+		if (dir.y !== 0) scaleY = transformStartScaleY + deltaY / (dir.y * halfHeight);
+		if (shift && dir.x !== 0 && dir.y !== 0) {
+			const factor = (Math.abs(scaleX) + Math.abs(scaleY)) / 2;
+			scaleX = Math.sign(scaleX) * factor;
+			scaleY = Math.sign(scaleY) * factor;
+		}
+		transformScaleX = clampTransformScale(scaleX, halfWidth);
+		transformScaleY = clampTransformScale(scaleY, halfHeight);
+		recomputeTransform();
+	}
+
+	function finishSelectionTransform(): void {
+		if (!transformActive) return;
+		transformActive = false;
+		transformHandle = null;
+		transformDragStart = null;
+		transformSource = null;
+		hoveredHandle = null;
+		editor.commitFloatingSelection();
+	}
+
+	/** Clears the transform bookkeeping without committing the floating content. */
+	function resetTransformState(): void {
+		transformActive = false;
+		transformHandle = null;
+		transformDragStart = null;
+		transformSource = null;
+		hoveredHandle = null;
+		hoveringSelection = false;
+	}
+
 	function capturePointer(
 		event: PointerEvent,
 		target: HTMLElement | undefined = canvas,
@@ -1451,6 +1876,76 @@
 		context.restore();
 	}
 
+	function drawTransformBox(
+		context: CanvasRenderingContext2D,
+		info: NonNullable<ReturnType<typeof transformBoxInfo>>,
+		hovered: TransformHandle | null,
+		scaleX: number,
+		scaleY: number,
+		dpr: number,
+	): void {
+		const lineWidth = Math.max(1, dpr);
+		const handleHalf = Math.max(3, dpr * 2.5);
+
+		// Dashed outline of the (possibly rotated) selection box.
+		context.beginPath();
+		const first = info.polygon[0]!;
+		context.moveTo(first.x * scaleX, first.y * scaleY);
+		for (let i = 1; i < info.polygon.length; i++) {
+			const point = info.polygon[i]!;
+			context.lineTo(point.x * scaleX, point.y * scaleY);
+		}
+		context.closePath();
+		context.lineWidth = lineWidth;
+		context.setLineDash([4 * dpr, 4 * dpr]);
+		context.strokeStyle = "rgba(255, 255, 255, 0.85)";
+		context.stroke();
+		context.setLineDash([]);
+
+		const drawSquare = (
+			point: { x: number; y: number },
+			id: TransformHandle,
+		): void => {
+			const x = point.x * scaleX;
+			const y = point.y * scaleY;
+			const active = hovered === id;
+			context.beginPath();
+			context.rect(x - handleHalf, y - handleHalf, handleHalf * 2, handleHalf * 2);
+			context.fillStyle = active ? "#3b82f6" : "rgba(255, 255, 255, 0.95)";
+			context.fill();
+			context.lineWidth = lineWidth;
+			context.strokeStyle = "rgba(0, 0, 0, 0.85)";
+			context.stroke();
+		};
+
+		for (const corner of info.corners) drawSquare(corner, corner.id);
+		for (const edge of info.edges) drawSquare(edge, edge.id);
+
+		// Rotate handle: a circle above the top edge, connected by a stem.
+		const rotate = info.rotate;
+		const top = info.edges.find((edge) => edge.id === "n")!;
+		context.beginPath();
+		context.moveTo(top.x * scaleX, top.y * scaleY);
+		context.lineTo(rotate.x * scaleX, rotate.y * scaleY);
+		context.lineWidth = lineWidth;
+		context.strokeStyle = "rgba(255, 255, 255, 0.85)";
+		context.stroke();
+
+		context.beginPath();
+		context.arc(
+			rotate.x * scaleX,
+			rotate.y * scaleY,
+			Math.max(3, dpr * 2.5),
+			0,
+			Math.PI * 2,
+		);
+		context.fillStyle = hovered === "rotate" ? "#3b82f6" : "rgba(255, 255, 255, 0.95)";
+		context.fill();
+		context.lineWidth = lineWidth;
+		context.strokeStyle = "rgba(0, 0, 0, 0.85)";
+		context.stroke();
+	}
+
 	function drawOverlay(
 		context: CanvasRenderingContext2D,
 		selection: Uint8Array | null,
@@ -1473,7 +1968,7 @@
 
 		if (floating) drawFloatingPixels(context, floating, scaleX, scaleY);
 
-		if (selection) {
+		if (selection && !transformActive) {
 			// Trace horizontal runs instead of testing four neighbors for every
 			// selected pixel. Large selections produce far fewer path segments.
 			const emitHorizontal = (
@@ -1553,6 +2048,11 @@
 			context.setLineDash([4 * dpr, 4 * dpr]);
 			context.strokeStyle = "rgba(255, 255, 255, 0.95)";
 			context.stroke();
+		}
+
+		if (isSelectionTool(editor.tool) && isEditable() && !selecting && !lassoDragging && !movingSelection) {
+			const info = transformBoxInfo();
+			if (info) drawTransformBox(context, info, hoveredHandle, scaleX, scaleY, dpr);
 		}
 
 		if (lasso.length > 0) {
@@ -1794,6 +2294,17 @@
 				}
 			}
 
+			if (!additive && isEditable() && (editor.selection || editor.floating)) {
+				const docPoint = documentPointFromEvent(event);
+				if (docPoint) {
+					const handle = handleAtPoint(docPoint);
+					if (handle) {
+						beginSelectionTransform(handle, docPoint);
+						return;
+					}
+				}
+			}
+
 			if (!additive && editor.selection && isPointSelected(point) && isEditable()) {
 				beginSelectionMove(point);
 				return;
@@ -1959,10 +2470,31 @@
 			return;
 		}
 
+		if (transformActive) {
+			const docPoint = documentPointFromEvent(event);
+			if (docPoint) updateTransform(docPoint, event);
+			return;
+		}
+
 		if (!panning && !movingSelection && !selecting && !lassoDragging && !drawing) {
 			hoveringReference = referenceAtEvent(event) !== null;
 			hoveringRadialCenter = radialCenterAtEvent(event);
 			hoveringMirror = mirrorAtEvent(event)?.kind ?? null;
+
+			const docPoint = documentPointFromEvent(event);
+			if (isSelectionTool(editor.tool) && isEditable() && docPoint) {
+				const info = transformBoxInfo();
+				if (info) {
+					hoveredHandle = handleAtPoint(docPoint);
+					hoveringSelection = !hoveredHandle && pointInPolygon(info.polygon, docPoint);
+				} else {
+					hoveredHandle = null;
+					hoveringSelection = false;
+				}
+			} else {
+				hoveredHandle = null;
+				hoveringSelection = false;
+			}
 		}
 
 		if (panning) {
@@ -2091,6 +2623,13 @@
 			return;
 		}
 
+		if (transformActive) {
+			finishSelectionTransform();
+			releasePointer(event);
+			setCursor(pixelFromEvent(event));
+			return;
+		}
+
 		if (curvePhase !== "idle") {
 			if (curveDragging) {
 				if (curvePhase === "base") {
@@ -2162,11 +2701,15 @@
 
 	function handlePointerLeave(): void {
 		pointerScreen = null;
-		if (drawing || selecting || lassoDragging || movingSelection || panning) return;
+		if (drawing || selecting || lassoDragging || movingSelection || panning || transformActive) {
+			return;
+		}
 		setCursor(null);
 		hoveringMirror = null;
 		hoveringRadialCenter = false;
 		hoveringReference = false;
+		hoveredHandle = null;
+		hoveringSelection = false;
 		if (editor.tool === "lasso") lassoHover = null;
 	}
 

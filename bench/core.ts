@@ -64,6 +64,11 @@ import {
 	magicWandMask,
 	selectionBounds,
 } from "../src/lib/editor/selection.js";
+import {
+	rotateRotsprite,
+	transformSelection,
+	warpScaleSkew,
+} from "../src/lib/editor/transform.js";
 import type { BlendMode, MirrorAxis, PixelDoc } from "../src/lib/editor/types.js";
 
 function mulberry32(seed: number): () => number {
@@ -952,6 +957,67 @@ function assertSheetMetadata(): void {
 	}
 }
 
+function assertSelectionTransform(): void {
+	const A = packColor("#ff0000");
+	const B = packColor("#00ff00");
+	const C = packColor("#0000ff");
+	const D = packColor("#ffff00");
+	const E = packColor("#ff00ff");
+	const F = packColor("#00ffff");
+	const pixels = new Uint32Array([A, B, C, D, E, F]);
+	// Every pixel is selected except (1,1) = D.
+	const mask = new Uint8Array([1, 1, 1, 0, 1, 1]);
+	const source = { pixels, mask, width: 2, height: 3 };
+
+	const identity = transformSelection(source, {
+		scaleX: 1,
+		scaleY: 1,
+		skewX: 0,
+		skewY: 0,
+		angle: 0,
+	});
+	if (
+		identity.width !== 2 ||
+		identity.height !== 3 ||
+		identity.pixels.join() !== pixels.join() ||
+		identity.mask.join() !== mask.join()
+	) {
+		throw new Error("selection transform identity changed");
+	}
+
+	const flipped = warpScaleSkew(source, -1, 1, 0, 0);
+	if (flipped.pixels.join() !== [B, A, D, C, F, E].join()) {
+		throw new Error("selection transform horizontal flip changed");
+	}
+	if (flipped.mask.join() !== [1, 1, 0, 1, 1, 1].join()) {
+		throw new Error("selection transform flip mask changed");
+	}
+
+	const doubled = warpScaleSkew(source, 2, 2, 0, 0);
+	if (doubled.width !== 4 || doubled.height !== 6) {
+		throw new Error("selection transform 2× dimensions changed");
+	}
+	if (doubled.pixels.slice(0, 4).join() !== [A, A, B, B].join()) {
+		throw new Error("selection transform 2× scale changed");
+	}
+
+	const quarter = rotateRotsprite(source, Math.PI / 2);
+	if (quarter.width !== 3 || quarter.height !== 2) {
+		throw new Error("selection transform 90° dimensions changed");
+	}
+	if (quarter.pixels.join() !== [E, C, A, F, D, B].join()) {
+		throw new Error("selection transform 90° rotation changed");
+	}
+	if (quarter.mask.join() !== [1, 1, 1, 1, 0, 1].join()) {
+		throw new Error("selection transform 90° mask changed");
+	}
+
+	const rotated = rotateRotsprite(source, 0.7);
+	if (rotated.width <= 0 || rotated.height <= 0 || rotated.pixels.length === 0) {
+		throw new Error("selection transform arbitrary rotation empty");
+	}
+}
+
 assertCanvasSizePresets();
 assertLayerColors();
 assertPaletteSorting();
@@ -960,6 +1026,7 @@ assertPaletteCycling();
 assertPaletteAnalysis();
 assertSheetMetadata();
 assertLayerGroups();
+assertSelectionTransform();
 assertProjectRoundtrip(makeDoc(64, 64, 2, 3, 41), "sparse");
 const opaqueDoc = makeDoc(64, 64, 1, 1, 42);
 for (const cel of opaqueDoc.layers[0]!.cels) cel.fill(0xff336699);

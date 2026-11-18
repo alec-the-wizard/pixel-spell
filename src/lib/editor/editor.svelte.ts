@@ -1027,6 +1027,45 @@ export class EditorState {
 	}
 
 	/**
+	 * Captures the current selection into floating content, clears its source
+	 * pixels, and records one history entry. Used as the entry point for the
+	 * selection's scale/rotate/flip/skew transform: the returned floating holds
+	 * the untransformed source, and `setFloatingTransform` replaces it with the
+	 * transformed buffer as the handle drag progresses.
+	 */
+	beginFloatingTransform(): FloatingSelection | null {
+		const floating = this.createFloatingSelection();
+		if (!floating) return null;
+		this.beginFloatingMove(floating, floating.originX, floating.originY);
+		return floating;
+	}
+
+	/**
+	 * Replaces the floating content with a transformed buffer and refreshes the
+	 * selection mask. The cel is not recomposited here (its source region is
+	 * already cleared), so this only bumps the selection revision — not the
+	 * pixel revision — keeping handle drags cheap.
+	 */
+	setFloatingTransform(
+		floating: FloatingSelection,
+		pixels: Uint32Array,
+		mask: Uint8Array,
+		originX: number,
+		originY: number,
+		width: number,
+		height: number,
+	): void {
+		floating.pixels = pixels;
+		floating.mask = mask;
+		floating.originX = originX;
+		floating.originY = originY;
+		floating.width = width;
+		floating.height = height;
+		this.floating = floating;
+		this.#syncFloatingMask();
+	}
+
+	/**
 	 * Pastes the internal clipboard as floating content. It is not written into
 	 * the cel until the user deselects or starts another selection.
 	 */

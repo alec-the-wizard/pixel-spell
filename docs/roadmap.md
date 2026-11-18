@@ -42,6 +42,7 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Frame duration badges and colored tag ranges | 5 | 2 | 2.50 | | Implemented: each frame header shows its duration in milliseconds in the timeline, with `ms` appended so the unit is unambiguous. A duration that comes from frame properties is wrapped in square brackets (`[ 123ms ]`); a duration derived from the project FPS stays bare (`123ms`). Tags carry a generated color, so contiguous tag ranges are easy to distinguish in the tag row. |
 | Unused-color pruning and palette analysis | 5 | 2 | 2.50 | | Implemented: the palette tools menu can remove every palette color that no frame or normal layer uses (reference layers are ignored, and the built-in, locked, and read-only palettes are never modified). **Coverage analysis…** opens a read-only dialog with used/unused totals, the share of painted pixels covered by the palette, per-color usage bars, twelve-bin hue coverage with dashed gaps, eight-bin brightness coverage, and the most-used off-palette colors. |
 | Layer groups, blend modes, clipping masks | 8 | 6 | 1.33 | | Implemented: the layer model is now a tree. Group nodes (`isGroup`, no cels) nest via `parentId`, render as collapsible rows in the timeline, and composite their children into an offscreen buffer that is blended with the group's own opacity and blend mode. Every layer and group can carry a `blendMode` (normal, multiply, screen, overlay, darken, lighten, color dodge, color burn, hard light, soft light, difference, exclusion, add, subtract) and a `clipping` toggle that masks pixels to the composited content below. Compositing, `compositePixel`, the incremental fast path (with a full-composite fallback for grouped/blended documents), undo cloning, and the `PXSP` container (version 4) all support the tree. The timeline toolbar adds new group, group-into, ungroup, indent, and outdent actions; Layer properties exposes blend mode and clipping. Blend modes and clipping apply on every export path. |
+| Selection transform (scale/rotate/flip) | 8 | 6 | 1.33 | | Implemented: a selection made with any selection tool grows transform handles. Drag a corner or edge handle to scale (crossing the center flips, `Shift` locks aspect), the circle above the top edge rotates (`Shift` snaps to 15°), and `Ctrl`/`Cmd`-dragging a corner skews. Dragging inside still moves the selection. Each gesture commits on release and is undoable. Rotation uses the RotSprite algorithm (Scale2x 8× upscale, nearest-neighbor parallelogram rotation, nearest-neighbor downscale) to keep rotated pixel art crisp without bilinear blur. |
 
 ## Planned features
 
@@ -66,7 +67,6 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Recent files / project library | 6 | 4 | 1.50 | | A local project browser backed by IndexedDB/File System Access API, with thumbnails and recent projects. Complements autosave and is the offline prerequisite for any later cloud sync. |
 | Isometric / seamless tiled drawing | 7 | 5 | 1.40 | | Wrap drawing across canvas edges and add an isometric tile mode. Requires careful coordinate wrapping in every drawing tool and preview. |
 | Sprite atlas packing (MaxRects) | 7 | 5 | 1.40 | | Pack frames or tagged animations into an atlas with padding, trim, and rotation options. Build on the sprite-sheet geometry code. |
-| Selection transform (scale/rotate/flip) | 8 | 6 | 1.33 | | Add transform handles to floating selections with nearest-neighbor scaling and 90° rotation. Reuse the floating-selection pipeline; add a transform matrix and commit path. Consider pixel-preserving rotation (RotSprite/cleanEdge) later. |
 | WebGL shader filters | 8 | 6 | 1.33 | ★ | Real-time fragment-shader filters (scanlines, glow, palette posterize, outline) previewed on the canvas, user-loadable. Pixelorama ships Godot shaders; a WebGL path is a strong browser-native differentiator. |
 | Tweening (position/scale/rotation/opacity, easing) | 8 | 6 | 1.33 | | Interpolate between frames with easing curves to generate in-betweens. One of the most-requested Aseprite features (v1.4 plan #96); a browser editor can ship it as a non-destructive “tween layer” or baked frames. |
 | Version snapshots / named checkpoints | 6 | 5 | 1.20 | | Save named project snapshots locally with thumbnails and restore/diff. Complements undo and autosave without a backend. |
@@ -125,7 +125,7 @@ These add the most day-to-day value per unit of risk. Onion skinning and referen
 ### Phase 2 — professional editing (1–2 months)
 
 1. Layer groups, blend modes, and clipping masks — done
-2. Selection transform (scale/rotate/flip)
+2. Selection transform (scale/rotate/flip) — done
 3. Custom brushes and dithering patterns
 4. Outline/shadow/color-replace filters
 5. Grayscale mode
