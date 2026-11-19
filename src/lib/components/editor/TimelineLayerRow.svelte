@@ -237,7 +237,7 @@
 					size="icon-xs"
 					class={cn(
 						"size-7 shrink-0",
-						layer.visible ? "text-foreground" : "text-muted-foreground/50",
+						layer.visible ? "text-foreground" : "text-muted-foreground",
 					)}
 					title={layer.visible ? `Hide ${layer.name}` : `Show ${layer.name}`}
 					aria-label={layer.visible ? `Hide ${layer.name}` : `Show ${layer.name}`}
@@ -319,7 +319,7 @@
 					size="icon-xs"
 					class={cn(
 						"size-7 shrink-0",
-						layer.visible ? "text-foreground" : "text-muted-foreground/50",
+						layer.visible ? "text-foreground" : "text-muted-foreground",
 					)}
 					title={layer.visible ? `Hide ${layer.name}` : `Show ${layer.name}`}
 					aria-label={layer.visible ? `Hide ${layer.name}` : `Show ${layer.name}`}
@@ -368,7 +368,7 @@
 						size="icon-xs"
 						class={cn(
 							"size-7 shrink-0",
-							layer.continuous ? "text-primary" : "text-muted-foreground",
+							layer.continuous ? "text-foreground" : "text-muted-foreground",
 						)}
 						title={layer.continuous
 							? `Stop linking new cels on ${layer.name}`

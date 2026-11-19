@@ -1064,7 +1064,12 @@
 							<Button
 								variant="ghost"
 								size="icon-xs"
-								class="size-7 text-muted-foreground"
+								class={cn(
+									"size-7",
+									editor.anyLayerVisible
+										? "text-foreground"
+										: "text-muted-foreground",
+								)}
 								onclick={() =>
 									editor.setAllLayersVisible(!editor.anyLayerVisible)}
 								title={editor.anyLayerVisible
@@ -1083,7 +1088,12 @@
 							<Button
 								variant="ghost"
 								size="icon-xs"
-								class="size-7 text-muted-foreground"
+								class={cn(
+									"size-7",
+									editor.anyLayerUnlocked
+										? "text-muted-foreground"
+										: "text-foreground",
+								)}
 								onclick={() =>
 									editor.setAllLayersLocked(editor.anyLayerUnlocked)}
 								title={editor.anyLayerUnlocked
@@ -1103,7 +1113,12 @@
 							<Button
 								variant="ghost"
 								size="icon-xs"
-								class="size-7 text-muted-foreground"
+								class={cn(
+									"size-7",
+									editor.anyLayerContinuous
+										? "text-foreground"
+										: "text-muted-foreground",
+								)}
 								onclick={() =>
 									editor.setAllLayersContinuous(!editor.anyLayerContinuous)}
 								title={editor.anyLayerContinuous
