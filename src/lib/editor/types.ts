@@ -100,6 +100,16 @@ export interface Layer {
 	clipping?: boolean;
 	/** Timeline-only collapse state for groups. */
 	collapsed?: boolean;
+	/** Continuous layers auto-link newly added cels to the active frame. */
+	continuous?: boolean;
+}
+
+/** Per-cel presentation properties (opacity and stacking order). */
+export interface CelProps {
+	/** 0..1 opacity multiplier, layered on top of the layer opacity. */
+	opacity?: number;
+	/** Stacking order within a frame; higher composites later (on top). */
+	zIndex?: number;
 }
 
 /**
@@ -144,6 +154,8 @@ export interface PixelDoc {
 	animationMode?: AnimationMode;
 	/** Whether playback repeats; missing means true. */
 	animationLoop?: boolean;
+	/** Per-cel properties keyed by `${layerId}:${frameId}`. */
+	celProps?: Record<string, CelProps>;
 }
 
 export interface ProjectTab {

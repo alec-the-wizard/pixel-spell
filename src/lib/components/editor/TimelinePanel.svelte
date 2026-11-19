@@ -20,6 +20,8 @@
 	import IndentIncrease from "@lucide/svelte/icons/indent-increase";
 	import Lock from "@lucide/svelte/icons/lock";
 	import LockOpen from "@lucide/svelte/icons/lock-open";
+	import Link2 from "@lucide/svelte/icons/link-2";
+	import Link2Off from "@lucide/svelte/icons/link-2-off";
 	import Pause from "@lucide/svelte/icons/pause";
 	import Play from "@lucide/svelte/icons/play";
 	import Plus from "@lucide/svelte/icons/plus";
@@ -44,11 +46,16 @@
 	import DuplicateFramesDialog from "./DuplicateFramesDialog.svelte";
 	import FramePropertiesDialog from "./FramePropertiesDialog.svelte";
 	import LayerPropertiesDialog from "./LayerPropertiesDialog.svelte";
+	import CelPropertiesDialog from "./CelPropertiesDialog.svelte";
 	import TimelineLayerRow, { LAYER_INDENT } from "./TimelineLayerRow.svelte";
 
 	let framePropertiesOpen = $state(false);
 	let layerPropertiesOpen = $state(false);
 	let duplicateFramesOpen = $state(false);
+	let celPropertiesOpen = $state(false);
+	let celPropertiesTarget = $state<{ layerId: string; frameIndex: number } | null>(
+		null,
+	);
 
 	let contextMenu = $state<
 		| { kind: "frame"; x: number; y: number; frameIndex: number }
@@ -62,6 +69,9 @@
 		  }
 		| null
 	>(null);
+
+	/** The rendered context-menu element, measured to clamp it into the viewport. */
+	let menuElement = $state<HTMLElement | null>(null);
 
 	/** Cel where a left-button block selection started, if any. */
 	let celDrag = $state<{ layerId: string; frameIndex: number } | null>(null);
@@ -125,8 +135,8 @@
 	// actually visible (plus a little overscan) are rendered. The sticky header
 	// and layer column remain, and spacer cells preserve the scroll extents.
 	const BASE_LAYER_COLUMN_WIDTH = 240;
-	const FRAME_COLUMN_WIDTH = 56; // w-14
-	const LAYER_ROW_HEIGHT = 48; // h-12
+	const FRAME_COLUMN_WIDTH = 52; // w-13
+	const LAYER_ROW_HEIGHT = 52; // h-13
 	const OVERSCAN = 4;
 
 	/** Deepest nesting level, so the layer column can grow to fit its guides. */
@@ -330,15 +340,32 @@
 		}
 	}
 
-	/** Positions a fixed context menu without letting it leave the viewport. */
+	/**
+	 * Initial menu position, at the pointer. A `$effect` re-clamps it to the
+	 * actual measured menu size so it stays inside the viewport.
+	 */
 	function menuCoordinates(event: MouseEvent): { x: number; y: number } {
-		const width = 224;
-		const height = 480;
-		return {
-			x: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
-			y: Math.max(8, Math.min(event.clientY, window.innerHeight - height)),
-		};
+		return { x: event.clientX, y: event.clientY };
 	}
+
+	// Clamp the context menu to the viewport using its real rendered size. This
+	// replaces a fixed size estimate that pushed menus far from the pointer.
+	$effect(() => {
+		const menu = menuElement;
+		if (!menu || !contextMenu) return;
+
+		const margin = 8;
+		const width = menu.offsetWidth;
+		const height = menu.offsetHeight;
+		const maxX = Math.max(margin, window.innerWidth - width - margin);
+		const maxY = Math.max(margin, window.innerHeight - height - margin);
+		const x = Math.min(Math.max(margin, contextMenu.x), maxX);
+		const y = Math.min(Math.max(margin, contextMenu.y), maxY);
+
+		if (x !== contextMenu.x || y !== contextMenu.y) {
+			contextMenu = { ...contextMenu, x, y };
+		}
+	});
 
 	function openFrameContextMenu(event: MouseEvent, index: number): void {
 		event.preventDefault();
@@ -443,6 +470,12 @@
 	function openLayerProperties(layer: Layer): void {
 		editor.selectLayer(layer.id);
 		layerPropertiesOpen = true;
+	}
+
+	function openCelProperties(layerId: string, frameIndex: number): void {
+		editor.selectCel(layerId, frameIndex);
+		celPropertiesTarget = { layerId, frameIndex };
+		celPropertiesOpen = true;
 	}
 
 	function closeContextMenu(): void {
@@ -1090,7 +1123,7 @@
 						{@const selected = editor.isFrameSelected(index)}
 						<th
 							scope="col"
-							class="sticky top-6 z-20 h-8 w-14 min-w-14 border-b border-r bg-background p-0 align-middle"
+							class="sticky top-6 z-20 h-8 w-13 min-w-13 border-b border-r bg-background p-0 align-middle"
 						>
 							<button
 								type="button"
@@ -1191,6 +1224,7 @@
 						onCelPointerDown={handleCelPointerDown}
 						onCelPointerEnter={handleCelPointerEnter}
 						onCelContextMenu={handleCelContextMenu}
+						onCelDoubleClick={openCelProperties}
 						onLayerContextMenu={handleLayerContextMenu}
 						onLayerProperties={openLayerProperties}
 						onDragStart={(event) => beginLayerDrag(event, row.layer)}
@@ -1434,8 +1468,62 @@
 	</button>
 {/snippet}
 
+{#snippet celMenuActions(layerId: string, frameIndex: number)}
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		disabled={frameIndex <= 0}
+		onclick={() =>
+			runMenuAction(() =>
+				editor.isCelLinkedTo(layerId, frameIndex, -1)
+					? editor.unlinkCel(layerId, frameIndex, -1)
+					: editor.linkCel(layerId, frameIndex, -1))}
+	>
+		{#if editor.isCelLinkedTo(layerId, frameIndex, -1)}
+			<Link2Off class="size-3.5 text-muted-foreground" />
+			Unlink to the left
+		{:else}
+			<Link2 class="size-3.5 text-muted-foreground" />
+			Link to the left
+		{/if}
+	</button>
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		disabled={frameIndex >= editor.doc.frames.length - 1}
+		onclick={() =>
+			runMenuAction(() =>
+				editor.isCelLinkedTo(layerId, frameIndex, 1)
+					? editor.unlinkCel(layerId, frameIndex, 1)
+					: editor.linkCel(layerId, frameIndex, 1))}
+	>
+		{#if editor.isCelLinkedTo(layerId, frameIndex, 1)}
+			<Link2Off class="size-3.5 text-muted-foreground" />
+			Unlink to the right
+		{:else}
+			<Link2 class="size-3.5 text-muted-foreground" />
+			Link to the right
+		{/if}
+	</button>
+
+	<div class="my-1 h-px bg-border"></div>
+
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		onclick={() => runMenuAction(() => openCelProperties(layerId, frameIndex))}
+	>
+		<Settings2 class="size-3.5 text-muted-foreground" />
+		Cel properties…
+	</button>
+{/snippet}
+
 {#if contextMenu}
 	<div
+		bind:this={menuElement}
 		data-timeline-menu
 		class="fixed z-50 max-h-[calc(100svh-1rem)] w-56 overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-lg"
 		role="menu"
@@ -1451,9 +1539,7 @@
 		{:else if contextMenu.kind === "frame"}
 			{@render frameMenuActions()}
 		{:else}
-			{@render layerMenuActions()}
-			<div class="my-1 h-px bg-border"></div>
-			{@render frameMenuActions()}
+			{@render celMenuActions(contextMenu.layerId, contextMenu.frameIndex)}
 		{/if}
 	</div>
 {/if}
@@ -1461,6 +1547,7 @@
 <FramePropertiesDialog bind:open={framePropertiesOpen} />
 <LayerPropertiesDialog bind:open={layerPropertiesOpen} />
 <DuplicateFramesDialog bind:open={duplicateFramesOpen} />
+<CelPropertiesDialog bind:open={celPropertiesOpen} target={celPropertiesTarget} />
 
 <svelte:window
 	onpointerdown={handleWindowPointerDown}

@@ -30,7 +30,7 @@
 			pending = 0;
 			drawnStructure = structure;
 			drawnRevision = revision;
-			if (canvas) drawThumbnail(canvas, cel, doc.width, doc.height, 40);
+			if (canvas) drawThumbnail(canvas, cel, doc.width, doc.height, 44);
 		});
 		return () => {
 			if (pending) {

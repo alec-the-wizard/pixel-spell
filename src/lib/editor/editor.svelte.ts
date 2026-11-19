@@ -16,6 +16,8 @@ import {
 	MAX_FRAME_DURATION,
 	MIN_FRAME_DURATION,
 	animationSequence,
+	celKey,
+	celPropsOf,
 	cloneDoc,
 	createDoc,
 	createGroup,
@@ -72,6 +74,7 @@ import type {
 	AnimationMode,
 	BackgroundKind,
 	BlendMode,
+	CelProps,
 	ColorSlot,
 	Frame,
 	GradientDither,
@@ -1649,6 +1652,14 @@ export class EditorState {
 		this.revision++;
 		this.dirty = true;
 		this.modified = true;
+		// Editing a linked cel writes through to another frame, so that frame's
+		// thumbnail and composite must refresh even though it is not active.
+		if (
+			this.isCelLinkedTo(this.activeLayerId, this.activeFrame, -1) ||
+			this.isCelLinkedTo(this.activeLayerId, this.activeFrame, 1)
+		) {
+			this.structureRevision++;
+		}
 	}
 
 	#autosaveRecord(
@@ -2867,6 +2878,190 @@ export class EditorState {
 		this.layerAppearanceRevision++;
 	}
 
+	/**
+	 * Toggles a layer's "continuous" flag. Continuous layers link each newly
+	 * added cel to the active frame so repeated content stays in sync.
+	 */
+	toggleLayerContinuous(id: string): void {
+		const layer = this.doc.layers.find((item) => item.id === id);
+		if (!layer || isGroupLayer(layer) || layer.role === "reference") return;
+		if (layer.continuous) delete layer.continuous;
+		else layer.continuous = true;
+		this.dirty = true;
+		this.modified = true;
+	}
+
+	/** Whether a cel shares its pixel buffer with its `direction` neighbor. */
+	isCelLinkedTo(
+		layerId: string,
+		frameIndex: number,
+		direction: -1 | 1,
+	): boolean {
+		const layer = this.doc.layers.find((item) => item.id === layerId);
+		if (!layer) return false;
+		const cel = layer.cels[frameIndex];
+		const other = layer.cels[frameIndex + direction];
+		return !!cel && cel === other;
+	}
+
+	/** Returns the cel's stored properties, or undefined when none are set. */
+	getCelProps(layerId: string, frameIndex: number): CelProps | undefined {
+		const frame = this.doc.frames[frameIndex];
+		if (!frame) return undefined;
+		return celPropsOf(this.doc, layerId, frame.id);
+	}
+
+	/** Gives a cel its own buffer copy, detaching it from any shared link. */
+	#detachCel(layerId: string, frameIndex: number): void {
+		const layer = this.doc.layers.find((item) => item.id === layerId);
+		const cel = layer?.cels[frameIndex];
+		if (cel) layer.cels[frameIndex] = new Uint32Array(cel);
+	}
+
+	/**
+	 * Links the selected cel to its neighbor in `direction` (-1 left, +1 right).
+	 * The selected cel's pixels overwrite the neighbor's.
+	 */
+	linkCel(layerId: string, frameIndex: number, direction: -1 | 1): void {
+		const layer = this.doc.layers.find((item) => item.id === layerId);
+		if (!layer || isGroupLayer(layer)) return;
+		const other = frameIndex + direction;
+		if (other < 0 || other >= this.doc.frames.length) return;
+		if (this.isCelLinkedTo(layerId, frameIndex, direction)) return;
+
+		this.pushHistory();
+		// Detach any existing links first so each cel keeps one unambiguous link.
+		this.#detachCel(layerId, frameIndex);
+		this.#detachCel(layerId, other);
+
+		const width = this.doc.width;
+		const height = this.doc.height;
+		const shared = new Uint32Array(
+			layer.cels[frameIndex] ?? new Uint32Array(width * height),
+		);
+		layer.cels[frameIndex] = shared;
+		layer.cels[other] = shared;
+		this.structureRevision++;
+		this.revision++;
+	}
+
+	/**
+	 * Unlinks a cel from its neighbor in `direction` (-1 left, +1 right). The
+	 * neighbor gets its own buffer copy, leaving the selected cel intact.
+	 */
+	unlinkCel(layerId: string, frameIndex: number, direction: -1 | 1): void {
+		const layer = this.doc.layers.find((item) => item.id === layerId);
+		if (!layer) return;
+		const other = frameIndex + direction;
+		if (other < 0 || other >= this.doc.frames.length) return;
+		if (!this.isCelLinkedTo(layerId, frameIndex, direction)) return;
+
+		this.pushHistory();
+		this.#detachCel(layerId, other);
+		this.structureRevision++;
+		this.revision++;
+	}
+
+	/** Sets or clears a cel's custom opacity (null or >= 1 clears it). */
+	setCelOpacity(
+		layerId: string,
+		frameIndex: number,
+		opacity: number | null,
+	): void {
+		const layer = this.doc.layers.find((item) => item.id === layerId);
+		const frame = this.doc.frames[frameIndex];
+		if (!layer || isGroupLayer(layer) || !frame) return;
+
+		const value =
+			opacity === null || !Number.isFinite(opacity)
+				? undefined
+				: clamp(opacity, 0, 1);
+		const normalized = value === undefined || value >= 1 ? undefined : value;
+
+		const celProps = this.doc.celProps ?? (this.doc.celProps = {});
+		const key = celKey(layerId, frame.id);
+		const entry = celProps[key];
+		if ((entry?.opacity ?? undefined) === normalized) return;
+
+		if (normalized === undefined) {
+			if (entry) delete entry.opacity;
+		} else {
+			(celProps[key] ?? (celProps[key] = {})).opacity = normalized;
+		}
+
+		const current = celProps[key];
+		if (current && current.opacity === undefined && current.zIndex === undefined) {
+			delete celProps[key];
+		}
+		this.dirty = true;
+		this.modified = true;
+		this.revision++;
+		this.layerAppearanceRevision++;
+	}
+
+	/** Sets or clears a cel's custom z-index (null or 0 clears it). */
+	setCelZIndex(
+		layerId: string,
+		frameIndex: number,
+		zIndex: number | null,
+	): void {
+		const layer = this.doc.layers.find((item) => item.id === layerId);
+		const frame = this.doc.frames[frameIndex];
+		if (!layer || isGroupLayer(layer) || !frame) return;
+
+		const value =
+			zIndex === null || !Number.isFinite(zIndex)
+				? undefined
+				: Math.round(zIndex);
+		const normalized = value === undefined || value === 0 ? undefined : value;
+
+		const celProps = this.doc.celProps ?? (this.doc.celProps = {});
+		const key = celKey(layerId, frame.id);
+		const entry = celProps[key];
+		if ((entry?.zIndex ?? undefined) === normalized) return;
+
+		if (normalized === undefined) {
+			if (entry) delete entry.zIndex;
+		} else {
+			(celProps[key] ?? (celProps[key] = {})).zIndex = normalized;
+		}
+
+		const current = celProps[key];
+		if (current && current.opacity === undefined && current.zIndex === undefined) {
+			delete celProps[key];
+		}
+		this.dirty = true;
+		this.modified = true;
+		this.revision++;
+		this.layerAppearanceRevision++;
+	}
+
+	/** Drops cel metadata for removed layers and/or frames. */
+	#pruneCelMeta(
+		removedLayerIds?: Set<string>,
+		removedFrameIds?: Set<string>,
+	): void {
+		const celProps = this.doc.celProps;
+		if (!celProps) return;
+		const next: Record<string, CelProps> = {};
+		let changed = false;
+		for (const [key, value] of Object.entries(celProps)) {
+			const separator = key.lastIndexOf(":");
+			const layerId = key.slice(0, separator);
+			const frameId = key.slice(separator + 1);
+			if (removedLayerIds?.has(layerId)) {
+				changed = true;
+				continue;
+			}
+			if (removedFrameIds?.has(frameId)) {
+				changed = true;
+				continue;
+			}
+			next[key] = value;
+		}
+		if (changed) this.doc.celProps = next;
+	}
+
 	/** Adds an empty layer at the bottom of the stack and makes it active. */
 	addLayer(): void {
 		if (this.doc.layers.length >= MAX_PROJECT_LAYERS) return;
@@ -3131,6 +3326,7 @@ export class EditorState {
 		const groupIds = layers
 			.filter((layer) => selected.has(layer.id) && isGroupLayer(layer))
 			.map((layer) => layer.id);
+		const removedLayerIds = new Set<string>();
 		for (const id of groupIds.reverse()) {
 			const index = layers.findIndex((layer) => layer.id === id);
 			if (index < 0) continue;
@@ -3138,6 +3334,7 @@ export class EditorState {
 			for (const child of layers) {
 				if (child.parentId === group.id) child.parentId = group.parentId;
 			}
+			removedLayerIds.add(group.id);
 			layers.splice(index, 1);
 		}
 
@@ -3148,8 +3345,12 @@ export class EditorState {
 			const index = layers.findIndex((layer) => layer.id === id);
 			if (index < 0) continue;
 			const { end } = subtreeRange(layers, index);
+			for (let position = index; position < end; position++) {
+				removedLayerIds.add(layers[position]!.id);
+			}
 			layers.splice(index, end - index);
 		}
+		this.#pruneCelMeta(removedLayerIds, undefined);
 
 		if (layers.length > 0) {
 			this.#setActiveLayer(
@@ -3411,7 +3612,16 @@ export class EditorState {
 	): void {
 		this.pushHistory();
 		for (const layer of this.doc.layers) {
-			layer.cels = layer.cels.map((cel) => transform(cel));
+			// Transform each distinct buffer once so linked cels stay linked.
+			const transformed = new Map<Uint32Array, Uint32Array>();
+			layer.cels = layer.cels.map((cel) => {
+				let result = transformed.get(cel);
+				if (!result) {
+					result = transform(cel);
+					transformed.set(cel, result);
+				}
+				return result;
+			});
 		}
 		this.doc.width = width;
 		this.doc.height = height;
@@ -3837,14 +4047,17 @@ export class EditorState {
 
 		const activeId = this.doc.frames[this.activeFrame]?.id;
 		this.pushHistory();
+		const removedFrameIds = new Set<string>();
 		for (let position = indices.length - 1; position >= 0; position--) {
 			const index = indices[position]!;
+			removedFrameIds.add(this.doc.frames[index]!.id);
 			this.doc.frames.splice(index, 1);
 			for (const layer of this.doc.layers) {
 				if (isGroupLayer(layer)) continue;
 				layer.cels.splice(index, 1);
 			}
 		}
+		this.#pruneCelMeta(undefined, removedFrameIds);
 
 		const nextIndex = clamp(indices[0]!, 0, this.doc.frames.length - 1);
 		this.activeFrame =
@@ -4028,7 +4241,8 @@ export class EditorState {
 		if (this.doc.frames.length >= MAX_PROJECT_FRAMES) return;
 		this.pushHistory();
 		const index = this.doc.frames.length;
-		const sourceFrame = this.doc.frames[this.activeFrame]!;
+		const sourceIndex = this.activeFrame;
+		const sourceFrame = this.doc.frames[sourceIndex]!;
 		const frame: Frame = {
 			id: uid("frame"),
 			...(sourceFrame.duration !== undefined
@@ -4038,9 +4252,14 @@ export class EditorState {
 		this.doc.frames.splice(index, 0, frame);
 		for (const layer of this.doc.layers) {
 			if (isGroupLayer(layer)) continue;
-			// A static reference should stay visible on a newly inserted frame.
+			// A static reference should stay visible on a newly inserted frame,
+			// and a continuous layer links its new cel to the active frame so the
+			// two stay in sync.
+			const continuous = layer.continuous === true && layer.role !== "reference";
 			const source =
-				layer.role === "reference" ? layer.cels[this.activeFrame] : undefined;
+				layer.role === "reference" || continuous
+					? layer.cels[sourceIndex]
+					: undefined;
 			layer.cels.splice(
 				index,
 				0,
@@ -4048,6 +4267,11 @@ export class EditorState {
 					? new Uint32Array(source)
 					: new Uint32Array(this.doc.width * this.doc.height),
 			);
+			if (continuous) {
+				// Share the active frame's buffer directly so a continuous layer's
+				// whole chain stays linked as more frames are added.
+				layer.cels[index] = layer.cels[sourceIndex]!;
+			}
 		}
 		this.activeFrame = index;
 		this.frameSelection = [frame.id];

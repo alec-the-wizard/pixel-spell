@@ -4,6 +4,7 @@ import { normalizeHex } from "./color.js";
 import {
 	MAX_FRAME_DURATION,
 	MIN_FRAME_DURATION,
+	celKey,
 	isGroupLayer,
 	normalizeAnimationMode,
 	uid,
@@ -57,7 +58,12 @@ interface ProjectMeta {
 		blendMode?: string;
 		clipping?: boolean;
 		collapsed?: boolean;
+		continuous?: boolean;
 	}[];
+	/** Per-cel properties, keyed by frame index (frame ids are regenerated). */
+	celProps?: { layerId: string; frame: number; opacity?: number; zIndex?: number }[];
+	/** Linked cel pairs, by frame index. */
+	celLinks?: { layerId: string; a: number; b: number }[];
 }
 
 interface ReferenceMeta {
@@ -261,8 +267,40 @@ export function serializeProject(
 				: {}),
 			...(layer.clipping ? { clipping: true } : {}),
 			...(layer.collapsed ? { collapsed: true } : {}),
+			...(layer.continuous ? { continuous: true } : {}),
 		})),
 	};
+
+	// Frame ids are regenerated on parse, so persist cel properties and links by
+	// frame index rather than id.
+	const frameIndexById = new Map(
+		doc.frames.map((frame, index) => [frame.id, index]),
+	);
+	if (doc.celProps) {
+		const celProps: NonNullable<ProjectMeta["celProps"]> = [];
+		for (const [key, value] of Object.entries(doc.celProps)) {
+			const separator = key.lastIndexOf(":");
+			const layerId = key.slice(0, separator);
+			const frameId = key.slice(separator + 1);
+			const frame = frameIndexById.get(frameId);
+			if (frame === undefined) continue;
+			celProps.push({ layerId, frame, ...value });
+		}
+		if (celProps.length > 0) meta.celProps = celProps;
+	}
+	// Linked cels share a pixel buffer; persist adjacent shared-buffer pairs as
+	// frame-index links so they can be re-shared on load.
+	const celLinks: NonNullable<ProjectMeta["celLinks"]> = [];
+	for (const layer of doc.layers) {
+		if (isGroupLayer(layer)) continue;
+		for (let frame = 1; frame < frameCount; frame++) {
+			const cel = layer.cels[frame];
+			if (cel && cel === layer.cels[frame - 1]) {
+				celLinks.push({ layerId: layer.id, a: frame - 1, b: frame });
+			}
+		}
+	}
+	if (celLinks.length > 0) meta.celLinks = celLinks;
 	const metaBytes = new TextEncoder().encode(JSON.stringify(meta));
 
 	const cels: EncodedCel[] = [];
@@ -512,6 +550,7 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 			...(blendMode !== "normal" ? { blendMode } : {}),
 			...(rawLayer.clipping === true ? { clipping: true } : {}),
 			...(rawLayer.collapsed === true ? { collapsed: true } : {}),
+			...(rawLayer.continuous === true ? { continuous: true } : {}),
 		});
 	}
 
@@ -645,6 +684,65 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 	const animationLoop =
 		typeof meta.animationLoop === "boolean" ? meta.animationLoop : true;
 
+	// Reconstruct per-cel properties and links from frame-index metadata (frame
+	// ids are regenerated on load, so links store indices in the file).
+	const layerById = new Map(layers.map((layer) => [layer.id, layer]));
+
+	let celProps: Record<string, { opacity?: number; zIndex?: number }> | undefined;
+	if (Array.isArray(meta.celProps)) {
+		celProps = {};
+		for (const raw of meta.celProps) {
+			if (!raw || typeof raw !== "object") continue;
+			const layer = layerById.get(String(raw.layerId));
+			const frame = frames[Number(raw.frame)];
+			if (!layer || !frame || isGroupLayer(layer)) continue;
+			const entry: { opacity?: number; zIndex?: number } = {};
+			if (Number.isFinite(Number(raw.opacity))) {
+				const opacity = clamp(Number(raw.opacity), 0, 1);
+				if (opacity < 1) entry.opacity = opacity;
+			}
+			if (Number.isFinite(Number(raw.zIndex)) && Number(raw.zIndex) !== 0) {
+				entry.zIndex = Math.round(Number(raw.zIndex));
+			}
+			if (entry.opacity !== undefined || entry.zIndex !== undefined) {
+				celProps[celKey(layer.id, frame.id)] = entry;
+			}
+		}
+		if (Object.keys(celProps).length === 0) celProps = undefined;
+	}
+
+	// Re-share linked cel buffers so write-through editing survives a load.
+	// Links are stored as adjacent frame-index pairs and re-applied in frame
+	// order, which transitively re-shares whole continuous chains.
+	if (Array.isArray(meta.celLinks)) {
+		const links = meta.celLinks
+			.map((raw) => {
+				if (!raw || typeof raw !== "object") return null;
+				return {
+					layer: layerById.get(String(raw.layerId)),
+					a: Number(raw.a),
+					b: Number(raw.b),
+				};
+			})
+			.filter(
+				(link): link is { layer: Layer; a: number; b: number } =>
+					!!link &&
+					!!link.layer &&
+					!isGroupLayer(link.layer) &&
+					Number.isInteger(link.a) &&
+					Number.isInteger(link.b) &&
+					link.a !== link.b &&
+					link.a >= 0 &&
+					link.b >= 0 &&
+					link.a < frameCount &&
+					link.b < frameCount,
+			)
+			.sort((x, y) => x.a - y.a || x.b - y.b);
+		for (const link of links) {
+			if (link.layer.cels[link.a]) link.layer.cels[link.b] = link.layer.cels[link.a]!;
+		}
+	}
+
 	return {
 		doc: {
 			width,
@@ -655,6 +753,7 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 			references,
 			animationMode,
 			animationLoop,
+			...(celProps ? { celProps } : {}),
 		},
 		palette: normalizePalette(meta.palette),
 		activeFrame,

@@ -1065,6 +1065,54 @@ timingDoc.animationMode = "ping-pong";
 timingDoc.animationLoop = false;
 assertProjectRoundtrip(timingDoc, "frame metadata");
 
+// Cel links, per-cel opacity, and continuous layers.
+{
+	const celDoc = createDoc(2, 2);
+	celDoc.frames = [{ id: "frame-a" }, { id: "frame-b" }];
+	const celLayer = celDoc.layers[0]!;
+	celLayer.cels = [new Uint32Array(4), new Uint32Array(4)];
+	celLayer.continuous = true;
+	celLayer.cels[0]![0] = packColor("#ff0000");
+	celLayer.cels[1]![1] = packColor("#00ff00");
+	// Link frame 0 to frame 1 (frame 1's pixels take priority).
+	celLayer.cels[0] = celLayer.cels[1]!;
+	celDoc.celProps = {
+		[`${celLayer.id}:frame-a`]: { opacity: 0.5 },
+		[`${celLayer.id}:frame-b`]: { zIndex: 2 },
+	};
+
+	const celBytes = serializeProject(
+		celDoc,
+		palette,
+		"cel features",
+		0,
+		celLayer.id,
+	);
+	const celParsed = parseProject(celBytes);
+	if (!celParsed) throw new Error("cel features round-trip parse failed");
+	const restoredCelLayer = celParsed.doc.layers[0]!;
+	if (restoredCelLayer.continuous !== true) {
+		throw new Error("cel features round-trip lost continuous");
+	}
+	if (restoredCelLayer.cels[0] !== restoredCelLayer.cels[1]) {
+		throw new Error("cel features round-trip lost shared buffer");
+	}
+	const restoredCelProps = celParsed.doc.celProps;
+	if (!restoredCelProps) throw new Error("cel features round-trip lost celProps");
+	const restoredOpacity =
+		restoredCelProps[`${restoredCelLayer.id}:${celParsed.doc.frames[0]!.id}`]
+			?.opacity;
+	const restoredZIndex =
+		restoredCelProps[`${restoredCelLayer.id}:${celParsed.doc.frames[1]!.id}`]
+			?.zIndex;
+	if (restoredOpacity !== 0.5) {
+		throw new Error("cel features round-trip lost opacity");
+	}
+	if (restoredZIndex !== 2) {
+		throw new Error("cel features round-trip lost z-index");
+	}
+}
+
 // --- Palette ramps and cycling -------------------------------------------
 measure("generatePaletteRamp oklab 16 steps", 2000, 100, () => {
 	generatePaletteRamp("#1d2b53", "#ff77a8", 16, "oklab");

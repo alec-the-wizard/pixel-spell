@@ -43,6 +43,8 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Unused-color pruning and palette analysis | 5 | 2 | 2.50 | | Implemented: the palette tools menu can remove every palette color that no frame or normal layer uses (reference layers are ignored, and the built-in, locked, and read-only palettes are never modified). **Coverage analysis…** opens a read-only dialog with used/unused totals, the share of painted pixels covered by the palette, per-color usage bars, twelve-bin hue coverage with dashed gaps, eight-bin brightness coverage, and the most-used off-palette colors. |
 | Layer groups, blend modes, clipping masks | 8 | 6 | 1.33 | | Implemented: the layer model is now a tree. Group nodes (`isGroup`, no cels) nest via `parentId`, render as collapsible rows in the timeline, and composite their children into an offscreen buffer that is blended with the group's own opacity and blend mode. Every layer and group can carry a `blendMode` (normal, multiply, screen, overlay, darken, lighten, color dodge, color burn, hard light, soft light, difference, exclusion, add, subtract) and a `clipping` toggle that masks pixels to the composited content below. Compositing, `compositePixel`, the incremental fast path (with a full-composite fallback for grouped/blended documents), undo cloning, and the `PXSP` container (version 4) all support the tree. The timeline toolbar adds new group, group-into, ungroup, indent, and outdent actions; Layer properties exposes blend mode and clipping. Blend modes and clipping apply on every export path. |
 | Selection transform (scale/rotate/flip) | 8 | 6 | 1.33 | | Implemented: a selection made with any selection tool grows transform handles. Drag a corner or edge handle to scale (crossing the center flips, `Shift` locks aspect), the circle above the top edge rotates (`Shift` snaps to 15°), and `Ctrl`/`Cmd`-dragging a corner skews. Dragging inside still moves the selection. Each gesture commits on release and is undoable. Rotation uses the RotSprite algorithm (Scale2x 8× upscale, nearest-neighbor parallelogram rotation, nearest-neighbor downscale) to keep rotated pixel art crisp without bilinear blur. |
+| Linked cels / continuous layers | 8 | 5 | 1.60 | | Implemented: cels can be linked so editing one writes through to all linked copies. Right-click a cel to link/unlink it to the left or right neighbor (the selected cel overwrites the neighbor), and a **continuous** layer toggle (a `link-2`/`link-2-off` button beside the lock) auto-links each newly added cel to the active frame, keeping a chain in sync. Linked cels share one pixel buffer and render a blue connector line between the cels in the timeline. Links and the continuous flag survive save/open, undo/redo, canvas transforms, and project switches. |
+| Per-cel opacity (and z-index) | 6 | 5 | 1.20 | | Implemented as **Cel properties** (double-click a cel, or use its right-click menu): a per-cel opacity slider and a z-index number input. Opacity multiplies the layer opacity during compositing on every render/export path, and z-index reorders cels within a frame. Cels carrying a custom opacity or z-index show a small indicator icon in the timeline, and both values persist with the project. |
 
 ## Planned features
 
@@ -61,7 +63,6 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Gradient map layer | 7 | 4 | 1.75 | | Map luminance to a multi-stop gradient as a live filter, so a whole sprite can be recolored in one step (Pixelorama ships this; a standing Aseprite request). Useful for palette swaps and mood variants. |
 | Accessibility and localization pass | 5 | 3 | 1.67 | | Full keyboard navigation, screen-reader labels for canvas actions, reduced-motion support, and i18n extraction. Good for reach and polish. |
 | Custom brushes (shapes, patterns, textured) | 8 | 5 | 1.60 | | A brush mask editor, saved brush library, and stamping pipeline. Build on `paintBrush` and `paintPixel`; add a brush preview and per-brush size/opacity. Include “custom brush from selection” (Aseprite v1.1). |
-| Linked cels / continuous layers | 8 | 5 | 1.60 | | Link cels so editing one updates all linked copies, and auto-link new cels on “continuous” layers. Keeps a background or repeated body part in sync across frames without copy-paste drift (Aseprite, Pixelorama, Pixquare all ship cel linking). |
 | Pixel cleanup and recolor (de-AA, snap-to-grid, palette remap) | 8 | 5 | 1.60 | | Clean up AI-generated or anti-aliased art: remove anti-aliasing, snap pixels to a detected grid, and recolor an image to a target palette with perceptual matching. Directly addresses the “mixelated AI art” problem and complements the existing nearest-color snapping. |
 | Nine-slice / UI asset export | 6 | 4 | 1.50 | | Define nine-slice borders and export stretchable UI assets with metadata. Niche but valuable for game UI artists. |
 | Recent files / project library | 6 | 4 | 1.50 | | A local project browser backed by IndexedDB/File System Access API, with thumbnails and recent projects. Complements autosave and is the offline prerequisite for any later cloud sync. |
@@ -70,7 +71,6 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | WebGL shader filters | 8 | 6 | 1.33 | ★ | Real-time fragment-shader filters (scanlines, glow, palette posterize, outline) previewed on the canvas, user-loadable. Pixelorama ships Godot shaders; a WebGL path is a strong browser-native differentiator. |
 | Tweening (position/scale/rotation/opacity, easing) | 8 | 6 | 1.33 | | Interpolate between frames with easing curves to generate in-betweens. One of the most-requested Aseprite features (v1.4 plan #96); a browser editor can ship it as a non-destructive “tween layer” or baked frames. |
 | Version snapshots / named checkpoints | 6 | 5 | 1.20 | | Save named project snapshots locally with thumbnails and restore/diff. Complements undo and autosave without a backend. |
-| Per-cel opacity | 6 | 5 | 1.20 | | Let a single frame's cel carry its own opacity, separate from the layer. Aseprite `Cel Properties` does this; enables per-frame fade without splitting layers. |
 | Animated brushes | 6 | 5 | 1.20 | | Brushes that cycle through multiple cells as you stamp, producing an animated effect (sparkle, flame) in one gesture. Pro Motion's “AnimPainting”; a genuinely rare feature. |
 | Grayscale mode (1/2/4/8-bit, dithering) | 7 | 6 | 1.17 | | A document color mode with single-channel cels and a ramp palette, plus dithering and conversion to/from RGBA. Medium model change; valuable for Game Boy/1-bit and grayscale art. |
 | Non-destructive adjustments (hue/sat/levels/curves) | 7 | 6 | 1.17 | | Per-layer adjustment stacks with live preview and export. Requires a layer-effect model and compositing changes; can be destructive first, then non-destructive. |
@@ -133,7 +133,7 @@ These add the most day-to-day value per unit of risk. Onion skinning and referen
 7. Undo history panel
 8. Palette ramps, lock, and color cycling — done
 9. Advanced color cycling (bake and generate) — done
-10. Linked cels / continuous layers
+10. Linked cels / continuous layers — done
 11. Export presets
 12. Gradient map layer
 13. Tweening (with easing)
@@ -157,7 +157,7 @@ Indexed color and tilemaps deepen the pixel-art/game-art focus. The MCP server, 
 
 - Scripting/plugin API (and marketplace)
 - Pixel cleanup and recolor (de-AA, snap-to-grid, remap)
-- Per-cel opacity and per-frame layer visibility
+- Per-cel opacity — done (per-frame layer visibility still planned)
 - Animated brushes and motion drawing
 - Macros / recordable actions
 - CSS / engine / headless export pipeline

@@ -4,6 +4,7 @@ import type {
 	AnimationMode,
 	BackgroundKind,
 	BlendMode,
+	CelProps,
 	Layer,
 	LayerRole,
 	PixelDoc,
@@ -61,6 +62,39 @@ export function createGroup(
 		...(parentId ? { parentId } : {}),
 		...(blendMode !== "normal" ? { blendMode } : {}),
 	};
+}
+
+/** Stable key for a cel's properties: `${layerId}:${frameId}`. */
+export function celKey(layerId: string, frameId: string): string {
+	return `${layerId}:${frameId}`;
+}
+
+/** Resolves a cel's presentation properties, or undefined when none are set. */
+export function celPropsOf(
+	doc: PixelDoc,
+	layerId: string,
+	frameId: string,
+): CelProps | undefined {
+	return doc.celProps?.[celKey(layerId, frameId)];
+}
+
+/** A cel's opacity (0..1), defaulting to fully opaque. */
+export function celOpacityOf(
+	doc: PixelDoc,
+	layerId: string,
+	frameId: string,
+): number {
+	const opacity = celPropsOf(doc, layerId, frameId)?.opacity;
+	return opacity === undefined ? 1 : Math.max(0, Math.min(1, opacity));
+}
+
+/** A cel's custom z-index, or undefined when it uses the layer order. */
+export function celZIndexOf(
+	doc: PixelDoc,
+	layerId: string,
+	frameId: string,
+): number | undefined {
+	return celPropsOf(doc, layerId, frameId)?.zIndex;
 }
 
 /** A layer (or group) node resolved from the flat layer list. */
@@ -206,22 +240,30 @@ export function frameDurationMs(doc: PixelDoc, frameIndex: number): number {
 
 /** Deep-clones a document into plain (non-reactive) objects. */
 export function cloneDoc(doc: PixelDoc): PixelDoc {
-	return {
-		width: doc.width,
-		height: doc.height,
-		fps: doc.fps,
-		frames: doc.frames.map((frame) => ({
-			id: frame.id,
-			...(frame.duration !== undefined ? { duration: frame.duration } : {}),
-			...(frame.tag ? { tag: frame.tag } : {}),
-		})),
-		layers: doc.layers.map((layer) => ({
+	const frames = doc.frames.map((frame) => ({
+		id: frame.id,
+		...(frame.duration !== undefined ? { duration: frame.duration } : {}),
+		...(frame.tag ? { tag: frame.tag } : {}),
+	}));
+
+	const layers = doc.layers.map((layer) => {
+		// Linked cels share one buffer; clone each distinct buffer once so
+		// write-through editing survives history snapshots and project switches.
+		const buffers = new Map<Uint32Array, Uint32Array>();
+		return {
 			id: layer.id,
 			name: layer.name,
 			visible: layer.visible,
 			locked: layer.locked,
 			opacity: layer.opacity,
-			cels: layer.cels.map((cel) => new Uint32Array(cel)),
+			cels: layer.cels.map((cel) => {
+				let clone = buffers.get(cel);
+				if (!clone) {
+					clone = new Uint32Array(cel);
+					buffers.set(cel, clone);
+				}
+				return clone;
+			}),
 			...(layer.role ? { role: layer.role } : {}),
 			...(layer.color ? { color: layer.color } : {}),
 			...(layer.isGroup ? { isGroup: true } : {}),
@@ -231,12 +273,31 @@ export function cloneDoc(doc: PixelDoc): PixelDoc {
 				: {}),
 			...(layer.clipping ? { clipping: true } : {}),
 			...(layer.collapsed ? { collapsed: true } : {}),
-		})),
+			...(layer.continuous ? { continuous: true } : {}),
+		};
+	});
+
+	return {
+		width: doc.width,
+		height: doc.height,
+		fps: doc.fps,
+		frames,
+		layers,
 		// Reference bytes are immutable, so history and project snapshots can
 		// share them while cloning the small transform metadata.
 		references: doc.references.map((reference) => ({ ...reference })),
 		animationMode: normalizeAnimationMode(doc.animationMode),
 		animationLoop: doc.animationLoop !== false,
+		...(doc.celProps
+			? {
+					celProps: Object.fromEntries(
+						Object.entries(doc.celProps).map(([key, value]) => [
+							key,
+							{ ...value },
+						]),
+					),
+				}
+			: {}),
 	};
 }
 
@@ -299,7 +360,7 @@ function compositeLayers(
 	includeReferences: boolean,
 ): CompositeLayer[] {
 	const layers: CompositeLayer[] = [];
-	for (const layer of doc.layers) {
+	for (const layer of frameOrderedLayers(doc, frameIndex)) {
 		if (isGroupLayer(layer)) continue;
 		if (!includeReferences && layer.role === "reference") continue;
 		if (!layer.visible || layer.opacity <= 0) continue;
@@ -308,7 +369,7 @@ function compositeLayers(
 		layers.push({
 			id: layer.id,
 			cel,
-			opacityByte: opacityByteOf(layer),
+			opacityByte: effectiveOpacityByte(doc, layer, frameIndex),
 		});
 	}
 	return layers;
@@ -316,6 +377,54 @@ function compositeLayers(
 
 function opacityByteOf(layer: Layer): number {
 	return Math.max(0, Math.min(255, Math.round(layer.opacity * 255)));
+}
+
+/** Combined layer × cel opacity as a byte (0..255) for a frame's cel. */
+function effectiveOpacityByte(
+	doc: PixelDoc,
+	layer: Layer,
+	frameIndex: number,
+): number {
+	const frame = doc.frames[frameIndex];
+	if (!frame) return opacityByteOf(layer);
+	const celOpacity = celOpacityOf(doc, layer.id, frame.id);
+	return Math.max(
+		0,
+		Math.min(255, Math.round(layer.opacity * celOpacity * 255)),
+	);
+}
+
+/**
+ * Layers in a frame's composite order. A cel with a custom z-index is stacked
+ * at its z-index (higher composites later); otherwise layers keep their natural
+ * bottom-to-top order. z-index reordering only applies to flat documents, where
+ * every layer is a top-level sibling.
+ */
+function frameOrderedLayers(
+	doc: PixelDoc,
+	frameIndex: number,
+): readonly Layer[] {
+	const frame = doc.frames[frameIndex];
+	if (!frame) return doc.layers;
+	if (doc.layers.some((layer) => layer.isGroup)) return doc.layers;
+
+	let needsSort = false;
+	for (const layer of doc.layers) {
+		if (celZIndexOf(doc, layer.id, frame.id) !== undefined) {
+			needsSort = true;
+			break;
+		}
+	}
+	if (!needsSort) return doc.layers;
+
+	return doc.layers
+		.map((layer, index) => ({
+			layer,
+			index,
+			z: celZIndexOf(doc, layer.id, frame.id) ?? 0,
+		}))
+		.sort((a, b) => a.z - b.z || a.index - b.index)
+		.map((entry) => entry.layer);
 }
 
 /** Blends one buffer over `output` in place with an optional blend mode/clip. */
@@ -409,7 +518,7 @@ function compositeNodeInto(
 		output,
 		cel,
 		count,
-		opacityByteOf(layer),
+		effectiveOpacityByte(doc, layer, frameIndex),
 		layer.blendMode ?? "normal",
 		layer.clipping === true,
 	);
@@ -430,7 +539,7 @@ export function compositeFrame(
 	const count = doc.width * doc.height;
 	const output = new Uint32Array(count);
 
-	const { roots } = buildLayerTree(doc.layers);
+	const { roots } = buildLayerTree(frameOrderedLayers(doc, frameIndex));
 	for (const root of roots) {
 		compositeNodeInto(root, doc, frameIndex, includeReferences, output, count);
 	}
@@ -439,10 +548,15 @@ export function compositeFrame(
 }
 
 /** Blends one source pixel over `output` with the node's opacity/blend/clip. */
-function blendPixelInto(layer: Layer, source: number, output: number): number {
+function blendPixelInto(
+	layer: Layer,
+	source: number,
+	output: number,
+	opacityByte: number,
+): number {
 	const sourceAlpha = source >>> 24;
 	if (sourceAlpha === 0) return output;
-	let sa = ALPHA_PRODUCT[(sourceAlpha << 8) | opacityByteOf(layer)]!;
+	let sa = ALPHA_PRODUCT[(sourceAlpha << 8) | opacityByte]!;
 	if (sa === 0) return output;
 	if (layer.clipping) {
 		sa = ALPHA_PRODUCT[(sa << 8) | (output >>> 24)]!;
@@ -468,7 +582,7 @@ function blendNodePixelInto(
 			acc = blendNodePixelInto(child, doc, frameIndex, index, acc);
 		}
 		if (acc === 0) return output;
-		return blendPixelInto(layer, acc, output);
+		return blendPixelInto(layer, acc, output, opacityByteOf(layer));
 	}
 
 	if (!layer.visible || layer.opacity <= 0) return output;
@@ -476,7 +590,12 @@ function blendNodePixelInto(
 	if (!cel) return output;
 	const source = cel[index];
 	if (source === undefined) return output;
-	return blendPixelInto(layer, source, output);
+	return blendPixelInto(
+		layer,
+		source,
+		output,
+		effectiveOpacityByte(doc, layer, frameIndex),
+	);
 }
 
 /** Composites a single pixel; used by the eyedropper instead of a full frame. */
@@ -489,7 +608,7 @@ export function compositePixel(
 	if (x < 0 || x >= doc.width || y < 0 || y >= doc.height) return 0;
 	const index = y * doc.width + x;
 
-	const { roots } = buildLayerTree(doc.layers);
+	const { roots } = buildLayerTree(frameOrderedLayers(doc, frameIndex));
 	let output = 0;
 	for (const root of roots) {
 		output = blendNodePixelInto(root, doc, frameIndex, index, output);

@@ -10,8 +10,12 @@
 	import EyeOff from "@lucide/svelte/icons/eye-off";
 	import Folder from "@lucide/svelte/icons/folder";
 	import FolderOpen from "@lucide/svelte/icons/folder-open";
+	import LetterZ from "@lucide/svelte/icons/letter-z";
+	import Link2 from "@lucide/svelte/icons/link-2";
+	import Link2Off from "@lucide/svelte/icons/link-2-off";
 	import Lock from "@lucide/svelte/icons/lock";
 	import LockOpen from "@lucide/svelte/icons/lock-open";
+	import Opacity from "@lucide/svelte/icons/opacity";
 	import ScanEye from "@lucide/svelte/icons/scan-eye";
 	import Scissors from "@lucide/svelte/icons/scissors";
 	import { Button } from "$lib/components/ui/button/index.js";
@@ -34,6 +38,7 @@
 		onCelPointerDown,
 		onCelPointerEnter,
 		onCelContextMenu,
+		onCelDoubleClick,
 		onLayerContextMenu,
 		onLayerProperties,
 		onDragStart,
@@ -59,6 +64,7 @@
 			layerId: string,
 			frameIndex: number,
 		) => void;
+		onCelDoubleClick?: (layerId: string, frameIndex: number) => void;
 		onLayerContextMenu: (event: MouseEvent, layer: Layer) => void;
 		onLayerProperties: (layer: Layer) => void;
 		onDragStart?: (event: DragEvent) => void;
@@ -198,7 +204,7 @@
 		<th
 			scope="row"
 			class={cn(
-				"sticky left-0 z-10 h-12 w-[var(--layer-col-width)] min-w-[var(--layer-col-width)] max-w-[var(--layer-col-width)] border-b border-r p-0 text-left align-middle",
+				"sticky left-0 z-10 h-13 w-[var(--layer-col-width)] min-w-[var(--layer-col-width)] max-w-[var(--layer-col-width)] border-b border-r p-0 text-left align-middle",
 				!layer.color && headerClass,
 			)}
 			style:background={headerBackground}
@@ -211,7 +217,7 @@
 			oncontextmenu={handleHeaderContextMenu}
 		>
 			<div
-				class="relative flex h-12 items-center gap-0.5"
+				class="relative flex h-13 items-center gap-0.5"
 				style:padding-left={`${4 + depth * LAYER_INDENT}px`}
 			>
 				{@render indentGuides()}
@@ -288,7 +294,7 @@
 		</th>
 		<td
 			colspan={editor.doc.frames.length + 2}
-			class="h-12 border-b"
+			class="h-13 border-b"
 			style:background={layer.color ? layerTint(layer.color, 9) : undefined}
 		></td>
 	</tr>
@@ -301,7 +307,7 @@
 		<th
 			scope="row"
 			class={cn(
-				"sticky left-0 z-10 h-12 w-[var(--layer-col-width)] min-w-[var(--layer-col-width)] max-w-[var(--layer-col-width)] border-b border-r p-0 text-left align-middle",
+				"sticky left-0 z-10 h-13 w-[var(--layer-col-width)] min-w-[var(--layer-col-width)] max-w-[var(--layer-col-width)] border-b border-r p-0 text-left align-middle",
 				!layer.color && headerClass,
 			)}
 			style:background={headerBackground}
@@ -314,7 +320,7 @@
 			oncontextmenu={handleHeaderContextMenu}
 		>
 			<div
-				class="relative flex h-12 items-center gap-1.5 pr-2"
+				class="relative flex h-13 items-center gap-1.5 pr-2"
 				style:padding-left={`${4 + depth * LAYER_INDENT}px`}
 			>
 				{@render indentGuides()}
@@ -367,6 +373,32 @@
 					{/if}
 				</Button>
 
+				{#if !isGroup && !isReference}
+					<Button
+						variant="ghost"
+						size="icon-xs"
+						class={cn(
+							"size-7 shrink-0",
+							layer.continuous ? "text-primary" : "text-muted-foreground",
+						)}
+						title={layer.continuous
+							? `Stop linking new cels on ${layer.name}`
+							: `Link new cels on ${layer.name}`}
+						aria-label={layer.continuous
+							? `Unlink new cels on ${layer.name}`
+							: `Link new cels on ${layer.name}`}
+						aria-pressed={layer.continuous === true}
+						data-layer-control
+						onclick={() => editor.toggleLayerContinuous(layer.id)}
+					>
+						{#if layer.continuous}
+							<Link2 class="size-3.5" />
+						{:else}
+							<Link2Off class="size-3.5" />
+						{/if}
+					</Button>
+				{/if}
+
 				{#if layer.clipping}
 					<Scissors
 						class="size-3.5 shrink-0 text-primary"
@@ -391,7 +423,7 @@
 		{#if firstFrame > 0}
 			<td
 				colspan={firstFrame}
-				class="h-12 border-b"
+				class="h-13 border-b"
 				style:background={layer.color ? layerTint(layer.color, 9) : undefined}
 			></td>
 		{/if}
@@ -402,53 +434,93 @@
 			{@const activeCel = activeRow && activeFrame}
 			{@const selectedFrame = editor.isFrameSelected(index)}
 			{@const selectedCel = selectedRow || selectedFrame}
+			{@const celProps = editor.getCelProps(layer.id, index)}
+			{@const linkedLeft = editor.isCelLinkedTo(layer.id, index, -1)}
+			{@const linkedRight = editor.isCelLinkedTo(layer.id, index, 1)}
 
 			<td
 				class={cn(
-					"h-12 w-14 min-w-14 border-b border-r p-1 text-center align-middle",
+					"relative h-13 w-13 min-w-13 border-b border-r",
 					selectedCel && "bg-primary/15",
 				)}
 				style:background={cellBackground(selectedCel)}
 				onpointerenter={() => onCelPointerEnter(layer.id, index)}
 			>
-				<button
-					type="button"
-					class={cn(
-						"checkerboard relative inline-block size-10 select-none overflow-hidden rounded-md transition-colors",
-						activeCel
-							? "border-2 border-primary"
-							: "border border-border/60 hover:border-muted-foreground/40",
-					)}
-					onpointerdown={(event) => onCelPointerDown(event, layer.id, index)}
-					onclick={(event) => {
-						// Mouse selection happens on pointerdown so dragging a block
-						// works; keep keyboard activation working.
-						if (event.detail === 0) editor.selectCel(layer.id, index);
-					}}
-					oncontextmenu={(event) => onCelContextMenu(event, layer.id, index)}
-					aria-label={`${layer.name}, frame ${index + 1}`}
-					aria-pressed={activeCel}
-					title={`${layer.name} · frame ${index + 1}${frame.tag ? ` · ${frame.tag}` : ""} · ${Math.round(editor.frameDurationAt(index))} ms`}
-				>
-					<CelThumb {layer} frame={index} />
-				</button>
+				{#if linkedLeft}
+					<span
+						class="pointer-events-none absolute left-0 top-1/2 h-0.5 w-2 -translate-y-1/2 rounded-full bg-blue-500"
+						aria-hidden="true"
+					></span>
+				{/if}
+				{#if linkedRight}
+					<span
+						class="pointer-events-none absolute right-0 top-1/2 h-0.5 w-2 -translate-y-1/2 rounded-full bg-blue-500"
+						aria-hidden="true"
+					></span>
+				{/if}
+
+				<div class="absolute inset-0 flex items-center justify-center">
+					<button
+						type="button"
+						class={cn(
+							"checkerboard relative size-11 select-none overflow-hidden rounded-md transition-colors",
+							activeCel
+								? "border-2 border-primary"
+								: "border border-border/60 hover:border-muted-foreground/40",
+						)}
+						onpointerdown={(event) => onCelPointerDown(event, layer.id, index)}
+						onclick={(event) => {
+							// Mouse selection happens on pointerdown so dragging a block
+							// works; keep keyboard activation working.
+							if (event.detail === 0) editor.selectCel(layer.id, index);
+						}}
+						ondblclick={() => onCelDoubleClick?.(layer.id, index)}
+						oncontextmenu={(event) => onCelContextMenu(event, layer.id, index)}
+						aria-label={`${layer.name}, frame ${index + 1}`}
+						aria-pressed={activeCel}
+						title={`${layer.name} · frame ${index + 1}${frame.tag ? ` · ${frame.tag}` : ""} · ${Math.round(editor.frameDurationAt(index))} ms`}
+					>
+						<CelThumb {layer} frame={index} />
+					</button>
+				</div>
+
+				{#if celProps?.opacity !== undefined}
+					<span
+						class="pointer-events-none absolute bottom-0 left-0 z-10 flex size-4 items-center justify-center rounded border bg-background/90 shadow-sm"
+					>
+						<Opacity
+							class="size-3 text-primary"
+							aria-label="Custom cel opacity"
+						/>
+					</span>
+				{/if}
+				{#if celProps?.zIndex !== undefined}
+					<span
+						class="pointer-events-none absolute bottom-0 right-0 z-10 flex size-4 items-center justify-center rounded border bg-background/90 shadow-sm"
+					>
+						<LetterZ
+							class="size-3 text-primary"
+							aria-label="Custom cel z-index"
+						/>
+					</span>
+				{/if}
 			</td>
 		{/each}
 
 		{#if trailingFrames > 0}
 			<td
 				colspan={trailingFrames}
-				class="h-12 border-b"
+				class="h-13 border-b"
 				style:background={layer.color ? layerTint(layer.color, 9) : undefined}
 			></td>
 		{/if}
 
 		<td
-			class="h-12 w-10 min-w-10 border-b"
+			class="h-13 w-10 min-w-10 border-b"
 			style:background={layer.color ? layerTint(layer.color, 9) : undefined}
 		></td>
 		<td
-			class="h-12 border-b"
+			class="h-13 border-b"
 			style:background={layer.color ? layerTint(layer.color, 9) : undefined}
 		></td>
 	</tr>
