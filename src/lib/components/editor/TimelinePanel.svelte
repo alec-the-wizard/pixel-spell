@@ -1060,13 +1060,13 @@
 				<tr>
 					<th
 						scope="col"
-						class="sticky left-0 top-6 z-30 h-8 w-[var(--layer-col-width)] min-w-[var(--layer-col-width)] max-w-[var(--layer-col-width)] border-b border-r bg-background px-1.5 text-left align-middle"
+						class="sticky left-0 top-6 z-30 h-8 w-[var(--layer-col-width)] min-w-[var(--layer-col-width)] max-w-[var(--layer-col-width)] border-b border-r bg-background p-0 text-left align-middle"
 					>
-						<div class="flex items-center gap-0.5">
+						<div class="flex items-center gap-1 pl-1">
 							<Button
 								variant="ghost"
 								size="icon-xs"
-								class="size-6 text-muted-foreground"
+								class="size-7 text-muted-foreground"
 								onclick={() =>
 									editor.setAllLayersVisible(!editor.anyLayerVisible)}
 								title={editor.anyLayerVisible
@@ -1085,7 +1085,7 @@
 							<Button
 								variant="ghost"
 								size="icon-xs"
-								class="size-6 text-muted-foreground"
+								class="size-7 text-muted-foreground"
 								onclick={() =>
 									editor.setAllLayersLocked(editor.anyLayerUnlocked)}
 								title={editor.anyLayerUnlocked
@@ -1100,6 +1100,26 @@
 									<LockOpen class="size-3.5" />
 								{:else}
 									<Lock class="size-3.5" />
+								{/if}
+							</Button>
+							<Button
+								variant="ghost"
+								size="icon-xs"
+								class="size-7 text-muted-foreground"
+								onclick={() =>
+									editor.setAllLayersContinuous(!editor.anyLayerContinuous)}
+								title={editor.anyLayerContinuous
+									? "Stop linking new cels on all layers"
+									: "Link new cels on all layers"}
+								aria-label={editor.anyLayerContinuous
+									? "Stop linking new cels on all layers"
+									: "Link new cels on all layers"}
+								aria-pressed={editor.anyLayerContinuous}
+							>
+								{#if editor.anyLayerContinuous}
+									<Link2 class="size-3.5" />
+								{:else}
+									<Link2Off class="size-3.5" />
 								{/if}
 							</Button>
 						</div>

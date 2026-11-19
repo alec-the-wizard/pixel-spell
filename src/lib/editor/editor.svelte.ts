@@ -498,6 +498,16 @@ export class EditorState {
 		);
 	}
 
+	/** True when at least one drawable layer links its newly added cels. */
+	get anyLayerContinuous(): boolean {
+		return this.doc.layers.some(
+			(layer) =>
+				!isGroupLayer(layer) &&
+				layer.role !== "reference" &&
+				layer.continuous === true,
+		);
+	}
+
 	get activePalette(): Palette {
 		return (
 			this.palettes.find((palette) => palette.id === this.activePaletteId) ??
@@ -2801,6 +2811,24 @@ export class EditorState {
 			if (layer.role === "reference") continue;
 			if (layer.locked === locked) continue;
 			layer.locked = locked;
+			changed = true;
+		}
+		if (!changed) return;
+		this.dirty = true;
+		this.modified = true;
+	}
+
+	/**
+	 * Links or unlinks newly added cels on every layer. Groups have no cels and
+	 * reference layers cannot be edited, so both are skipped.
+	 */
+	setAllLayersContinuous(continuous: boolean): void {
+		let changed = false;
+		for (const layer of this.doc.layers) {
+			if (isGroupLayer(layer) || layer.role === "reference") continue;
+			if ((layer.continuous === true) === continuous) continue;
+			if (continuous) layer.continuous = true;
+			else delete layer.continuous;
 			changed = true;
 		}
 		if (!changed) return;

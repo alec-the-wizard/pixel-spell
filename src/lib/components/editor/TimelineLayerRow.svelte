@@ -8,8 +8,6 @@
 	import ChevronRight from "@lucide/svelte/icons/chevron-right";
 	import Eye from "@lucide/svelte/icons/eye";
 	import EyeOff from "@lucide/svelte/icons/eye-off";
-	import Folder from "@lucide/svelte/icons/folder";
-	import FolderOpen from "@lucide/svelte/icons/folder-open";
 	import LetterZ from "@lucide/svelte/icons/letter-z";
 	import Link2 from "@lucide/svelte/icons/link-2";
 	import Link2Off from "@lucide/svelte/icons/link-2-off";
@@ -215,14 +213,14 @@
 			oncontextmenu={handleHeaderContextMenu}
 		>
 			<div
-				class="relative flex h-13 items-center gap-0.5"
+				class="relative flex h-13 items-center gap-1"
 				style:padding-left={`${4 + depth * LAYER_INDENT}px`}
 			>
 				{@render indentGuides()}
 				<Button
 					variant="ghost"
 					size="icon-xs"
-					class="size-6 shrink-0 text-muted-foreground"
+					class="size-7 shrink-0 text-muted-foreground"
 					title={layer.collapsed ? "Expand group" : "Collapse group"}
 					aria-label={layer.collapsed ? "Expand group" : "Collapse group"}
 					data-layer-control
@@ -234,13 +232,6 @@
 						<ChevronDown class="size-3.5" />
 					{/if}
 				</Button>
-				<span class="shrink-0 text-muted-foreground">
-					{#if layer.collapsed}
-						<Folder class="size-3.5" />
-					{:else}
-						<FolderOpen class="size-3.5" />
-					{/if}
-				</span>
 				<Button
 					variant="ghost"
 					size="icon-xs"
@@ -318,7 +309,7 @@
 			oncontextmenu={handleHeaderContextMenu}
 		>
 			<div
-				class="relative flex h-13 items-center gap-1.5 pr-2"
+				class="relative flex h-13 items-center gap-1 pr-2"
 				style:padding-left={`${4 + depth * LAYER_INDENT}px`}
 			>
 				{@render indentGuides()}
