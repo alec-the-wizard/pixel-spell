@@ -16,8 +16,6 @@
 	import FolderOutput from "@lucide/svelte/icons/folder-output";
 	import FolderPlus from "@lucide/svelte/icons/folder-plus";
 	import Ghost from "@lucide/svelte/icons/ghost";
-	import IndentDecrease from "@lucide/svelte/icons/indent-decrease";
-	import IndentIncrease from "@lucide/svelte/icons/indent-increase";
 	import Lock from "@lucide/svelte/icons/lock";
 	import LockOpen from "@lucide/svelte/icons/lock-open";
 	import Link2 from "@lucide/svelte/icons/link-2";
@@ -1357,6 +1355,16 @@
 		type="button"
 		role="menuitem"
 		class={MENU_ITEM_CLASS}
+		disabled={!editor.canOutdentSelectedLayers}
+		onclick={() => runMenuAction(() => editor.outdentSelectedLayers())}
+	>
+		<FolderOutput class="size-3.5 text-muted-foreground" />
+		Ungroup selected layers
+	</button>
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
 		onclick={() => runMenuAction(() => editor.moveLayerUp())}
 	>
 		<ChevronUp class="size-3.5 text-muted-foreground" />
@@ -1370,25 +1378,6 @@
 	>
 		<ChevronDown class="size-3.5 text-muted-foreground" />
 		Move layer down
-	</button>
-	<button
-		type="button"
-		role="menuitem"
-		class={MENU_ITEM_CLASS}
-		onclick={() => runMenuAction(() => editor.indentActiveLayer())}
-	>
-		<IndentIncrease class="size-3.5 text-muted-foreground" />
-		Move into group above
-	</button>
-	<button
-		type="button"
-		role="menuitem"
-		class={MENU_ITEM_CLASS}
-		disabled={!editor.activeLayer.parentId}
-		onclick={() => runMenuAction(() => editor.outdentActiveLayer())}
-	>
-		<IndentDecrease class="size-3.5 text-muted-foreground" />
-		Move out of group
 	</button>
 
 	<div class="my-1 h-px bg-border"></div>
