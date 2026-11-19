@@ -130,8 +130,6 @@
 		if (isControlTarget(event)) return;
 		if (event.shiftKey) {
 			editor.extendLayerSelection(layer.id);
-		} else if (event.ctrlKey || event.metaKey) {
-			editor.toggleLayerSelection(layer.id);
 		} else {
 			editor.selectLayer(layer.id);
 		}

@@ -333,8 +333,6 @@
 	function handleFrameClick(event: MouseEvent, index: number): void {
 		if (event.shiftKey) {
 			editor.selectFrame(index, { extend: true });
-		} else if (event.ctrlKey || event.metaKey) {
-			editor.toggleFrameSelection(index);
 		} else {
 			editor.selectFrame(index);
 		}
@@ -402,10 +400,6 @@
 		if (event.button !== 0) return;
 		if (event.shiftKey) {
 			editor.extendCelSelection(layerId, frameIndex);
-			return;
-		}
-		if (event.ctrlKey || event.metaKey) {
-			editor.toggleCelSelection(layerId, frameIndex);
 			return;
 		}
 		celDrag = { layerId, frameIndex };
@@ -1473,39 +1467,21 @@
 		type="button"
 		role="menuitem"
 		class={MENU_ITEM_CLASS}
-		disabled={frameIndex <= 0}
-		onclick={() =>
-			runMenuAction(() =>
-				editor.isCelLinkedTo(layerId, frameIndex, -1)
-					? editor.unlinkCel(layerId, frameIndex, -1)
-					: editor.linkCel(layerId, frameIndex, -1))}
+		disabled={!editor.canLinkSelectedCels}
+		onclick={() => runMenuAction(() => editor.linkSelectedCels())}
 	>
-		{#if editor.isCelLinkedTo(layerId, frameIndex, -1)}
-			<Link2Off class="size-3.5 text-muted-foreground" />
-			Unlink to the left
-		{:else}
-			<Link2 class="size-3.5 text-muted-foreground" />
-			Link to the left
-		{/if}
+		<Link2 class="size-3.5 text-muted-foreground" />
+		Link cels
 	</button>
 	<button
 		type="button"
 		role="menuitem"
 		class={MENU_ITEM_CLASS}
-		disabled={frameIndex >= editor.doc.frames.length - 1}
-		onclick={() =>
-			runMenuAction(() =>
-				editor.isCelLinkedTo(layerId, frameIndex, 1)
-					? editor.unlinkCel(layerId, frameIndex, 1)
-					: editor.linkCel(layerId, frameIndex, 1))}
+		disabled={!editor.canUnlinkSelectedCels}
+		onclick={() => runMenuAction(() => editor.unlinkSelectedCels())}
 	>
-		{#if editor.isCelLinkedTo(layerId, frameIndex, 1)}
-			<Link2Off class="size-3.5 text-muted-foreground" />
-			Unlink to the right
-		{:else}
-			<Link2 class="size-3.5 text-muted-foreground" />
-			Link to the right
-		{/if}
+		<Link2Off class="size-3.5 text-muted-foreground" />
+		Unlink cels
 	</button>
 
 	<div class="my-1 h-px bg-border"></div>

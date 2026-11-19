@@ -2653,31 +2653,6 @@ export class EditorState {
 		this.layerSelection = this.#layerRange(anchorId, id);
 	}
 
-	/** Toggles a layer row in the selection (Ctrl/Cmd+click). */
-	toggleLayerSelection(id: string): void {
-		const layers = this.doc.layers;
-		if (!layers.some((layer) => layer.id === id)) return;
-		if (this.floating) this.commitFloatingSelection();
-		this.activeReferenceId = null;
-
-		if (this.layerSelection.includes(id)) {
-			if (this.layerSelection.length <= 1) return;
-			this.layerSelection = this.layerSelection.filter(
-				(layerId) => layerId !== id,
-			);
-			if (this.activeLayerId === id) {
-				this.activeLayerId =
-					this.layerSelection[this.layerSelection.length - 1]!;
-				this.#layerAnchorId = this.activeLayerId;
-			}
-			return;
-		}
-
-		this.layerSelection = [...this.layerSelection, id];
-		this.activeLayerId = id;
-		this.#layerAnchorId = id;
-	}
-
 	/** Selects one timeline cel (collapses both selections). */
 	selectCel(layerId: string, frameIndex: number): void {
 		this.selectLayer(layerId);
@@ -2702,12 +2677,6 @@ export class EditorState {
 		this.layerSelection = this.#layerRange(layerAnchorId, layerId);
 		this.activeFrame = next;
 		this.frameSelection = this.#frameIdsBetween(fromFrame, next);
-	}
-
-	/** Ctrl/Cmd+click on a cel: toggles its layer and frame in the selection. */
-	toggleCelSelection(layerId: string, frameIndex: number): void {
-		this.toggleLayerSelection(layerId);
-		this.toggleFrameSelection(frameIndex);
 	}
 
 	/**
@@ -2911,53 +2880,97 @@ export class EditorState {
 		return celPropsOf(this.doc, layerId, frame.id);
 	}
 
-	/** Gives a cel its own buffer copy, detaching it from any shared link. */
-	#detachCel(layerId: string, frameIndex: number): void {
-		const layer = this.doc.layers.find((item) => item.id === layerId);
-		const cel = layer?.cels[frameIndex];
-		if (cel) layer.cels[frameIndex] = new Uint32Array(cel);
+	/** Whether the current cel selection can be linked. */
+	get canLinkSelectedCels(): boolean {
+		return this.selectedFrameCount >= 2;
+	}
+
+	/** Unlinking works for any cel selection, including a single cel. */
+	get canUnlinkSelectedCels(): boolean {
+		return this.selectedFrameCount >= 1;
+	}
+
+	/** Selected layers that own cels; group nodes have no pixels. */
+	#selectedCelLayers(): Layer[] {
+		const selected = new Set(this.layerSelection);
+		return this.doc.layers.filter(
+			(layer) => selected.has(layer.id) && !isGroupLayer(layer),
+		);
 	}
 
 	/**
-	 * Links the selected cel to its neighbor in `direction` (-1 left, +1 right).
-	 * The selected cel's pixels overwrite the neighbor's.
+	 * Links every selected cel on each selected layer to one shared buffer.
+	 * The active frame's pixels overwrite the rest of the selected cels.
 	 */
-	linkCel(layerId: string, frameIndex: number, direction: -1 | 1): void {
-		const layer = this.doc.layers.find((item) => item.id === layerId);
-		if (!layer || isGroupLayer(layer)) return;
-		const other = frameIndex + direction;
-		if (other < 0 || other >= this.doc.frames.length) return;
-		if (this.isCelLinkedTo(layerId, frameIndex, direction)) return;
+	linkSelectedCels(): void {
+		const frames = this.selectedFrameIndices;
+		if (frames.length < 2) return;
+		const layers = this.#selectedCelLayers();
+		if (layers.length === 0) return;
+
+		const selectedFrames = new Set(frames);
+		const plans = layers.map((layer) => {
+			const preferred = selectedFrames.has(this.activeFrame)
+				? this.activeFrame
+				: frames[0]!;
+			const sourceFrame = layer.cels[preferred]
+				? preferred
+				: frames.find((frame) => layer.cels[frame]);
+			const source =
+				sourceFrame === undefined ? undefined : layer.cels[sourceFrame];
+			const alreadyLinked =
+				!!source &&
+				frames.every((frame) => layer.cels[frame] === source) &&
+				layer.cels.every(
+					(cel, index) => selectedFrames.has(index) || cel !== source,
+				);
+			return { layer, source, alreadyLinked };
+		});
+		if (plans.every((plan) => plan.alreadyLinked)) return;
 
 		this.pushHistory();
-		// Detach any existing links first so each cel keeps one unambiguous link.
-		this.#detachCel(layerId, frameIndex);
-		this.#detachCel(layerId, other);
-
-		const width = this.doc.width;
-		const height = this.doc.height;
-		const shared = new Uint32Array(
-			layer.cels[frameIndex] ?? new Uint32Array(width * height),
-		);
-		layer.cels[frameIndex] = shared;
-		layer.cels[other] = shared;
+		const size = this.doc.width * this.doc.height;
+		for (const plan of plans) {
+			if (plan.alreadyLinked) continue;
+			const shared = plan.source
+				? new Uint32Array(plan.source)
+				: new Uint32Array(size);
+			for (const frame of frames) plan.layer.cels[frame] = shared;
+		}
 		this.structureRevision++;
 		this.revision++;
 	}
 
 	/**
-	 * Unlinks a cel from its neighbor in `direction` (-1 left, +1 right). The
-	 * neighbor gets its own buffer copy, leaving the selected cel intact.
+	 * Gives every selected cel its own buffer, breaking its links to any other
+	 * cel on the same layer. The operation runs for every selected layer.
 	 */
-	unlinkCel(layerId: string, frameIndex: number, direction: -1 | 1): void {
-		const layer = this.doc.layers.find((item) => item.id === layerId);
-		if (!layer) return;
-		const other = frameIndex + direction;
-		if (other < 0 || other >= this.doc.frames.length) return;
-		if (!this.isCelLinkedTo(layerId, frameIndex, direction)) return;
+	unlinkSelectedCels(): void {
+		const frames = this.selectedFrameIndices;
+		if (frames.length === 0) return;
+		const layers = this.#selectedCelLayers();
+		if (layers.length === 0) return;
+
+		const plans = layers.map((layer) => {
+			const counts = new Map<Uint32Array, number>();
+			for (const cel of layer.cels) {
+				if (cel) counts.set(cel, (counts.get(cel) ?? 0) + 1);
+			}
+			const targets = frames.filter((frame) => {
+				const cel = layer.cels[frame];
+				return !!cel && (counts.get(cel) ?? 0) > 1;
+			});
+			return { layer, targets };
+		});
+		if (plans.every((plan) => plan.targets.length === 0)) return;
 
 		this.pushHistory();
-		this.#detachCel(layerId, other);
+		for (const plan of plans) {
+			for (const frame of plan.targets) {
+				const cel = plan.layer.cels[frame];
+				if (cel) plan.layer.cels[frame] = new Uint32Array(cel);
+			}
+		}
 		this.structureRevision++;
 		this.revision++;
 	}
@@ -3831,28 +3844,6 @@ export class EditorState {
 			.slice(from, to + 1)
 			.map((frame) => frame.id);
 		this.#frameAnchorId = this.doc.frames[from]!.id;
-	}
-
-	toggleFrameSelection(index: number): void {
-		const next = clamp(Math.round(index), 0, this.doc.frames.length - 1);
-		const id = this.doc.frames[next]!.id;
-		if (this.floating) this.commitFloatingSelection();
-
-		if (this.frameSelection.includes(id)) {
-			if (this.selectedFrameIndices.length <= 1) return;
-			this.frameSelection = this.frameSelection.filter(
-				(frameId) => frameId !== id,
-			);
-			const remaining = this.selectedFrameIndices;
-			this.activeFrame = remaining[remaining.length - 1] ?? 0;
-			this.#frameAnchorId =
-				this.doc.frames[this.activeFrame]?.id ?? null;
-			return;
-		}
-
-		this.frameSelection = [...this.frameSelection, id];
-		this.activeFrame = next;
-		this.#frameAnchorId = id;
 	}
 
 	selectAllFrames(): void {
