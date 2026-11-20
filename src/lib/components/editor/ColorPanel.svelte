@@ -240,7 +240,7 @@
 		</div>
 
 		<p class="text-[10px] text-muted-foreground">
-			Click the primary or secondary swatch to open the color picker.
+			Click the colors above to open the color picker.
 		</p>
 
 		<div class="space-y-2 pt-1">
