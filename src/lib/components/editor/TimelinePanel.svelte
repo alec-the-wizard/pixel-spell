@@ -1,13 +1,10 @@
 <script lang="ts">
+	import ArrowDown from "@lucide/svelte/icons/arrow-down";
 	import ArrowLeft from "@lucide/svelte/icons/arrow-left";
 	import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
 	import ArrowRight from "@lucide/svelte/icons/arrow-right";
+	import ArrowUp from "@lucide/svelte/icons/arrow-up";
 	import ChevronDown from "@lucide/svelte/icons/chevron-down";
-	import ChevronLeft from "@lucide/svelte/icons/chevron-left";
-	import ChevronRight from "@lucide/svelte/icons/chevron-right";
-	import ChevronUp from "@lucide/svelte/icons/chevron-up";
-	import ClipboardCopy from "@lucide/svelte/icons/clipboard-copy";
-	import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste";
 	import Copy from "@lucide/svelte/icons/copy";
 	import Eye from "@lucide/svelte/icons/eye";
 	import EyeOff from "@lucide/svelte/icons/eye-off";
@@ -692,7 +689,7 @@
 			title="Move layer up"
 			aria-label="Move layer up"
 		>
-			<ChevronUp class="size-3.5" />
+			<ArrowUp class="size-3.5" />
 		</Button>
 		<Button
 			variant="ghost"
@@ -702,7 +699,7 @@
 			title="Move layer down"
 			aria-label="Move layer down"
 		>
-			<ChevronDown class="size-3.5" />
+			<ArrowDown class="size-3.5" />
 		</Button>
 		<Button
 			variant="ghost"
@@ -755,7 +752,7 @@
 			title="Move frames left"
 			aria-label="Move selected frames left"
 		>
-			<ChevronLeft class="size-3.5" />
+			<ArrowLeft class="size-3.5" />
 		</Button>
 		<Button
 			variant="ghost"
@@ -765,7 +762,7 @@
 			title="Move frames right"
 			aria-label="Move selected frames right"
 		>
-			<ChevronRight class="size-3.5" />
+			<ArrowRight class="size-3.5" />
 		</Button>
 		<Button
 			variant="ghost"
@@ -1382,7 +1379,7 @@
 		class={MENU_ITEM_CLASS}
 		onclick={() => runMenuAction(() => editor.moveLayerUp())}
 	>
-		<ChevronUp class="size-3.5 text-muted-foreground" />
+		<ArrowUp class="size-3.5 text-muted-foreground" />
 		Move layer up
 	</button>
 	<button
@@ -1391,7 +1388,7 @@
 		class={MENU_ITEM_CLASS}
 		onclick={() => runMenuAction(() => editor.moveLayerDown())}
 	>
-		<ChevronDown class="size-3.5 text-muted-foreground" />
+		<ArrowDown class="size-3.5 text-muted-foreground" />
 		Move layer down
 	</button>
 
@@ -1410,25 +1407,6 @@
 {/snippet}
 
 {#snippet frameMenuActions()}
-	<button
-		type="button"
-		role="menuitem"
-		class={MENU_ITEM_CLASS}
-		onclick={() => runMenuAction(() => editor.copyFrames())}
-	>
-		<ClipboardCopy class="size-3.5 text-muted-foreground" />
-		Copy frames
-	</button>
-	<button
-		type="button"
-		role="menuitem"
-		class={MENU_ITEM_CLASS}
-		onclick={() => runMenuAction(() => editor.pasteFrames())}
-		disabled={!editor.hasFrameClipboard}
-	>
-		<ClipboardPaste class="size-3.5 text-muted-foreground" />
-		Paste frames
-	</button>
 	<button
 		type="button"
 		role="menuitem"
