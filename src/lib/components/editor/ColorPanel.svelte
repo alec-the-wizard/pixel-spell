@@ -3,6 +3,8 @@
 	import Lock from "@lucide/svelte/icons/lock";
 	import LockOpen from "@lucide/svelte/icons/lock-open";
 	import Minus from "@lucide/svelte/icons/minus";
+	import MouseLeft from "@lucide/svelte/icons/mouse-left";
+	import MouseRight from "@lucide/svelte/icons/mouse-right";
 	import PaletteIcon from "@lucide/svelte/icons/palette";
 	import Pencil from "@lucide/svelte/icons/pencil";
 	import Plus from "@lucide/svelte/icons/plus";
@@ -326,12 +328,14 @@
 			<button
 				type="button"
 				class={cn(
-					"color-slot-ring flex items-center gap-2 rounded-lg border p-1.5 text-left",
+					"color-slot-ring flex items-center justify-between gap-2 rounded-lg border p-1.5 text-left",
 					slot === "primary"
 						? "color-slot-active border-primary bg-accent text-foreground"
 						: "text-muted-foreground hover:bg-accent/60",
 				)}
 				onclick={() => (editor.activeColorSlot = "primary")}
+				title="Primary color (left mouse)"
+				aria-label="Primary color (left mouse)"
 				aria-pressed={slot === "primary"}
 			>
 				<span
@@ -342,10 +346,7 @@
 						style={`background-color: ${colorWithAlpha(editor.primaryColor, editor.alpha / 255)}`}
 					></span>
 				</span>
-				<span class="grid min-w-0 gap-0.5">
-					<span class="text-[10px] font-medium">Primary</span>
-					<span class="truncate text-[9px] text-muted-foreground">Left mouse</span>
-				</span>
+				<MouseLeft class="size-8 shrink-0 opacity-70" aria-hidden="true" />
 			</button>
 
 			<Button
@@ -362,12 +363,14 @@
 			<button
 				type="button"
 				class={cn(
-					"color-slot-ring flex items-center gap-2 rounded-lg border p-1.5 text-left",
+					"color-slot-ring flex items-center justify-between gap-2 rounded-lg border p-1.5 text-left",
 					slot === "secondary"
 						? "color-slot-active border-primary bg-accent text-foreground"
 						: "text-muted-foreground hover:bg-accent/60",
 				)}
 				onclick={() => (editor.activeColorSlot = "secondary")}
+				title="Secondary color (right mouse)"
+				aria-label="Secondary color (right mouse)"
 				aria-pressed={slot === "secondary"}
 			>
 				<span
@@ -378,10 +381,7 @@
 						style={`background-color: ${colorWithAlpha(editor.secondaryColor, editor.secondaryAlpha / 255)}`}
 					></span>
 				</span>
-				<span class="grid min-w-0 gap-0.5">
-					<span class="text-[10px] font-medium">Secondary</span>
-					<span class="truncate text-[9px] text-muted-foreground">Right mouse</span>
-				</span>
+				<MouseRight class="size-8 shrink-0 opacity-70" aria-hidden="true" />
 			</button>
 		</div>
 

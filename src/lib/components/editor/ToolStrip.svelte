@@ -1,15 +1,11 @@
 <script lang="ts">
 	import { Button } from "$lib/components/ui/button/index.js";
-	import { Separator } from "$lib/components/ui/separator/index.js";
 	import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
 	import { keybindings } from "$lib/editor/keybindings.svelte.js";
 	import { TOOLS } from "$lib/editor/tools.js";
 	import { cn } from "$lib/utils.js";
 	import ToolIcon from "./ToolIcon.svelte";
-
-	// Pan/zoom | selection tools | paint tools | fill/gradient/eyedropper | area tools
-	const SEPARATOR_BEFORE = new Set([2, 6, 12, 15]);
 
 	/** Accent colors for the left (primary blue) and right (orange) tool slots. */
 	const LEFT_SLOT_COLOR = "var(--primary)";
@@ -41,11 +37,7 @@
 	class="flex w-14 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r bg-muted/20 py-2"
 	aria-label="Tools"
 >
-	{#each TOOLS as tool, index (tool.id)}
-		{#if SEPARATOR_BEFORE.has(index)}
-			<Separator class="my-1 w-7" />
-		{/if}
-
+	{#each TOOLS as tool (tool.id)}
 		<Tooltip.Root>
 			<Tooltip.Trigger>
 				{#snippet child({ props })}
