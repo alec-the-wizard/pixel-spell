@@ -139,11 +139,17 @@ export function sortPaletteColors(
 		.map((entry) => entry.color);
 }
 
-/** True when both arrays contain the same colors, regardless of order. */
+/** True when both arrays contain the same colors, including duplicates. */
 function sameColorSet(a: string[], b: string[]): boolean {
 	if (a.length !== b.length) return false;
-	const set = new Set(a);
-	return b.every((color) => set.has(color));
+	const counts = new Map<string, number>();
+	for (const color of a) counts.set(color, (counts.get(color) ?? 0) + 1);
+	for (const color of b) {
+		const count = counts.get(color);
+		if (!count) return false;
+		counts.set(color, count - 1);
+	}
+	return true;
 }
 
 function normalizePaletteColors(value: unknown): string[] {
@@ -152,7 +158,7 @@ function normalizePaletteColors(value: unknown): string[] {
 	for (const entry of value) {
 		if (typeof entry !== "string") continue;
 		const normalized = normalizeHex(entry);
-		if (!normalized || colors.includes(normalized)) continue;
+		if (!normalized) continue;
 		colors.push(normalized);
 		if (colors.length >= MAX_PALETTE_COLORS) break;
 	}

@@ -11,6 +11,7 @@
 	import Settings2 from "@lucide/svelte/icons/settings-2";
 	import Trash2 from "@lucide/svelte/icons/trash-2";
 	import ColorCyclesDialog from "$lib/components/editor/ColorCyclesDialog.svelte";
+	import ColorPickerDialog from "$lib/components/editor/ColorPickerDialog.svelte";
 	import PaletteCoverageDialog from "$lib/components/editor/PaletteCoverageDialog.svelte";
 	import PaletteLibraryDialog from "$lib/components/editor/PaletteLibraryDialog.svelte";
 	import PaletteRampDialog from "$lib/components/editor/PaletteRampDialog.svelte";
@@ -19,16 +20,8 @@
 		buttonVariants,
 	} from "$lib/components/ui/button/index.js";
 	import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
-	import { Input } from "$lib/components/ui/input/index.js";
 	import { Separator } from "$lib/components/ui/separator/index.js";
-	import {
-		colorWithAlpha,
-		hexToRgb,
-		hsvToRgb,
-		normalizeHex,
-		rgbToHex,
-		rgbToHsv,
-	} from "$lib/editor/color.js";
+	import { colorWithAlpha } from "$lib/editor/color.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
 	import {
 		MAX_PALETTE_COLORS,
@@ -37,11 +30,6 @@
 	import type { ColorSlot } from "$lib/editor/types.js";
 	import { cn } from "$lib/utils.js";
 
-	const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
-
-	const HUE_TRACK =
-		"linear-gradient(to right, #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%)";
-
 	const SORT_OPTIONS: { id: PaletteSortMode; label: string }[] = [
 		{ id: "original", label: "Original order" },
 		{ id: "hue", label: "Hue" },
@@ -49,148 +37,26 @@
 		{ id: "lightness", label: "Lightness" },
 	];
 
-	let svArea: HTMLDivElement | undefined;
-	let draggingSv = false;
+	let pickerOpen = $state(false);
+	let pickerSlot = $state<ColorSlot>("primary");
 
-	let hexDraft = $state(editor.primaryColor);
-	let hexFocused = $state(false);
-
-	let hue = $state(0);
-	let saturation = $state(0);
-	let value = $state(0);
-	let syncedHex = "";
-
-	let slot = $derived(editor.activeColorSlot);
-	let activeHex = $derived(slot === "primary" ? editor.primaryColor : editor.secondaryColor);
-	let activeAlpha = $derived(slot === "primary" ? editor.alpha : editor.secondaryAlpha);
-	let alphaPercent = $derived(Math.round((activeAlpha / 255) * 100));
-
-	$effect(() => {
-		if (activeHex === syncedHex) return;
-		const hsv = rgbToHsv(hexToRgb(activeHex));
-		if (hsv.s > 0) hue = Math.round(hsv.h);
-		saturation = hsv.s;
-		value = hsv.v;
-		syncedHex = activeHex;
-	});
-
-	$effect(() => {
-		if (!hexFocused) hexDraft = activeHex;
-	});
-
-	function setActiveHex(next: string): void {
-		const normalized = normalizeHex(next);
-		if (!normalized) return;
-		editor.setColor(slot, normalized);
-		const hsv = rgbToHsv(hexToRgb(normalized));
-		if (hsv.s > 0) hue = Math.round(hsv.h);
-		saturation = hsv.s;
-		value = hsv.v;
-		syncedHex = normalized;
+	function openPicker(target: ColorSlot): void {
+		pickerSlot = target;
+		pickerOpen = true;
 	}
 
-	function applyHsv(nextHue = hue, nextSaturation = saturation, nextValue = value): void {
-		const h = ((nextHue % 360) + 360) % 360;
-		const s = clamp01(nextSaturation);
-		const v = clamp01(nextValue);
-		const { r, g, b } = hsvToRgb(h, s, v);
-		const next = rgbToHex(r, g, b);
-
-		hue = h;
-		saturation = s;
-		value = v;
-		syncedHex = next;
-		editor.setColor(slot, next);
-	}
-
-	function setAlpha(next: number): void {
-		editor.setColorAlpha(slot, next);
-	}
-
-	function onHexInput(event: Event): void {
-		const next = (event.currentTarget as HTMLInputElement).value;
-		hexDraft = next;
-		setActiveHex(next);
-	}
-
-	function commitHex(): void {
-		setActiveHex(hexDraft);
-		editor.snapColorToPalette(slot);
-		hexDraft = activeHex;
-		hexFocused = false;
-	}
-
-	function onHueInput(event: Event): void {
-		const next = Number((event.currentTarget as HTMLInputElement).value);
-		applyHsv(next, saturation, value);
-	}
-
-	function onAlphaInput(event: Event): void {
-		setAlpha(Number((event.currentTarget as HTMLInputElement).value));
-	}
-
-	function updateFromPointer(event: PointerEvent): void {
-		if (!svArea) return;
-		const rect = svArea.getBoundingClientRect();
-		if (rect.width === 0 || rect.height === 0) return;
-		const s = clamp01((event.clientX - rect.left) / rect.width);
-		const v = 1 - clamp01((event.clientY - rect.top) / rect.height);
-		applyHsv(hue, s, v);
-	}
-
-	function onSvPointerDown(event: PointerEvent): void {
-		if (event.button !== 0) return;
-		event.preventDefault();
-		draggingSv = true;
-		try {
-			svArea?.setPointerCapture(event.pointerId);
-		} catch {
-			// Synthetic pointer events may not own a capture target.
-		}
-		updateFromPointer(event);
-	}
-
-	function onSvPointerMove(event: PointerEvent): void {
-		if (!draggingSv) return;
-		updateFromPointer(event);
-	}
-
-	function onSvPointerUp(event: PointerEvent): void {
-		draggingSv = false;
-		if (svArea?.hasPointerCapture(event.pointerId)) {
-			svArea.releasePointerCapture(event.pointerId);
-		}
-		// Palette lock snaps only when the picker is released, so dragging
-		// remains smooth and still previews intermediate colors.
-		editor.snapColorToPalette(slot);
-	}
-
-	function onSvKeydown(event: KeyboardEvent): void {
-		const step = event.shiftKey ? 0.1 : 0.02;
-		if (event.key === "ArrowLeft") applyHsv(hue, saturation - step, value);
-		else if (event.key === "ArrowRight") applyHsv(hue, saturation + step, value);
-		else if (event.key === "ArrowUp") applyHsv(hue, saturation, value + step);
-		else if (event.key === "ArrowDown") applyHsv(hue, saturation, value - step);
-		else return;
-		event.preventDefault();
-	}
+	let primaryAlphaPercent = $derived(Math.round((editor.alpha / 255) * 100));
 
 	function choosePaletteColor(color: string, target: ColorSlot): void {
 		editor.setColor(target, color);
 		editor.setColorAlpha(target, 255);
-		editor.activeColorSlot = target;
 	}
 
 	let activePalette = $derived(editor.activePalette);
 	let paletteEditable = $derived(editor.paletteEditable);
 	let paletteColorCount = $derived(activePalette.colors.length);
-	let currentPaletteColor = $derived(
-		slot === "secondary" ? editor.secondaryColor : editor.primaryColor,
-	);
 	let canAddPaletteColor = $derived(
-		paletteEditable &&
-			paletteColorCount < MAX_PALETTE_COLORS &&
-			!activePalette.colors.includes(currentPaletteColor),
+		paletteEditable && paletteColorCount < MAX_PALETTE_COLORS,
 	);
 	let addPaletteColorTitle = $derived(
 		!paletteEditable
@@ -199,9 +65,7 @@
 				: "Unlock the palette to edit colors"
 			: paletteColorCount >= MAX_PALETTE_COLORS
 				? "Palette is full"
-				: activePalette.colors.includes(currentPaletteColor)
-					? "Color is already in the palette"
-					: "Add current color to palette",
+				: "Add primary color to palette",
 	);
 	let canRemovePaletteColor = $derived(paletteEditable && paletteColorCount > 0);
 	let removePaletteColorTitle = $derived(
@@ -319,7 +183,7 @@
 			<span class="text-xs font-medium">Color</span>
 		</div>
 		<span class="font-mono text-[10px] uppercase text-muted-foreground">
-			{activeHex} · {alphaPercent}%
+			{editor.primaryColor} · {primaryAlphaPercent}%
 		</span>
 	</header>
 
@@ -327,16 +191,11 @@
 		<div class="grid grid-cols-[1fr_auto_1fr] items-center gap-1.5">
 			<button
 				type="button"
-				class={cn(
-					"color-slot-ring flex items-center justify-between gap-2 rounded-lg border p-1.5 text-left",
-					slot === "primary"
-						? "color-slot-active border-primary bg-accent text-foreground"
-						: "text-muted-foreground hover:bg-accent/60",
-				)}
-				onclick={() => (editor.activeColorSlot = "primary")}
-				title="Primary color (left mouse)"
-				aria-label="Primary color (left mouse)"
-				aria-pressed={slot === "primary"}
+				class="flex items-center justify-between gap-2 rounded-lg border p-1.5 text-left text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent/60"
+				onclick={() => openPicker("primary")}
+				title="Edit primary color (left mouse)"
+				aria-label="Edit primary color (left mouse)"
+				aria-haspopup="dialog"
 			>
 				<span
 					class="checkerboard relative size-8 shrink-0 overflow-hidden rounded-md ring-1 ring-border"
@@ -362,16 +221,11 @@
 
 			<button
 				type="button"
-				class={cn(
-					"color-slot-ring flex items-center justify-between gap-2 rounded-lg border p-1.5 text-left",
-					slot === "secondary"
-						? "color-slot-active border-primary bg-accent text-foreground"
-						: "text-muted-foreground hover:bg-accent/60",
-				)}
-				onclick={() => (editor.activeColorSlot = "secondary")}
-				title="Secondary color (right mouse)"
-				aria-label="Secondary color (right mouse)"
-				aria-pressed={slot === "secondary"}
+				class="flex items-center justify-between gap-2 rounded-lg border p-1.5 text-left text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent/60"
+				onclick={() => openPicker("secondary")}
+				title="Edit secondary color (right mouse)"
+				aria-label="Edit secondary color (right mouse)"
+				aria-haspopup="dialog"
 			>
 				<span
 					class="checkerboard relative size-8 shrink-0 overflow-hidden rounded-md ring-1 ring-border"
@@ -385,86 +239,9 @@
 			</button>
 		</div>
 
-		<div class="space-y-2">
-			<div
-				bind:this={svArea}
-				role="slider"
-				tabindex="0"
-				aria-label="Saturation and brightness"
-				aria-valuemin={0}
-				aria-valuemax={100}
-				aria-valuenow={Math.round(value * 100)}
-				aria-valuetext={`Saturation ${Math.round(saturation * 100)}%, brightness ${Math.round(value * 100)}%`}
-				class="relative h-32 w-full touch-none overflow-hidden rounded-lg ring-1 ring-border outline-none focus-visible:ring-2 focus-visible:ring-ring"
-				onpointerdown={onSvPointerDown}
-				onpointermove={onSvPointerMove}
-				onpointerup={onSvPointerUp}
-				onpointercancel={onSvPointerUp}
-				onkeydown={onSvKeydown}
-			>
-				<span
-					class="absolute inset-0"
-					style={`background-color: hsl(${hue} 100% 50%)`}
-				></span>
-				<span class="absolute inset-0 bg-linear-to-r from-white to-transparent"></span>
-				<span class="absolute inset-0 bg-linear-to-t from-black to-transparent"></span>
-				<span
-					class="pointer-events-none absolute size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.5)]"
-					style={`left: ${saturation * 100}%; top: ${(1 - value) * 100}%;`}
-				></span>
-			</div>
-
-			<input
-				type="range"
-				min={0}
-				max={359}
-				step={1}
-				value={Math.round(hue)}
-				oninput={onHueInput}
-				onchange={() => editor.snapColorToPalette(slot)}
-				class="color-range"
-				style={`background: ${HUE_TRACK}`}
-				aria-label="Hue"
-			/>
-
-			<div
-				class="checkerboard relative h-3 overflow-hidden rounded-full ring-1 ring-border focus-within:ring-2 focus-within:ring-ring"
-			>
-				<span
-					class="absolute inset-0"
-					style={`background: linear-gradient(to right, ${colorWithAlpha(activeHex, 0)}, ${colorWithAlpha(activeHex, 1)})`}
-				></span>
-				<input
-					type="range"
-					min={0}
-					max={255}
-					step={1}
-					value={activeAlpha}
-					oninput={onAlphaInput}
-					class="color-range absolute inset-0 h-full w-full bg-transparent"
-					aria-label={`${slot === "primary" ? "Primary" : "Secondary"} alpha`}
-				/>
-			</div>
-		</div>
-
-		<div class="flex items-center gap-2">
-			<Input
-				value={hexDraft}
-				oninput={onHexInput}
-				onfocus={() => (hexFocused = true)}
-				onblur={commitHex}
-				onkeydown={(event) => {
-					if (event.key === "Enter") event.currentTarget.blur();
-				}}
-				maxlength={7}
-				spellcheck={false}
-				aria-label={`${slot === "primary" ? "Primary" : "Secondary"} hex color`}
-				class="h-7 px-2 font-mono text-xs uppercase"
-			/>
-			<span class="w-8 shrink-0 text-right font-mono text-[10px] tabular-nums text-muted-foreground">
-				{alphaPercent}%
-			</span>
-		</div>
+		<p class="text-[10px] text-muted-foreground">
+			Click the primary or secondary swatch to open the color picker.
+		</p>
 
 		<div class="space-y-2 pt-1">
 			<div class="flex items-center justify-between">
@@ -489,7 +266,7 @@
 						onclick={() => editor.addPaletteColor()}
 						disabled={!canAddPaletteColor}
 						title={addPaletteColorTitle}
-						aria-label="Add current color to palette"
+						aria-label="Add primary color to palette"
 					>
 						<Plus class="size-3.5" />
 					</Button>
@@ -690,12 +467,12 @@
 						{#if editor.paletteLocked}
 							This palette is locked and empty. Unlock it to add colors.
 						{:else}
-							No colors yet. Use + to add the current color.
+							No colors yet. Use + to add the primary color.
 						{/if}
 					</p>
 				{:else}
 					<div class="grid grid-cols-8 gap-1.5">
-						{#each activePalette.colors as color, index (color)}
+						{#each activePalette.colors as color, index}
 							<div class="group relative aspect-square">
 								<button
 									type="button"
@@ -728,6 +505,7 @@
 		</div>
 	</div>
 
+	<ColorPickerDialog bind:open={pickerOpen} slot={pickerSlot} />
 	<PaletteLibraryDialog bind:open={paletteLibraryOpen} />
 	<PaletteRampDialog bind:open={editor.paletteRampOpen} />
 	<ColorCyclesDialog bind:open={editor.paletteCyclesOpen} />

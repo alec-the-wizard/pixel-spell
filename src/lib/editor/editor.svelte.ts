@@ -276,8 +276,6 @@ export class EditorState {
 	alpha = $state(255);
 	secondaryColor = $state("#ffffff");
 	secondaryAlpha = $state(255);
-	/** Which color slot the color panel is currently editing. */
-	activeColorSlot = $state<ColorSlot>("primary");
 	palettes = $state<Palette[]>([createDefaultPalette()]);
 	activePaletteId = $state<string>(DEFAULT_PALETTE_ID);
 	/** Restricts color picking to the active palette and blocks palette edits. */
@@ -1204,7 +1202,6 @@ export class EditorState {
 			: picked;
 		this.setColor(slot, hex);
 		this.setColorAlpha(slot, a);
-		this.activeColorSlot = slot;
 	}
 
 	swapColors(): void {
@@ -1234,7 +1231,7 @@ export class EditorState {
 	 * Snaps a color slot to the nearest palette entry. Called when a picker is
 	 * released (or an eyedropper click lands), not while the user is dragging.
 	 */
-	snapColorToPalette(slot: ColorSlot = this.activeColorSlot): void {
+	snapColorToPalette(slot: ColorSlot = "primary"): void {
 		if (!this.paletteLocked) return;
 		const current =
 			slot === "secondary" ? this.secondaryColor : this.primaryColor;
@@ -1473,18 +1470,18 @@ export class EditorState {
 		this.#persistPalettes();
 	}
 
-	addPaletteColor(slot: ColorSlot = this.activeColorSlot): void {
+	addPaletteColor(): void {
 		const palette = this.activePalette;
 		if (!this.paletteEditable) return;
 
-		const color = slot === "secondary" ? this.secondaryColor : this.primaryColor;
-		if (palette.colors.includes(color)) return;
+		const color = this.primaryColor;
 		if (palette.colors.length >= MAX_PALETTE_COLORS) return;
 
 		palette.colors.push(color);
-		palette.originalColors ??= [...palette.colors];
-		if (!palette.originalColors.includes(color)) {
+		if (palette.originalColors) {
 			palette.originalColors.push(color);
+		} else {
+			palette.originalColors = [...palette.colors];
 		}
 		if (palette.sortMode && palette.sortMode !== "original") {
 			palette.colors = sortPaletteColors(

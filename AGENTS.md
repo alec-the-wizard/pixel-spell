@@ -59,7 +59,8 @@ Key files:
 | `lib/editor/palette-cycle.ts` | Palette cycle ranges, direction offsets, display order, color maps, and pixel remapping |
 | `lib/editor/palette-library.ts` | Built-in palette library entries with optional author/legal metadata |
 | `lib/editor/canvas-presets.ts` | Canvas-size presets used by the New Project dialog |
-| `lib/components/editor/ColorPanel.svelte` | Color picker, primary/secondary slots, palette selector, lock, and palette tools menu |
+| `lib/components/editor/ColorPanel.svelte` | Primary/secondary slots that open the color picker dialog, palette selector, lock, and palette tools menu |
+| `lib/components/editor/ColorPickerDialog.svelte` | Advanced color picker for one slot: saturation/brightness field, hue/alpha sliders, hex, RGB/HSV channel controls, and palette swatches |
 | `lib/components/editor/PaletteRampDialog.svelte` | Ramp endpoints, step count, blend space, preview, and append/lock options |
 | `lib/components/editor/ColorCyclesDialog.svelte` | Palette cycle range, direction/speed, in-dialog preview, phase bake, and generated animation frames |
 | `lib/components/editor/PaletteLibraryDialog.svelte` | Searchable built-in palette library with previews and author/legal notes |
@@ -228,7 +229,7 @@ The shell is intentionally:
 ```
 Menu bar (File/Edit/Project/View/Help menus left, canvas/frame/layer readout centered, display toggles right)
 ├── Tool strip (left, thin, square buttons + tooltips)
-├── Left panel (tool options on top, color picker/palette below)
+├── Left panel (tool options on top, color slots/palette below)
 └── Main area
     ├── Project tab strip (project tabs, dirty dots, close buttons, new-project)
     ├── Canvas (fit/rotation/zoom controls bottom right, grid controls bottom left, cursor, Reference Board panel/button top-left, Preview window/scan-eye button top-right)
@@ -277,7 +278,7 @@ Preserve these regions and their relative placement when making changes.
 - The timeline table uses sticky `<th>` cells inside an `overflow-auto` container. Keep `border-separate border-spacing-0`, explicit column widths, and opaque header backgrounds; otherwise scrolling content shows through or columns shift.
 - Timeline height is a UI preference stored in `localStorage`, not part of project files.
 - Custom palettes are workspace preferences stored in `localStorage` under `pixel-spell-palettes`; the built-in palette always has id `default` and is never persisted or editable. Custom palettes are capped at 256 colors and new ones start empty. Each custom palette stores its original add/import order and last sort mode so the palette tools menu can restore **Original order** after sorting by hue, saturation, or lightness. The Palette Library dialog adds library entries through `importPalette`, which creates a normal editable palette; adding the same entry again creates an independent copy with a suffixed name.
-- `editor.paletteLocked` and the active palette id are persisted with the palette collection. `paletteEditable` means the active palette is custom and unlocked; use it for add/remove/rename/delete/sort/dedupe/ramp controls. Locking constrains color choice only: `snapColorToPalette` runs on picker release (SV pointer up, hue `change`, hex commit) and `setColorFromPacked` snaps eyedropper picks to the nearest palette entry using OKLab distance. Existing pixels are never rewritten.
+- `editor.paletteLocked` and the active palette id are persisted with the palette collection. `paletteEditable` means the active palette is custom and unlocked; use it for add/remove/rename/delete/sort/dedupe/ramp controls. The `+` button appends `primaryColor` even when the palette already contains it; duplicates are persisted, and **Remove duplicates** cleans them up. Locking constrains color choice only: `snapColorToPalette` runs on picker release (SV pointer up, hue/channel `change`, hex commit) and `setColorFromPacked` snaps eyedropper picks to the nearest palette entry using OKLab distance. Existing pixels are never rewritten.
 - `editor.paletteCycleStart`, `paletteCycleEnd`, `paletteCycleMs`, and `paletteCycleDirection` describe the workspace-level Color Cycles range and motion. They are intentionally **not** stored in project files, history, or autosaves; opening a project keeps the current workspace cycle settings. Swatch clicks only set colors and never select a range.
 - Color cycling lives entirely in `ColorCyclesDialog.svelte`, opened from the palette tools menu or the **Color cycles…** command. The dialog owns the preview phase and timer, renders its own composited frame preview with `buildPaletteCycleMap` + `remapPalettePixels`, and shows the rotated range strip. `CanvasStage`, `Preview`, thumbnails, onion skins, and export never apply a cycle remap.
 - `editor.bakePaletteCycle(shift)` writes one phase into the active frame's visible normal layers (reference layers are skipped) and is undoable via `pushHistoryCels`. `editor.generatePaletteCycleAnimation({ steps, durationMs, tag })` inserts one full pass after the active frame, rotates each copy, and selects the generated frames so they become the animation range. Generated frames are ordinary frames with `duration`/`tag`, so GIF and sprite-sheet export animate them without any fresh file-format fields.
