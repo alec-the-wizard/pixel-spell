@@ -1306,54 +1306,23 @@
 		type="button"
 		role="menuitem"
 		class={MENU_ITEM_CLASS}
-		onclick={() => runMenuAction(() => (layerPropertiesOpen = true))}
-	>
-		<Settings2 class="size-3.5 text-muted-foreground" />
-		Layer properties…
-	</button>
-	<button
-		type="button"
-		role="menuitem"
-		class={MENU_ITEM_CLASS}
-		onclick={() =>
-			runMenuAction(() => editor.toggleLayerVisibility(editor.activeLayerId))}
-	>
-		{#if editor.activeLayer.visible}
-			<EyeOff class="size-3.5 text-muted-foreground" />
-			Hide layer
-		{:else}
-			<Eye class="size-3.5 text-muted-foreground" />
-			Show layer
-		{/if}
-	</button>
-	<button
-		type="button"
-		role="menuitem"
-		class={MENU_ITEM_CLASS}
-		disabled={editor.activeLayer.role === "reference"}
-		onclick={() =>
-			runMenuAction(() => editor.toggleLayerLock(editor.activeLayerId))}
-	>
-		{#if editor.activeLayer.locked}
-			<LockOpen class="size-3.5 text-muted-foreground" />
-			Unlock layer
-		{:else}
-			<Lock class="size-3.5 text-muted-foreground" />
-			Lock layer
-		{/if}
-	</button>
-
-	<div class="my-1 h-px bg-border"></div>
-
-	<button
-		type="button"
-		role="menuitem"
-		class={MENU_ITEM_CLASS}
 		onclick={() => runMenuAction(() => editor.duplicateLayer())}
 	>
 		<Copy class="size-3.5 text-muted-foreground" />
 		Duplicate layer
 	</button>
+	<button
+		type="button"
+		role="menuitem"
+		class={MENU_ITEM_CLASS}
+		onclick={() => runMenuAction(() => (layerPropertiesOpen = true))}
+	>
+		<Settings2 class="size-3.5 text-muted-foreground" />
+		Layer properties…
+	</button>
+
+	<div class="my-1 h-px bg-border"></div>
+
 	<button
 		type="button"
 		role="menuitem"
@@ -1373,6 +1342,9 @@
 		<FolderOutput class="size-3.5 text-muted-foreground" />
 		Ungroup selected layers
 	</button>
+
+	<div class="my-1 h-px bg-border"></div>
+	
 	<button
 		type="button"
 		role="menuitem"
