@@ -178,7 +178,7 @@
 				<div class="rounded-lg border border-dashed bg-muted/30 p-3">
 					<p class="text-[10px] leading-relaxed text-muted-foreground">
 						Drag to draw freehand, or click to place polygon points — mix both freely. Finish by
-						returning to the start point or right-clicking to close with a straight line.
+						returning to the start point or double-clicking to close with a straight line.
 					</p>
 				</div>
 				{@render deselectAction()}

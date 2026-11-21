@@ -239,10 +239,6 @@
 			</button>
 		</div>
 
-		<p class="text-[10px] text-muted-foreground">
-			Click the colors above to open the color picker.
-		</p>
-
 		<div class="space-y-2 pt-1">
 			<div class="flex items-center justify-between">
 				<div class="flex items-center gap-1.5">
