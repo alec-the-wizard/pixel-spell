@@ -1,10 +1,12 @@
 <script lang="ts">
 	import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
 	import Circle from "@lucide/svelte/icons/circle";
+	import CircleQuestionMark from "@lucide/svelte/icons/circle-question-mark";
 	import Slash from "@lucide/svelte/icons/slash";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Slider } from "$lib/components/ui/slider/index.js";
 	import { Switch } from "$lib/components/ui/switch/index.js";
+	import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
 	import { TOOL_BY_ID, usesPixelPerfect } from "$lib/editor/tools.js";
 	import type { GradientDither } from "$lib/editor/types.js";
@@ -47,6 +49,26 @@
 			Deselect
 		</Button>
 	{/if}
+{/snippet}
+
+{#snippet optionLabel(label: string, help: string)}
+	<Tooltip.Root>
+		<Tooltip.Trigger>
+			{#snippet child({ props })}
+				<button
+					{...props}
+					class="inline-flex cursor-help items-center gap-1 rounded-sm text-left text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				>
+					{label}
+					<CircleQuestionMark
+						class="size-3 shrink-0 text-muted-foreground"
+						aria-hidden="true"
+					/>
+				</button>
+			{/snippet}
+		</Tooltip.Trigger>
+		<Tooltip.Content side="right" sideOffset={8}>{help}</Tooltip.Content>
+	</Tooltip.Root>
 {/snippet}
 
 <section class="relative flex min-h-0 flex-1 basis-0 flex-col">
@@ -129,17 +151,18 @@
 					</p>
 				{/if}
 			{:else if editor.tool === "magic-wand"}
-				<label
-					class="flex items-start justify-between gap-3 rounded-lg border px-3 py-2.5"
+				<div
+					class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
 				>
-					<span class="grid gap-0.5">
-						<span class="text-xs font-medium">Diagonal connections</span>
-						<span class="text-[10px] leading-snug text-muted-foreground">
-							Include pixels that touch at a corner as part of the same area.
-						</span>
-					</span>
-					<Switch bind:checked={editor.magicWandDiagonal} />
-				</label>
+					{@render optionLabel(
+						"Diagonal connections",
+						"Include pixels that touch at a corner as part of the same area.",
+					)}
+					<Switch
+						bind:checked={editor.magicWandDiagonal}
+						aria-label="Diagonal connections"
+					/>
+				</div>
 				{@render deselectAction()}
 			{:else if editor.tool === "shape-select"}
 				<div class="space-y-2.5">
@@ -165,17 +188,18 @@
 				</p>
 				{@render deselectAction()}
 			{:else if editor.tool === "eyedropper"}
-				<label
-					class="flex items-start justify-between gap-3 rounded-lg border px-3 py-2.5"
+				<div
+					class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
 				>
-					<span class="grid gap-0.5">
-						<span class="text-xs font-medium">Sample all layers</span>
-						<span class="text-[10px] leading-snug text-muted-foreground">
-							Pick from the flattened image instead of the active layer.
-						</span>
-					</span>
-					<Switch bind:checked={editor.sampleAllLayers} />
-				</label>
+					{@render optionLabel(
+						"Sample all layers",
+						"Pick from the flattened image instead of the active layer.",
+					)}
+					<Switch
+						bind:checked={editor.sampleAllLayers}
+						aria-label="Sample all layers"
+					/>
+				</div>
 				{#if editor.doubleToolEnabled}
 					<div class="space-y-2.5">
 						<span class="text-xs font-medium">Pick target</span>
@@ -214,7 +238,10 @@
 
 				<div class="space-y-2.5">
 					<div class="flex items-center justify-between">
-						<span class="text-xs font-medium">Pixel speed</span>
+						{@render optionLabel(
+							"Pixel speed",
+							"Hold the pointer still to keep scattering pixels across the round area.",
+						)}
 						<span
 							class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground"
 						>
@@ -222,9 +249,6 @@
 						</span>
 					</div>
 					<Slider type="single" min={1} max={200} step={1} bind:value={editor.sprayRate} />
-					<p class="text-[10px] leading-snug text-muted-foreground">
-						Hold the pointer still to keep scattering pixels across the round area.
-					</p>
 				</div>
 			{:else if editor.tool === "blur"}
 				<div class="space-y-2.5">
@@ -241,7 +265,10 @@
 
 				<div class="space-y-2.5">
 					<div class="flex items-center justify-between">
-						<span class="text-xs font-medium">Blur power</span>
+						{@render optionLabel(
+							"Blur power",
+							"Pass over an area repeatedly to soften it further.",
+						)}
 						<span
 							class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground"
 						>
@@ -249,9 +276,6 @@
 						</span>
 					</div>
 					<Slider type="single" min={1} max={100} step={1} bind:value={editor.blurPower} />
-					<p class="text-[10px] leading-snug text-muted-foreground">
-						Pass over an area repeatedly to soften it further.
-					</p>
 				</div>
 			{:else if editor.tool === "jumble"}
 				<div class="space-y-2.5">
@@ -268,7 +292,10 @@
 
 				<div class="space-y-2.5">
 					<div class="flex items-center justify-between">
-						<span class="text-xs font-medium">Scramble power</span>
+						{@render optionLabel(
+							"Scramble power",
+							"Higher values swap more pixels inside the round area on every pass.",
+						)}
 						<span
 							class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground"
 						>
@@ -276,14 +303,14 @@
 						</span>
 					</div>
 					<Slider type="single" min={1} max={100} step={1} bind:value={editor.jumblePower} />
-					<p class="text-[10px] leading-snug text-muted-foreground">
-						Higher values swap more pixels inside the round area on every pass.
-					</p>
 				</div>
 			{:else if editor.tool === "fill"}
 				<div class="space-y-2.5">
 					<div class="flex items-center justify-between">
-						<span class="text-xs font-medium">Tolerance</span>
+						{@render optionLabel(
+							"Tolerance",
+							"Higher values fill more colors that are close to the clicked pixel.",
+						)}
 						<span
 							class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground"
 						>
@@ -291,26 +318,24 @@
 						</span>
 					</div>
 					<Slider type="single" min={0} max={100} step={1} bind:value={editor.fillTolerance} />
-					<p class="text-[10px] leading-snug text-muted-foreground">
-						Higher values fill more colors that are close to the clicked pixel.
-					</p>
 				</div>
 
-				<label
-					class="flex items-start justify-between gap-3 rounded-lg border px-3 py-2.5"
+				<div
+					class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
 				>
-					<span class="grid gap-0.5">
-						<span class="text-xs font-medium">Contiguous</span>
-						<span class="text-[10px] leading-snug text-muted-foreground">
-							Only fill the connected region around the click.
-						</span>
-					</span>
-					<Switch bind:checked={editor.fillContiguous} />
-				</label>
+					{@render optionLabel(
+						"Contiguous",
+						"Only fill the connected region around the click.",
+					)}
+					<Switch bind:checked={editor.fillContiguous} aria-label="Contiguous" />
+				</div>
 			{:else if editor.tool === "gradient"}
 				<div class="space-y-2.5">
 					<div class="flex items-center justify-between">
-						<span class="text-xs font-medium">Tolerance</span>
+						{@render optionLabel(
+							"Tolerance",
+							"Higher values include more colors close to the clicked pixel.",
+						)}
 						<span
 							class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground"
 						>
@@ -318,22 +343,17 @@
 						</span>
 					</div>
 					<Slider type="single" min={0} max={100} step={1} bind:value={editor.gradientTolerance} />
-					<p class="text-[10px] leading-snug text-muted-foreground">
-						Higher values include more colors close to the clicked pixel.
-					</p>
 				</div>
 
-				<label
-					class="flex items-start justify-between gap-3 rounded-lg border px-3 py-2.5"
+				<div
+					class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
 				>
-					<span class="grid gap-0.5">
-						<span class="text-xs font-medium">Contiguous</span>
-						<span class="text-[10px] leading-snug text-muted-foreground">
-							Only apply the gradient to the connected region around the click.
-						</span>
-					</span>
-					<Switch bind:checked={editor.gradientContiguous} />
-				</label>
+					{@render optionLabel(
+						"Contiguous",
+						"Only apply the gradient to the connected region around the click.",
+					)}
+					<Switch bind:checked={editor.gradientContiguous} aria-label="Contiguous" />
+				</div>
 
 				<div class="space-y-2.5">
 					<span class="text-xs font-medium">Shape</span>
@@ -362,7 +382,10 @@
 				</div>
 
 				<div class="space-y-2.5">
-					<span class="text-xs font-medium">Dithering</span>
+					{@render optionLabel(
+						"Dithering",
+						"Bayer patterns create a two-color dithered transition; None blends the colors smoothly.",
+					)}
 					<div class="grid grid-cols-2 gap-1.5" role="group" aria-label="Dithering">
 						{#each DITHER_OPTIONS as option (option.id)}
 							<Button
@@ -375,10 +398,6 @@
 							</Button>
 						{/each}
 					</div>
-					<p class="text-[10px] leading-snug text-muted-foreground">
-						Bayer patterns create a two-color dithered transition; None blends the colors
-						smoothly.
-					</p>
 				</div>
 			{:else}
 				{#if isShape}
@@ -405,35 +424,32 @@
 				{/if}
 
 				{#if isShape}
-					<label
-						class="flex items-start justify-between gap-3 rounded-lg border px-3 py-2.5"
+					<div
+						class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
 					>
-						<span class="grid gap-0.5">
-							<span class="text-xs font-medium">Filled shape</span>
-							<span class="text-[10px] leading-snug text-muted-foreground">
-								Fill the interior instead of drawing an outline.
-							</span>
-						</span>
-						<Switch bind:checked={editor.shapeFilled} />
-					</label>
+						{@render optionLabel(
+							"Filled shape",
+							"Fill the interior instead of drawing an outline.",
+						)}
+						<Switch bind:checked={editor.shapeFilled} aria-label="Filled shape" />
+					</div>
 				{/if}
 
 				{#if showPixelPerfect}
-					<label
-						class="flex items-start justify-between gap-3 rounded-lg border px-3 py-2.5"
+					<div
+						class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
 					>
-						<span class="grid gap-0.5">
-							<span class="text-xs font-medium">Pixel perfect</span>
-							<span class="text-[10px] leading-snug text-muted-foreground">
-								Remove extra corner pixels from stair-stepped edges.
-							</span>
-						</span>
+						{@render optionLabel(
+							"Pixel perfect",
+							"Remove extra corner pixels from stair-stepped edges.",
+						)}
 						<Switch
 							checked={editor.pixelPerfectFor(editor.tool)}
 							onCheckedChange={(checked) =>
 								editor.setPixelPerfect(editor.tool, checked)}
+							aria-label="Pixel perfect"
 						/>
-					</label>
+					</div>
 				{/if}
 
 				{#if editor.tool === "curve"}
