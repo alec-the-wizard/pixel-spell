@@ -229,7 +229,7 @@ The shell is intentionally:
 ```
 Menu bar (File/Edit/Project/View/Help menus left, canvas/frame/layer readout centered, display toggles right)
 ├── Tool strip (left, thin, square buttons + tooltips)
-├── Left panel (tool options on top, color slots/palette below)
+├── Left panel (tool options on top, color slots/palette below; two equal-height halves that scroll independently)
 └── Main area
     ├── Project tab strip (project tabs, dirty dots, close buttons, new-project)
     ├── Canvas (fit/rotation/zoom controls bottom right, grid controls bottom left, cursor, Reference Board panel/button top-left, Preview window/scan-eye button top-right)

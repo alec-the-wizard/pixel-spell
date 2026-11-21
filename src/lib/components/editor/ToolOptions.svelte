@@ -49,7 +49,7 @@
 	{/if}
 {/snippet}
 
-<section class="relative flex min-h-0 flex-1 flex-col">
+<section class="relative flex min-h-0 flex-1 basis-0 flex-col">
 	<header class="flex h-11 shrink-0 items-center gap-2.5 border-b px-4">
 		<div class="grid size-7 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
 			<ToolIcon tool={editor.tool} class="size-4" />

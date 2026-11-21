@@ -176,8 +176,8 @@
 	});
 </script>
 
-<section class="shrink-0 border-t">
-	<header class="flex h-11 items-center justify-between border-b px-4">
+<section class="flex min-h-0 flex-1 basis-0 flex-col border-t">
+	<header class="flex h-11 shrink-0 items-center justify-between border-b px-4">
 		<div class="flex items-center gap-2">
 			<PaletteIcon class="size-4 text-muted-foreground" />
 			<span class="text-xs font-medium">Color</span>
@@ -187,7 +187,7 @@
 		</span>
 	</header>
 
-	<div class="space-y-4 p-4">
+	<div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
 		<div class="grid grid-cols-[1fr_auto_1fr] items-center gap-1.5">
 			<button
 				type="button"
@@ -454,7 +454,7 @@
 				</Button>
 			</div>
 
-			<div class="max-h-44 overflow-y-auto p-1">
+			<div class="p-1">
 				{#if paletteNotice}
 					<p class="px-2 pb-1 text-[10px] text-muted-foreground" aria-live="polite">
 						{paletteNotice}
