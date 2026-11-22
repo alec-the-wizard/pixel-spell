@@ -96,7 +96,7 @@
 >
 	<div
 		bind:this={toolsEl}
-		class="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto px-2 py-1"
+		class="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-x-hidden overflow-y-auto px-1 py-1"
 		role="group"
 		aria-label="Tool strip"
 		ondragover={handleDragOver}

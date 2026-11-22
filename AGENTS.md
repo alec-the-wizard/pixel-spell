@@ -124,7 +124,7 @@ Key files:
 - Commands may have `enabled()` (hidden from the palette and skipped by the key handler when false), `ignoreRepeat` (for toggles such as playback), and extra `keywords` for search.
 - `lib/editor/keybindings.svelte.ts` owns the reactive `bindings` map, combo normalization (`mod` matches Ctrl or Cmd), formatting, conflict detection, and localStorage persistence under `pixel-spell-keybindings`.
 - Defaults live on the command definition as normalized combos (`"mod+shift+z"`, `"shift+g"`, `"alt+left"`, `"["`, `"space"`). A command can have several defaults (redo uses `Ctrl+Shift+Z` and `Ctrl+Y`).
-- `App.svelte` resolves every global keydown through `keybindings.commandForCombo`; do not add hardcoded shortcut branches there. Tool shortcuts are commands too (`tool.<id>`), and their `enabled()` reads `toolLayout`, so hiding a tool also disables its shortcut and removes it from the command palette.
+- `App.svelte` resolves every global keydown through `keybindings.commandForCombo`; do not add hardcoded shortcut branches there. Tool shortcuts are commands too (`tool.<id>`). Tool commands stay enabled even when a tool is hidden, so its shortcut and command palette entry can still select it.
 - The shortcut editor captures keys on `window` in the capture phase and stops immediate propagation so the app handler and dialog Escape handling do not run while rebinding. It rejects conflicts and supports up to three bindings per command.
 - Restoring defaults replaces the map and removes the localStorage record.
 - `App.svelte` prevents the browser context menu globally with `oncontextmenucapture`. App-specific context menus still receive the event; they just must not rely on the native menu.

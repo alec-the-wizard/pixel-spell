@@ -1,5 +1,4 @@
 import { editor } from "./editor.svelte.js";
-import { toolLayout } from "./tool-layout.svelte.js";
 import { TOOLS } from "./tools.js";
 
 export type CommandGroup =
@@ -532,7 +531,6 @@ const TOOL_COMMANDS: CommandDef[] = TOOLS.map((tool) => ({
 	description: tool.description,
 	group: "Tools",
 	defaultKeys: [toolCombo(tool.shortcut)],
-	enabled: () => toolLayout.isEnabled(tool.id),
 	run: () => editor.setTool(tool.id),
 }));
 

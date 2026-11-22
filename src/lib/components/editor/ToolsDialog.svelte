@@ -38,7 +38,7 @@
 			</Dialog.Description>
 		</Dialog.Header>
 
-		<div class="-mr-1 max-h-[52vh] overflow-y-auto pr-1">
+		<div class="-mr-1 max-h-[52vh] overflow-x-hidden overflow-y-auto pr-1">
 			{#each tools as tool (tool.id)}
 				<label
 					class="flex min-h-10 items-center gap-3 rounded-md px-1.5 py-1 transition-colors hover:bg-muted/60"
@@ -50,7 +50,7 @@
 					</span>
 					<span class="min-w-0 flex-1 truncate text-sm">{tool.label}</span>
 					<kbd
-						class="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+						class="shrink-0 rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
 					>
 						{shortcutLabel(tool.id)}
 					</kbd>
