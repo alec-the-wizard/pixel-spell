@@ -48,6 +48,7 @@
 
 	onMount(() => {
 		let disposed = false;
+		editor.ensureEnabledTool();
 		initialProjectIds = editor.projects.map((project) => project.id);
 
 		const autosaveTimer = window.setInterval(

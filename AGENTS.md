@@ -53,7 +53,8 @@ Key files:
 | `lib/editor/import.ts` | Image decoding, palette parsing, and import analysis |
 | `lib/editor/reference.ts` | Reference-layer fitting and reference-board placement helpers |
 | `lib/editor/export.ts` | Image, sprite sheet, GIF, and sprite-sheet metadata encoding |
-| `lib/editor/tools.ts` | Tool metadata, labels, shortcuts |
+| `lib/editor/tools.ts` | Tool metadata, labels, shortcuts, and default visibility |
+| `lib/editor/tool-layout.svelte.ts` | Tool strip order, per-tool visibility, and localStorage persistence |
 | `lib/editor/palette.ts` | Built-in palette, palette type, sorting helpers, nearest-color matching, and localStorage persistence |
 | `lib/editor/palette-ramp.ts` | RGB, HSV, and OKLab ramp generation between two colors |
 | `lib/editor/palette-cycle.ts` | Palette cycle ranges, direction offsets, display order, color maps, and pixel remapping |
@@ -67,6 +68,8 @@ Key files:
 | `lib/components/editor/PaletteCoverageDialog.svelte` | Read-only palette coverage report: usage bars, hue/brightness bins, off-palette colors |
 | `lib/components/editor/TimelinePanel.svelte` | Timeline toolbar, tag ranges, frame×layer table, frame context menu, onion/animation-mode/loop controls, add-layer row |
 | `lib/components/editor/CommandPalette.svelte` | `Ctrl+K` searchable command runner |
+| `lib/components/editor/ToolStrip.svelte` | Reorderable tool buttons, drop indicator, and bottom tools-menu button |
+| `lib/components/editor/ToolsDialog.svelte` | Per-tool visibility switches and restore defaults |
 | `lib/components/editor/ShortcutsDialog.svelte` | Keybinding editor with capture, conflict detection, and restore defaults |
 | `lib/components/editor/Preview.svelte` | Closed scan-eye button and 1× floating frame preview |
 | `lib/components/editor/CanvasStage.svelte` | Canvas viewport, drawing pointer handling, reference-board placement, mirror/radial guides, zoom pill |
@@ -121,7 +124,7 @@ Key files:
 - Commands may have `enabled()` (hidden from the palette and skipped by the key handler when false), `ignoreRepeat` (for toggles such as playback), and extra `keywords` for search.
 - `lib/editor/keybindings.svelte.ts` owns the reactive `bindings` map, combo normalization (`mod` matches Ctrl or Cmd), formatting, conflict detection, and localStorage persistence under `pixel-spell-keybindings`.
 - Defaults live on the command definition as normalized combos (`"mod+shift+z"`, `"shift+g"`, `"alt+left"`, `"["`, `"space"`). A command can have several defaults (redo uses `Ctrl+Shift+Z` and `Ctrl+Y`).
-- `App.svelte` resolves every global keydown through `keybindings.commandForCombo`; do not add hardcoded shortcut branches there. Tool shortcuts are commands too (`tool.<id>`).
+- `App.svelte` resolves every global keydown through `keybindings.commandForCombo`; do not add hardcoded shortcut branches there. Tool shortcuts are commands too (`tool.<id>`), and their `enabled()` reads `toolLayout`, so hiding a tool also disables its shortcut and removes it from the command palette.
 - The shortcut editor captures keys on `window` in the capture phase and stops immediate propagation so the app handler and dialog Escape handling do not run while rebinding. It rejects conflicts and supports up to three bindings per command.
 - Restoring defaults replaces the map and removes the localStorage record.
 - `App.svelte` prevents the browser context menu globally with `oncontextmenucapture`. App-specific context menus still receive the event; they just must not rely on the native menu.
@@ -136,7 +139,7 @@ Key files:
 - Double-clicking a tab name edits it inline. `startRename` selects the tab first, then swaps the tab button for an input; Enter or blur calls `editor.renameProject`, Escape cancels. Renaming is not undoable but marks the project dirty/modified and updates the tab metadata so the name is saved with the project.
 - `newProject(width, height, { name, background })` and `openProject(loaded)` add a tab and activate it. `background` is `transparent`, `white`, or `black`; opaque backgrounds fill the initial layer and name it `Background`. `closeProject(id)` removes a tab; closing the last project creates a new `Untitled` project. Closing the only never-modified project is a no-op.
 - `dirty` means unsaved changes (tab dot + close confirmation). `modified` means the project has ever been touched, loaded, or saved (controls whether the single-project close button is enabled).
-- Undo/redo, zoom, pan, rotation, active layer/frame, and the document are per project. Tool, color, palette collection, theme, grid, preview visibility, and timeline height are workspace-wide.
+- Undo/redo, zoom, pan, rotation, active layer/frame, and the document are per project. Tool, tool strip order/visibility, color, palette collection, theme, grid, preview visibility, and timeline height are workspace-wide.
 - `ProjectTabs.svelte` owns the tab strip and the unsaved-close `Dialog`. The close button is disabled when `projects.length === 1 && !isProjectModified(id)`.
 - **File → New project** and **File → Open project** create tabs; **File → Save project** saves the active project. The menu bar no longer shows the document name — the active tab does.
 
@@ -181,7 +184,7 @@ Pixels are packed little-endian RGBA:
 When adding a tool:
 
 1. Add its id to `ToolId` in `types.ts`.
-2. Add metadata to `TOOLS` in `tools.ts` and map its shortcut.
+2. Add metadata to `TOOLS` in `tools.ts` and map its shortcut. New tools default to visible; set `enabledByDefault: false` if it should start hidden. `toolLayout` appends new ids to the saved strip order automatically.
 3. Add an icon branch in `ToolIcon.svelte`.
 4. Add pointer behavior in `CanvasStage.svelte`.
 5. Add its options in `ToolOptions.svelte`.

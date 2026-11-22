@@ -5,6 +5,11 @@ export interface ToolDef {
 	label: string;
 	description: string;
 	shortcut: string;
+	/**
+	 * Whether the tool appears in the tool strip until the user hides it.
+	 * Defaults to true, so new tools stay visible unless they opt out.
+	 */
+	enabledByDefault?: boolean;
 }
 
 export const TOOLS: ToolDef[] = [

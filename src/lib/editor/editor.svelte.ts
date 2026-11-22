@@ -46,6 +46,7 @@ import {
 } from "./reference.js";
 import { selectionBounds } from "./selection.js";
 import { usesPixelPerfect } from "./tools.js";
+import { toolLayout } from "./tool-layout.svelte.js";
 import {
 	DEFAULT_PALETTE_ID,
 	MAX_PALETTE_COLORS,
@@ -784,6 +785,19 @@ export class EditorState {
 			this.leftTool = this.tool;
 			this.rightTool = this.tool;
 			this.activeToolSlot = "left";
+		}
+	}
+
+	/** Moves the active tool slots off tools that the user hid in the strip. */
+	ensureEnabledTool(): void {
+		const fallback = toolLayout.firstEnabled();
+		if (!fallback) return;
+		if (!toolLayout.isEnabled(this.tool)) this.tool = fallback;
+		if (!toolLayout.isEnabled(this.leftTool)) this.leftTool = fallback;
+		if (!toolLayout.isEnabled(this.rightTool)) this.rightTool = fallback;
+		if (this.doubleToolEnabled) {
+			this.tool =
+				this.activeToolSlot === "right" ? this.rightTool : this.leftTool;
 		}
 	}
 
