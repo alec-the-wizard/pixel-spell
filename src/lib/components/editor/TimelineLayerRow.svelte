@@ -4,6 +4,7 @@
 </script>
 
 <script lang="ts">
+	import Blend from "@lucide/svelte/icons/blend";
 	import ChevronDown from "@lucide/svelte/icons/chevron-down";
 	import ChevronRight from "@lucide/svelte/icons/chevron-right";
 	import Ellipsis from "@lucide/svelte/icons/ellipsis";
@@ -260,8 +261,10 @@
 		<Layers2 class={className} />
 	{:else if kind === "color-replace"}
 		<Replace class={className} />
-	{:else}
+	{:else if kind === "dither"}
 		<Grid2x2 class={className} />
+	{:else}
+		<Blend class={className} />
 	{/if}
 {/snippet}
 

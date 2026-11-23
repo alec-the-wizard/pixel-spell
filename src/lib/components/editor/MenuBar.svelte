@@ -1,6 +1,7 @@
 <script lang="ts">
 	import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
 	import Asterisk from "@lucide/svelte/icons/asterisk";
+	import Blend from "@lucide/svelte/icons/blend";
 	import Brush from "@lucide/svelte/icons/brush";
 	import Check from "@lucide/svelte/icons/check";
 	import ChevronDown from "@lucide/svelte/icons/chevron-down";
@@ -67,6 +68,7 @@
 		onDropShadow,
 		onColorReplace,
 		onDither,
+		onGradientMap,
 		onHistory,
 	}: {
 		onNew: () => void;
@@ -83,6 +85,7 @@
 		onDropShadow: () => void;
 		onColorReplace: () => void;
 		onDither: () => void;
+		onGradientMap: () => void;
 		onHistory: () => void;
 	} = $props();
 
@@ -309,6 +312,10 @@
 				<DropdownMenu.Item onSelect={onDither}>
 					<Grid2x2 class="size-4" />
 					Dither…
+				</DropdownMenu.Item>
+				<DropdownMenu.Item onSelect={onGradientMap}>
+					<Blend class="size-4" />
+					Gradient map…
 				</DropdownMenu.Item>
 			</DropdownMenu.Content>
 		</DropdownMenu.Root>

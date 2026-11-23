@@ -15,6 +15,13 @@ import {
 	outlinePixels,
 	replaceColorPixels,
 } from "./filters.js";
+import {
+	defaultGradientStops,
+	gradientMapPixels,
+	normalizeGradientSource,
+	normalizeGradientSpace,
+	normalizeGradientStops,
+} from "./gradient-map.js";
 import type {
 	GroupEffect,
 	GroupEffectKind,
@@ -26,6 +33,7 @@ export const GROUP_EFFECT_KINDS: { id: GroupEffectKind; label: string }[] = [
 	{ id: "drop-shadow", label: "Drop shadow" },
 	{ id: "color-replace", label: "Color replace" },
 	{ id: "dither", label: "Dither" },
+	{ id: "gradient-map", label: "Gradient map" },
 ];
 
 export const GROUP_EFFECT_LABELS: Record<GroupEffectKind, string> = {
@@ -33,6 +41,7 @@ export const GROUP_EFFECT_LABELS: Record<GroupEffectKind, string> = {
 	"drop-shadow": "Drop shadow",
 	"color-replace": "Color replace",
 	dither: "Dither",
+	"gradient-map": "Gradient map",
 };
 
 export const MAX_GROUP_EFFECTS = 32;
@@ -111,6 +120,13 @@ export function defaultGroupEffectOptions(
 				darkColor: "#000000",
 				palette: normalizePalette(paletteColors) ?? [],
 			};
+		case "gradient-map":
+			return {
+				gradient: defaultGradientStops(),
+				gradientSpace: "rgb",
+				gradientSource: "luminance",
+				gradientInvert: false,
+			};
 	}
 }
 
@@ -135,6 +151,13 @@ export function cloneGroupEffect(effect: GroupEffect): GroupEffect {
 			...effect.options,
 			...(effect.options.palette
 				? { palette: [...effect.options.palette] }
+				: {}),
+			...(effect.options.gradient
+				? {
+						gradient: effect.options.gradient.map((stop) => ({
+							...stop,
+						})),
+					}
 				: {}),
 		},
 	};
@@ -213,6 +236,16 @@ export function normalizeGroupEffectOptions(
 					normalizePalette(raw.palette) ??
 					normalizePalette(paletteColors) ??
 					[],
+			};
+		case "gradient-map":
+			return {
+				gradient: normalizeGradientStops(
+					raw.gradient,
+					defaults.gradient ?? defaultGradientStops(),
+				),
+				gradientSpace: normalizeGradientSpace(raw.gradientSpace),
+				gradientSource: normalizeGradientSource(raw.gradientSource),
+				gradientInvert: boolOr(raw.gradientInvert, false),
 			};
 	}
 }
@@ -312,6 +345,13 @@ export function applyGroupEffect(
 				palette,
 			});
 		}
+		case "gradient-map":
+			return gradientMapPixels(pixels, width, height, {
+				stops: options.gradient ?? defaultGradientStops(),
+				space: normalizeGradientSpace(options.gradientSpace),
+				source: normalizeGradientSource(options.gradientSource),
+				invert: options.gradientInvert === true,
+			});
 	}
 }
 
@@ -345,5 +385,10 @@ export function groupEffectSummary(effect: GroupEffect): string {
 			return options.method === "diffusion"
 				? "Error diffusion"
 				: `Ordered · ${options.matrix ?? "bayer4"}`;
+		case "gradient-map": {
+			const stops = normalizeGradientStops(options.gradient);
+			const space = normalizeGradientSpace(options.gradientSpace);
+			return `${stops.length} stops · ${space === "oklab" ? "OKLab" : "RGB"}`;
+		}
 	}
 }

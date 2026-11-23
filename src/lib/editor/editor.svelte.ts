@@ -344,6 +344,7 @@ export class EditorState {
 	effectDropShadowOpen = $state(false);
 	effectColorReplaceOpen = $state(false);
 	effectDitherOpen = $state(false);
+	effectGradientMapOpen = $state(false);
 	/** Shared brush/pattern library dialog. */
 	maskLibraryOpen = $state(false);
 	maskLibraryTab = $state<"brush" | "pattern">("brush");
@@ -3992,6 +3993,9 @@ export class EditorState {
 		const next: GroupEffectOptions = {
 			...options,
 			...(options.palette ? { palette: [...options.palette] } : {}),
+			...(options.gradient
+				? { gradient: options.gradient.map((stop) => ({ ...stop })) }
+				: {}),
 		};
 		if (JSON.stringify(target.effect.options) === JSON.stringify(next)) {
 			return false;
@@ -4066,6 +4070,13 @@ export class EditorState {
 								...(draft.options.palette
 									? { palette: [...draft.options.palette] }
 									: {}),
+								...(draft.options.gradient
+									? {
+											gradient: draft.options.gradient.map((stop) => ({
+												...stop,
+											})),
+										}
+									: {}),
 							},
 						}
 					: effect,
@@ -4115,6 +4126,9 @@ export class EditorState {
 				...effect.options,
 				...options,
 				...(options?.palette ? { palette: [...options.palette] } : {}),
+				...(options?.gradient
+					? { gradient: options.gradient.map((stop) => ({ ...stop })) }
+					: {}),
 			},
 		};
 

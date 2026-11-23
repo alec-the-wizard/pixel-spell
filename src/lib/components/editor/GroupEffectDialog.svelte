@@ -2,6 +2,7 @@
 	import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import CanvasTransformPreview from "$lib/components/editor/CanvasTransformPreview.svelte";
+	import GradientMapEditor from "$lib/components/editor/GradientMapEditor.svelte";
 	import * as Dialog from "$lib/components/ui/dialog/index.js";
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
@@ -27,7 +28,17 @@
 		GROUP_EFFECT_LABELS,
 		groupEffectSummary,
 	} from "$lib/editor/group-effects.js";
+	import {
+		GRADIENT_MAP_SOURCES,
+		defaultGradientStops,
+		normalizeGradientSource,
+		normalizeGradientSpace,
+		normalizeGradientStops,
+		type GradientMapSource,
+		type GradientMapSpace,
+	} from "$lib/editor/gradient-map.js";
 	import type {
+		GradientStop,
 		GroupEffect,
 		GroupEffectOptions,
 	} from "$lib/editor/types.js";
@@ -86,6 +97,11 @@
 	let lightColor = $state("#ffffff");
 	let darkColor = $state("#000000");
 	let ditherPalette = $state<string[]>([]);
+
+	let gradientStops = $state<GradientStop[]>(defaultGradientStops());
+	let gradientSpace = $state<GradientMapSpace>("rgb");
+	let gradientSource = $state<GradientMapSource>("luminance");
+	let gradientInvert = $state(false);
 
 	let feedback = $state("");
 	let loadedKey = "";
@@ -184,6 +200,11 @@
 			options.palette && options.palette.length > 0
 				? [...options.palette]
 				: [...editor.activePalette.colors];
+
+		gradientStops = normalizeGradientStops(options.gradient);
+		gradientSpace = normalizeGradientSpace(options.gradientSpace);
+		gradientSource = normalizeGradientSource(options.gradientSource);
+		gradientInvert = options.gradientInvert === true;
 		feedback = "";
 	}
 
@@ -223,6 +244,13 @@
 					lightColor,
 					darkColor,
 					palette: ditherPalette,
+				};
+			case "gradient-map":
+				return {
+					gradient: gradientStops,
+					gradientSpace,
+					gradientSource,
+					gradientInvert,
 				};
 		}
 	}
@@ -548,7 +576,7 @@
 						</span>
 						<Switch bind:checked={preserveAlpha} />
 					</label>
-				{:else}
+				{:else if kind === "dither"}
 					<div class="grid gap-1.5">
 						<Label>Method</Label>
 						{@render segmented(
@@ -618,6 +646,35 @@
 							)}
 						</div>
 					{/if}
+				{:else}
+					<GradientMapEditor bind:stops={gradientStops} bind:space={gradientSpace} />
+
+					<div class="grid gap-1.5">
+						<Label>Brightness</Label>
+						{@render segmented(
+							GRADIENT_MAP_SOURCES,
+							gradientSource,
+							(id) => (gradientSource = id as GradientMapSource),
+							"grid-cols-2",
+						)}
+						<span class="text-[10px] text-muted-foreground">
+							{GRADIENT_MAP_SOURCES.find(
+								(option) => option.id === gradientSource,
+							)?.hint ?? ""}
+						</span>
+					</div>
+
+					<label
+						class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
+					>
+						<span class="grid gap-0.5">
+							<span class="text-xs font-medium">Invert brightness</span>
+							<span class="text-[10px] text-muted-foreground">
+								Use the low end of the gradient for bright pixels.
+							</span>
+						</span>
+						<Switch bind:checked={gradientInvert} />
+					</label>
 				{/if}
 			</div>
 

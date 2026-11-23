@@ -26,6 +26,7 @@ export interface CommandHost {
 	openDropShadow: () => void;
 	openColorReplace: () => void;
 	openDither: () => void;
+	openGradientMap: () => void;
 	openShortcuts: () => void;
 	openAbout: () => void;
 	openCommandPalette: () => void;
@@ -43,6 +44,7 @@ const NOOP_HOST: CommandHost = {
 	openDropShadow: () => {},
 	openColorReplace: () => {},
 	openDither: () => {},
+	openGradientMap: () => {},
 	openShortcuts: () => {},
 	openAbout: () => {},
 	openCommandPalette: () => {},
@@ -364,6 +366,13 @@ const ACTION_COMMANDS: CommandDef[] = [
 		group: "Effects",
 		keywords: "ordered bayer floyd steinberg error diffusion palette pattern",
 		run: () => host.openDither(),
+	},
+	{
+		id: "effects.gradient-map",
+		label: "Gradient map…",
+		group: "Effects",
+		keywords: "luminance gradient ramp recolor palette swap mood oklab",
+		run: () => host.openGradientMap(),
 	},
 	{
 		id: "brush.new-from-selection",

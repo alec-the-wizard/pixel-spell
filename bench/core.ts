@@ -62,7 +62,19 @@ import {
 	outlinePixels,
 	replaceColorPixels,
 } from "../src/lib/editor/filters.js";
-import { createGroupEffect } from "../src/lib/editor/group-effects.js";
+import {
+	applyGroupEffect,
+	createGroupEffect,
+	groupEffectSummary,
+	normalizeGroupEffects,
+} from "../src/lib/editor/group-effects.js";
+import {
+	buildGradientLut,
+	defaultGradientStops,
+	gradientMapPixels,
+	normalizeGradientStops,
+	sampleGradientHex,
+} from "../src/lib/editor/gradient-map.js";
 import { parseProject, serializeProject } from "../src/lib/editor/file.js";
 import {
 	LAYER_COLOR_PRESETS,
@@ -348,6 +360,16 @@ measure("ditherPixels floyd 512x512", 5, 1, () => {
 		target: "two-color",
 		lightColor: 0xffffffff,
 		darkColor: 0xff000000,
+	});
+});
+
+const benchGradientStops = defaultGradientStops();
+measure("gradientMapPixels 512x512", 10, 2, () => {
+	const working = new Uint32Array(cel);
+	gradientMapPixels(working, width, height, {
+		stops: benchGradientStops,
+		space: "rgb",
+		source: "luminance",
 	});
 });
 
@@ -1536,6 +1558,212 @@ function assertFilters(): void {
 	}
 }
 
+function assertGradientMap(): void {
+	const stops = [
+		{ position: 0, color: "#000000" },
+		{ position: 0.5, color: "#ff0000" },
+		{ position: 1, color: "#ffffff" },
+	];
+	const source = new Uint32Array([
+		packColor("#000000"),
+		packColor("#ffffff"),
+		packColor("#808080", 128),
+		packColor("#00ff00", 64),
+		0,
+	]);
+	const mapped = gradientMapPixels(source, 5, 1, {
+		stops,
+		space: "rgb",
+		source: "luminance",
+	});
+	if (mapped[0] !== packColor("#000000")) {
+		throw new Error("gradient map black endpoint changed");
+	}
+	if (mapped[1] !== packColor("#ffffff")) {
+		throw new Error("gradient map white endpoint changed");
+	}
+	if ((mapped[2]! >>> 24) !== 128 || (mapped[3]! >>> 24) !== 64) {
+		throw new Error("gradient map lost alpha");
+	}
+	if ((mapped[2]! & 0xff) !== 255 || ((mapped[2]! >>> 8) & 0xff) > 4) {
+		throw new Error("gradient map lookup changed");
+	}
+	if (mapped[4] !== 0) {
+		throw new Error("gradient map painted a transparent pixel");
+	}
+	if (source[2] !== packColor("#808080", 128)) {
+		throw new Error("gradient map mutated its input");
+	}
+
+	// A selection limits which pixels are rewritten.
+	const mask = new Uint8Array([1, 0, 0, 0, 0]);
+	const masked = gradientMapPixels(source, 5, 1, {
+		stops,
+		mask,
+	});
+	if (masked[1] !== packColor("#ffffff") || masked[0] !== packColor("#000000")) {
+		throw new Error("gradient map selection clipping changed");
+	}
+
+	// Inversion reads the gradient backwards.
+	const inverted = gradientMapPixels(source, 5, 1, { stops, invert: true });
+	if (inverted[0] !== packColor("#ffffff")) {
+		throw new Error("gradient map inversion changed");
+	}
+
+	// Palette-target brightness sources differ for pure green.
+	const average = gradientMapPixels(source, 5, 1, {
+		stops,
+		source: "average",
+	});
+	if (average[3] === mapped[3]) {
+		throw new Error("gradient map brightness sources are identical");
+	}
+
+	// Duplicate positions create a hard stop instead of a blend.
+	const hard = [
+		{ position: 0, color: "#000000" },
+		{ position: 0.5, color: "#000000" },
+		{ position: 0.5, color: "#ffffff" },
+		{ position: 1, color: "#ffffff" },
+	];
+	if (
+		sampleGradientHex(hard, 0.49, "rgb") !== "#000000" ||
+		sampleGradientHex(hard, 0.51, "rgb") !== "#ffffff"
+	) {
+		throw new Error("gradient map hard stop changed");
+	}
+
+	// Endpoints survive the OKLab path exactly.
+	if (
+		sampleGradientHex(stops, 0, "oklab") !== "#000000" ||
+		sampleGradientHex(stops, 1, "oklab") !== "#ffffff"
+	) {
+		throw new Error("OKLab gradient endpoints changed");
+	}
+	if (buildGradientLut(stops).length !== 256) {
+		throw new Error("gradient lookup table size changed");
+	}
+
+	// Invalid or out-of-range stops are normalized and sorted.
+	const sloppy = normalizeGradientStops([
+		{ position: 2, color: "#FFFFFF" },
+		{ position: -1, color: "#000000" },
+		{ color: "nope" },
+	]);
+	if (
+		sloppy.length !== 2 ||
+		sloppy[0]!.position !== 0 ||
+		sloppy[0]!.color !== "#000000" ||
+		sloppy[1]!.position !== 1 ||
+		sloppy[1]!.color !== "#ffffff"
+	) {
+		throw new Error("gradient stop normalization changed");
+	}
+	const defaults = defaultGradientStops();
+	if (defaults.length < 2) {
+		throw new Error("default gradient stops are missing");
+	}
+	defaults[0]!.color = "#123456";
+	if (defaultGradientStops()[0]!.color === "#123456") {
+		throw new Error("default gradient stops are not isolated copies");
+	}
+
+	// The non-destructive group effect shares the same filter.
+	const effect = createGroupEffect("gradient-map");
+	if (
+		effect.kind !== "gradient-map" ||
+		!effect.enabled ||
+		(effect.options.gradient?.length ?? 0) < 2
+	) {
+		throw new Error("gradient map group effect defaults changed");
+	}
+	const effectPixels = applyGroupEffect(source, 5, 1, {
+		...effect,
+		options: { ...effect.options, gradient: stops },
+	});
+	if (effectPixels.join() !== mapped.join()) {
+		throw new Error("gradient map group effect differs from the filter");
+	}
+	const restored = normalizeGroupEffects([
+		{
+			kind: "gradient-map",
+			options: {
+				gradient: [
+					{ position: 1, color: "#ffffff" },
+					{ position: 0, color: "#000000" },
+				],
+				gradientSpace: "oklab",
+				gradientSource: "average",
+				gradientInvert: true,
+			},
+		},
+	]);
+	const restoredEffect = restored[0];
+	if (
+		!restoredEffect ||
+		restoredEffect.options.gradient?.[0]?.color !== "#000000" ||
+		restoredEffect.options.gradientSpace !== "oklab" ||
+		restoredEffect.options.gradientSource !== "average" ||
+		restoredEffect.options.gradientInvert !== true
+	) {
+		throw new Error("gradient map effect normalization changed");
+	}
+	if (!groupEffectSummary(restoredEffect).includes("stops")) {
+		throw new Error("gradient map effect summary changed");
+	}
+
+	// The effect stack survives serialization and cloneDoc keeps stops isolated.
+	const effectDoc = createDoc(2, 2);
+	effectDoc.layers = [];
+	const group = createGroup("Gradient group");
+	const child = createLayer("Gradient child", 2, 2, 1);
+	child.parentId = group.id;
+	child.cels[0]![0] = packColor("#ff0000");
+	const gradientEffect = {
+		...effect,
+		options: {
+			...effect.options,
+			gradient: stops,
+			gradientSpace: "oklab" as const,
+			gradientSource: "average" as const,
+			gradientInvert: true,
+		},
+	};
+	group.effects = [gradientEffect];
+	effectDoc.layers.push(group, child);
+
+	const bytes = serializeProject(effectDoc, palette, "gradient", 0, child.id);
+	const parsedEffectDoc = parseProject(bytes);
+	if (!parsedEffectDoc) throw new Error("gradient map round-trip parse failed");
+	const parsedGroup = parsedEffectDoc.doc.layers.find((layer) =>
+		isGroupLayer(layer),
+	);
+	const parsedEffect = parsedGroup?.effects?.[0];
+	if (
+		parsedEffect?.kind !== "gradient-map" ||
+		parsedEffect.options.gradient?.length !== stops.length ||
+		parsedEffect.options.gradient?.[0]?.color !== stops[0]!.color ||
+		parsedEffect.options.gradientSpace !== "oklab" ||
+		parsedEffect.options.gradientSource !== "average" ||
+		parsedEffect.options.gradientInvert !== true
+	) {
+		throw new Error("gradient map round-trip changed options");
+	}
+
+	const clonedDoc = cloneDoc(effectDoc);
+	const clonedGradient = clonedDoc.layers.find((layer) =>
+		isGroupLayer(layer),
+	)?.effects?.[0]?.options.gradient;
+	if (!clonedGradient || clonedGradient.length !== stops.length) {
+		throw new Error("cloneDoc lost the gradient map stops");
+	}
+	clonedGradient[0]!.color = "#abcdef";
+	if (gradientEffect.options.gradient![0]!.color === "#abcdef") {
+		throw new Error("cloneDoc shared gradient map stops");
+	}
+}
+
 assertCanvasSizePresets();
 assertLayerColors();
 assertPaletteSorting();
@@ -1548,6 +1776,7 @@ assertLayerGroups();
 assertSelectionTransform();
 assertBrushAndDither();
 assertFilters();
+assertGradientMap();
 assertProjectRoundtrip(makeDoc(64, 64, 2, 3, 41), "sparse");
 const opaqueDoc = makeDoc(64, 64, 1, 1, 42);
 for (const cel of opaqueDoc.layers[0]!.cels) cel.fill(0xff336699);

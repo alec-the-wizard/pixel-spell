@@ -7,6 +7,7 @@
 	import CommandPalette from "$lib/components/editor/CommandPalette.svelte";
 	import DropShadowDialog from "$lib/components/editor/DropShadowDialog.svelte";
 	import DitherDialog from "$lib/components/editor/DitherDialog.svelte";
+	import GradientMapDialog from "$lib/components/editor/GradientMapDialog.svelte";
 	import HistoryDialog from "$lib/components/editor/HistoryDialog.svelte";
 	import LazyExportDialog from "$lib/components/editor/LazyExportDialog.svelte";
 	import LazyImportDialog from "$lib/components/editor/LazyImportDialog.svelte";
@@ -288,6 +289,7 @@
 		openDropShadow: () => (editor.effectDropShadowOpen = true),
 		openColorReplace: () => (editor.effectColorReplaceOpen = true),
 		openDither: () => (editor.effectDitherOpen = true),
+		openGradientMap: () => (editor.effectGradientMapOpen = true),
 		openShortcuts: () => (shortcutsOpen = true),
 		openAbout: () => (aboutOpen = true),
 		openCommandPalette: () => (commandPaletteOpen = true),
@@ -352,6 +354,7 @@
 			onDropShadow={() => (editor.effectDropShadowOpen = true)}
 			onColorReplace={() => (editor.effectColorReplaceOpen = true)}
 			onDither={() => (editor.effectDitherOpen = true)}
+			onGradientMap={() => (editor.effectGradientMapOpen = true)}
 			onHistory={() => (editor.historyOpen = true)}
 		/>
 
@@ -379,6 +382,7 @@
 	<DropShadowDialog bind:open={editor.effectDropShadowOpen} />
 	<ColorReplaceDialog bind:open={editor.effectColorReplaceOpen} />
 	<DitherDialog bind:open={editor.effectDitherOpen} />
+	<GradientMapDialog bind:open={editor.effectGradientMapOpen} />
 	<HistoryDialog bind:open={editor.historyOpen} />
 	<RecoveryDialog
 		bind:open={recoveryOpen}

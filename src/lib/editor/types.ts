@@ -68,7 +68,14 @@ export type GroupEffectKind =
 	| "outline"
 	| "drop-shadow"
 	| "color-replace"
-	| "dither";
+	| "dither"
+	| "gradient-map";
+
+/** One color stop in a gradient map; position is 0..1. */
+export interface GradientStop {
+	position: number;
+	color: string;
+}
 
 /**
  * Options for one group effect. Fields are only meaningful for the matching
@@ -99,6 +106,12 @@ export interface GroupEffectOptions {
 	darkColor?: string;
 	/** Palette snapshot used by palette-target dithering. */
 	palette?: string[];
+	// Gradient map
+	/** Multi-stop gradient, sorted from the darkest to the brightest input. */
+	gradient?: GradientStop[];
+	gradientSpace?: "rgb" | "oklab";
+	gradientSource?: "luminance" | "average";
+	gradientInvert?: boolean;
 }
 
 /**
