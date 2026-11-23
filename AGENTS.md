@@ -45,6 +45,7 @@ Key files:
 | `lib/editor/types.ts` | `PixelDoc`, `Layer`, `Frame`, `ToolId`, `Point` |
 | `lib/editor/doc.ts` | Document creation/cloning, layer compositing |
 | `lib/editor/draw.ts` | Brush, line, shapes (rectangle, ellipse, star, heart), flood fill, gradients |
+| `lib/editor/filters.ts` | Pure outline, drop-shadow, and color-replace pixel filters |
 | `lib/editor/render.ts` | Canvas scaling and thumbnail rendering |
 | `lib/editor/color.ts` | Hex/RGBA conversion and packed pixel helpers |
 | `lib/editor/file.ts` | Project serialization, save helpers |
@@ -66,6 +67,9 @@ Key files:
 | `lib/components/editor/ColorCyclesDialog.svelte` | Palette cycle range, direction/speed, in-dialog preview, phase bake, and generated animation frames |
 | `lib/components/editor/PaletteLibraryDialog.svelte` | Searchable built-in palette library with previews and author/legal notes |
 | `lib/components/editor/PaletteCoverageDialog.svelte` | Read-only palette coverage report: usage bars, hue/brightness bins, off-palette colors |
+| `lib/components/editor/OutlineDialog.svelte` | Effects → Outline dialog: live preview, thickness/placement/color options, scope |
+| `lib/components/editor/DropShadowDialog.svelte` | Effects → Drop shadow dialog: live preview, offset/spread/color/opacity options, scope |
+| `lib/components/editor/ColorReplaceDialog.svelte` | Effects → Color replace dialog: live preview, from/to colors, tolerance, alpha preservation |
 | `lib/components/editor/TimelinePanel.svelte` | Timeline toolbar, tag ranges, frame×layer table, frame context menu, onion/animation-mode/loop controls, add-layer row |
 | `lib/components/editor/CommandPalette.svelte` | `Ctrl+K` searchable command runner |
 | `lib/components/editor/ToolStrip.svelte` | Reorderable tool buttons, drop indicator, and bottom tools-menu button |
@@ -101,6 +105,7 @@ Key files:
 - `editor.linkSelectedCels()` and `editor.unlinkSelectedCels()` operate on the rectangular cel selection. Link shares one buffer across every selected frame on each selected layer, using the active frame as the source; it requires at least two frames (`editor.canLinkSelectedCels`). Unlink gives each linked selected cel its own buffer and also works for a single cel (`editor.canUnlinkSelectedCels`). Both are undoable.
 - `Frame.duration` is optional; missing means `1000 / doc.fps`. `doc.animationMode` is optional (`forward` when missing) and `doc.animationLoop` is optional (`true` when missing). Use `frameDurationMs`, `normalizeAnimationMode`, and `animationSequence` from `doc.ts` instead of duplicating the fallback logic.
 - The animation range is the frame selection: one selected frame means the whole timeline, two or more selected frames mean exactly those frames in timeline order. Playback and animation/video export both use `editor.animationFrameIndices`.
+- The Effects dialogs run pure filters from `filters.ts` through `editor.previewEffect(scope, transform)` and `editor.applyEffect(scope, transform)`. The scope is `active-cel` or `visible-layers`; both skip reference, hidden, and locked layers, and only the active frame is affected. Filters honour the active selection mask, previews composite the modified clone through `compositeFrame`, and applying writes filtered pixels into the existing buffers (so linked cels stay linked) behind one `pushHistoryCels` entry.
 - Onion skin state (`onionEnabled`, range, opacity, previous/next toggle, tints) is workspace-wide and does not touch the document, history, or dirty flag. `editor.onionSkins` returns the neighboring frame indices and hides them during playback.
 - Canvas transforms live in `editor.scaleCanvas`, `resizeCanvas`, `cropCanvasTo`, `cropToContent`, and `cropToSelection`. They transform every layer's cels (including reference layers), change `doc.width`/`height`, clear the pixel selection, and bump `structureRevision` + `revision`. They are undoable via `pushHistory`; do not transform only the active frame.
 - `canvas.ts` holds the pure pixel helpers: `scalePixelsNearest`, `resizePixels`, and `contentBoundsOf`. `contentBoundsOf` scans all frames and normal layers and ignores `role: "reference"` layers; reference-board images are not part of the document composite and are never transformed.

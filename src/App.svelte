@@ -3,9 +3,12 @@
 	import FileUp from "@lucide/svelte/icons/file-up";
 	import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 	import AboutDialog from "$lib/components/editor/AboutDialog.svelte";
+	import ColorReplaceDialog from "$lib/components/editor/ColorReplaceDialog.svelte";
 	import CommandPalette from "$lib/components/editor/CommandPalette.svelte";
+	import DropShadowDialog from "$lib/components/editor/DropShadowDialog.svelte";
 	import LazyExportDialog from "$lib/components/editor/LazyExportDialog.svelte";
 	import LazyImportDialog from "$lib/components/editor/LazyImportDialog.svelte";
+	import OutlineDialog from "$lib/components/editor/OutlineDialog.svelte";
 	import RecoveryDialog from "$lib/components/editor/RecoveryDialog.svelte";
 	import TimelineDock from "$lib/components/editor/TimelineDock.svelte";
 	import CanvasStage from "$lib/components/editor/CanvasStage.svelte";
@@ -279,6 +282,9 @@
 		openExport: () => (exportDialogOpen = true),
 		openScaleCanvas: () => (scaleCanvasOpen = true),
 		openResizeCanvas: () => (resizeCanvasOpen = true),
+		openOutline: () => (editor.effectOutlineOpen = true),
+		openDropShadow: () => (editor.effectDropShadowOpen = true),
+		openColorReplace: () => (editor.effectColorReplaceOpen = true),
 		openShortcuts: () => (shortcutsOpen = true),
 		openAbout: () => (aboutOpen = true),
 		openCommandPalette: () => (commandPaletteOpen = true),
@@ -339,6 +345,9 @@
 			onAbout={() => (aboutOpen = true)}
 			onScaleCanvas={() => (scaleCanvasOpen = true)}
 			onResizeCanvas={() => (resizeCanvasOpen = true)}
+			onOutline={() => (editor.effectOutlineOpen = true)}
+			onDropShadow={() => (editor.effectDropShadowOpen = true)}
+			onColorReplace={() => (editor.effectColorReplaceOpen = true)}
 		/>
 
 		<div class="flex min-h-0 flex-1">
@@ -361,6 +370,9 @@
 	<LazyExportDialog bind:open={exportDialogOpen} />
 	<ScaleCanvasDialog bind:open={scaleCanvasOpen} />
 	<ResizeCanvasDialog bind:open={resizeCanvasOpen} />
+	<OutlineDialog bind:open={editor.effectOutlineOpen} />
+	<DropShadowDialog bind:open={editor.effectDropShadowOpen} />
+	<ColorReplaceDialog bind:open={editor.effectColorReplaceOpen} />
 	<RecoveryDialog
 		bind:open={recoveryOpen}
 		projects={recoveredProjects}

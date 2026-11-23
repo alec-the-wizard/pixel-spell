@@ -26,6 +26,9 @@ export type GradientShape = "linear" | "radial";
 /** Bayer matrices available to the gradient tool. */
 export type GradientDither = "none" | "bayer2" | "bayer4" | "bayer8";
 
+/** Which cels an effect modifies: the active cel or every visible layer. */
+export type EffectScope = "active-cel" | "visible-layers";
+
 /** Initial canvas fill chosen when a project is created. */
 export type BackgroundKind = "transparent" | "white" | "black";
 

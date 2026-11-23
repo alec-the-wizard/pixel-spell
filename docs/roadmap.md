@@ -45,6 +45,7 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Selection transform (scale/rotate/flip) | 8 | 6 | 1.33 | | Implemented: a selection made with any selection tool grows transform handles. Drag a corner or edge handle to scale (crossing the center flips, `Shift` locks aspect), the circle above the top edge rotates (`Shift` snaps to 15°), and `Ctrl`/`Cmd`-dragging a corner skews. Dragging inside still moves the selection. Each gesture commits on release and is undoable. Rotation uses the RotSprite algorithm (Scale2x 8× upscale, nearest-neighbor parallelogram rotation, nearest-neighbor downscale) to keep rotated pixel art crisp without bilinear blur. |
 | Linked cels / continuous layers | 8 | 5 | 1.60 | | Implemented: cels can be linked so editing one writes through to all linked copies. Select a contiguous range of cels, right-click it, and choose **Link cels** to share one buffer across the selected frames of every selected layer; **Unlink cels** gives each selected cel its own copy. **Link cels** is disabled for a single selected frame, while **Unlink cels** also works on a single cel. A **continuous** layer toggle (a `link-2`/`link-2-off` button beside the lock) auto-links each newly added cel to the active frame, keeping a chain in sync. Linked cels share one pixel buffer and render a blue connector line between the cels in the timeline. Links and the continuous flag survive save/open, undo/redo, canvas transforms, and project switches. |
 | Per-cel opacity (and z-index) | 6 | 5 | 1.20 | | Implemented as **Cel properties** (double-click a cel, or use its right-click menu): a per-cel opacity slider and a z-index number input. Opacity multiplies the layer opacity during compositing on every render/export path, and z-index reorders cels within a frame. Cels carrying a custom opacity or z-index show a small indicator icon in the timeline, and both values persist with the project. |
+| Outline, drop shadow, and color-replace filters | 8 | 4 | 2.00 | | Implemented as a new **Effects** menu between Project and View. **Outline** grows a 1–8 px border outside the silhouette (or recolors its inside edge) with optional diagonal corners. **Drop shadow** offsets and spreads a colored shadow behind the silhouette. **Color replace** swaps a color with an optional RGB tolerance and alpha preservation. Each dialog previews the composited active frame, targets the active cel or all visible unlocked layers, respects the pixel selection, skips reference/hidden/locked layers, and applies as one undoable cel patch. The pure filters live in `filters.ts` and are covered by the core benchmarks. |
 
 ## Planned features
 
@@ -53,7 +54,6 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Dithering patterns and pattern brushes | 8 | 3 | 2.67 | | Add selectable dither masks (Bayer, checker, custom) to pencil/fill, plus standalone error-diffusion (Floyd–Steinberg) and ordered-dither filters over a selection. Reuse the gradient Bayer code and selection masks. |
 | Color-blindness simulation and palette preview | 5 | 2 | 2.50 | | Preview deuteranopia/protanopia/tritanopia and grayscale in the canvas without changing pixels. Useful for accessibility checks and palette design. |
 | Export presets | 7 | 3 | 2.33 | | Name and reuse export configurations (format, scale, trim, spacing, metadata, loop) so the right settings are one click. Pixelorama ships an `export_presets.cfg`; the community repeatedly asks for this. |
-| Outline, drop shadow, and color-replace filters | 8 | 4 | 2.00 | | Selection-aware filters that operate on the active cel or all visible layers. Add a preview and an undoable apply step. High value for quick sprite cleanup; the natural home for non-destructive FX layers later. |
 | Rulers and draggable guides | 6 | 3 | 2.00 | | Horizontal/vertical guides with snapping, persisted per project, plus a quick measurement readout. Reuse the mirror-guide overlay and pointer mapping. |
 | Split view / second zoom window | 6 | 3 | 2.00 | | A second viewport showing the same document at another zoom, or a detached 1× preview. Reuse `drawScaled` and the preview component. |
 | Custom grid offsets and isometric grid | 6 | 3 | 2.00 | | Offset the grid origin and add isometric/diagonal (and later hexagonal) grid modes. Mostly rendering/UI work; useful for tiles and isometric art. |
@@ -127,7 +127,7 @@ These add the most day-to-day value per unit of risk. Onion skinning and referen
 1. Layer groups, blend modes, and clipping masks — done
 2. Selection transform (scale/rotate/flip) — done
 3. Custom brushes and dithering patterns
-4. Outline/shadow/color-replace filters
+4. Outline/shadow/color-replace filters — done
 5. Grayscale mode
 6. APNG/animated WebP export — done
 7. Undo history panel

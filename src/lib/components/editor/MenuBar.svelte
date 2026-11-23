@@ -18,16 +18,19 @@
 	import Images from "@lucide/svelte/icons/images";
 	import Info from "@lucide/svelte/icons/info";
 	import Keyboard from "@lucide/svelte/icons/keyboard";
+	import Layers2 from "@lucide/svelte/icons/layers-2";
 	import Link2 from "@lucide/svelte/icons/link-2";
 	import Lock from "@lucide/svelte/icons/lock";
 	import Maximize2 from "@lucide/svelte/icons/maximize-2";
 	import Moon from "@lucide/svelte/icons/moon";
 	import Redo2 from "@lucide/svelte/icons/redo-2";
+	import Replace from "@lucide/svelte/icons/replace";
 	import Save from "@lucide/svelte/icons/save";
 	import Scaling from "@lucide/svelte/icons/scaling";
 	import Scan from "@lucide/svelte/icons/scan";
 	import ScanEye from "@lucide/svelte/icons/scan-eye";
 	import Search from "@lucide/svelte/icons/search";
+	import SquareDashed from "@lucide/svelte/icons/square-dashed";
 	import Sun from "@lucide/svelte/icons/sun";
 	import Trash2 from "@lucide/svelte/icons/trash-2";
 	import Undo2 from "@lucide/svelte/icons/undo-2";
@@ -57,6 +60,9 @@
 		onAbout,
 		onScaleCanvas,
 		onResizeCanvas,
+		onOutline,
+		onDropShadow,
+		onColorReplace,
 	}: {
 		onNew: () => void;
 		onOpen: () => void;
@@ -68,6 +74,9 @@
 		onAbout: () => void;
 		onScaleCanvas: () => void;
 		onResizeCanvas: () => void;
+		onOutline: () => void;
+		onDropShadow: () => void;
+		onColorReplace: () => void;
 	} = $props();
 
 	let projectMenuOpen = $state(false);
@@ -261,6 +270,29 @@
 				>
 					<Crop class="size-4" />
 					Crop to Selection
+				</DropdownMenu.Item>
+			</DropdownMenu.Content>
+		</DropdownMenu.Root>
+
+		<DropdownMenu.Root>
+			<DropdownMenu.Trigger
+				class="h-8 rounded-md px-2.5 text-xs font-medium text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground aria-expanded:bg-accent aria-expanded:text-foreground"
+			>
+				Effects
+			</DropdownMenu.Trigger>
+			<DropdownMenu.Content class="w-60">
+				<DropdownMenu.Item onSelect={onOutline}>
+					<SquareDashed class="size-4" />
+					Outline…
+				</DropdownMenu.Item>
+				<DropdownMenu.Item onSelect={onDropShadow}>
+					<Layers2 class="size-4" />
+					Drop shadow…
+				</DropdownMenu.Item>
+				<DropdownMenu.Separator />
+				<DropdownMenu.Item onSelect={onColorReplace}>
+					<Replace class="size-4" />
+					Color replace…
 				</DropdownMenu.Item>
 			</DropdownMenu.Content>
 		</DropdownMenu.Root>

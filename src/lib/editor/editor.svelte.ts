@@ -19,6 +19,7 @@ import {
 	celKey,
 	celPropsOf,
 	cloneDoc,
+	compositeFrame,
 	createDoc,
 	createGroup,
 	createLayer,
@@ -78,6 +79,7 @@ import type {
 	BlendMode,
 	CelProps,
 	ColorSlot,
+	EffectScope,
 	Frame,
 	GradientDither,
 	GradientShape,
@@ -285,6 +287,10 @@ export class EditorState {
 	paletteRampOpen = $state(false);
 	paletteCyclesOpen = $state(false);
 	paletteCoverageOpen = $state(false);
+	/** Effects dialogs. Previews live in the dialogs; applying is undoable. */
+	effectOutlineOpen = $state(false);
+	effectDropShadowOpen = $state(false);
+	effectColorReplaceOpen = $state(false);
 	/**
 	 * Inclusive palette range used by the Color Cycles dialog. Cycling is a
 	 * workspace preference and is intentionally not stored in project files.
@@ -3666,6 +3672,104 @@ export class EditorState {
 		for (let i = 0; i < cel.length; i++) {
 			if (mask[i]) cel[i] = 0;
 		}
+	}
+
+	/**
+	 * Cels an effect may rewrite in the active frame. The active-cel scope
+	 * requires a visible, unlocked paint layer; the visible-layers scope skips
+	 * groups, reference layers, hidden layers, and locked layers.
+	 */
+	effectTargetLayers(scope: EffectScope): Layer[] {
+		if (scope === "active-cel") {
+			const layer = this.activeLayer;
+			if (
+				!layer ||
+				isGroupLayer(layer) ||
+				layer.role === "reference" ||
+				layer.locked ||
+				!layer.visible
+			) {
+				return [];
+			}
+			return [layer];
+		}
+
+		return this.doc.layers.filter(
+			(layer) =>
+				!isGroupLayer(layer) &&
+				layer.role !== "reference" &&
+				layer.visible &&
+				!layer.locked,
+		);
+	}
+
+	#sameCelPixels(a: Uint32Array, b: Uint32Array): boolean {
+		if (a.length !== b.length) return false;
+		for (let index = 0; index < a.length; index++) {
+			if (a[index] !== b[index]) return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Runs a pure pixel filter over the scope's cels and records one undoable
+	 * history entry. The filter result is written into the existing buffers so
+	 * linked cels stay linked (and undo restores every linked frame at once).
+	 * Returns the number of cels that actually changed.
+	 */
+	applyEffect(
+		scope: EffectScope,
+		transform: (pixels: Uint32Array) => Uint32Array,
+	): number {
+		if (this.floating) this.commitFloatingSelection();
+
+		const frame = this.activeFrame;
+		const pending: { layer: Layer; cel: Uint32Array; next: Uint32Array }[] = [];
+		for (const layer of this.effectTargetLayers(scope)) {
+			const cel = layer.cels[frame];
+			if (!cel) continue;
+			const next = transform(cel);
+			if (next === cel || this.#sameCelPixels(cel, next)) continue;
+			pending.push({ layer, cel, next });
+		}
+		if (pending.length === 0) return 0;
+
+		this.pushHistoryCels(
+			pending.map((entry) => ({ layerId: entry.layer.id, frame })),
+		);
+		for (const entry of pending) entry.cel.set(entry.next);
+		// An effect can rewrite every visible layer at once, so every cel
+		// thumbnail needs a refresh, not just the active one.
+		this.structureRevision++;
+		this.touch();
+		return pending.length;
+	}
+
+	/**
+	 * Composites the active frame with an effect applied in memory. Only the
+	 * active frame's target cels are transformed, so the preview stays cheap.
+	 */
+	previewEffect(
+		scope: EffectScope,
+		transform: (pixels: Uint32Array) => Uint32Array,
+	): Uint32Array {
+		const frame = this.activeFrame;
+		const targetIds = new Set(
+			this.effectTargetLayers(scope).map((layer) => layer.id),
+		);
+		const layers = this.doc.layers.map((layer) => {
+			if (!targetIds.has(layer.id)) return layer;
+			const cel = layer.cels[frame];
+			if (!cel) return layer;
+			return {
+				...layer,
+				cels: layer.cels.map((item, index) =>
+					index === frame ? transform(item) : item,
+				),
+			};
+		});
+		const previewDoc: PixelDoc = { ...this.doc, layers };
+		return compositeFrame(previewDoc, frame, true);
 	}
 
 	/** Tight bounds of painted pixels across all frames and normal layers. */

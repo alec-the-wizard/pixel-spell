@@ -37,6 +37,12 @@ import {
 	sheetMetadata,
 	sheetTagRanges,
 } from "../src/lib/editor/export.js";
+import {
+	countColorReplacement,
+	dropShadowPixels,
+	outlinePixels,
+	replaceColorPixels,
+} from "../src/lib/editor/filters.js";
 import { parseProject, serializeProject } from "../src/lib/editor/file.js";
 import {
 	LAYER_COLOR_PRESETS,
@@ -1047,6 +1053,119 @@ function assertSelectionTransform(): void {
 	}
 }
 
+function assertFilters(): void {
+	const red = packColor("#ff0000");
+	const blue = packColor("#0000ff");
+	const center = packColor("#ffffff");
+	const outlineColor = packColor("#00ff00");
+
+	// A single opaque pixel grows a four-way outline.
+	const single = new Uint32Array([0, 0, 0, 0, center, 0, 0, 0, 0]);
+	const cross = outlinePixels(single, 3, 3, {
+		thickness: 1,
+		color: outlineColor,
+		placement: "outside",
+		diagonals: false,
+	});
+	const expectedCross = [0, outlineColor, 0, outlineColor, center, outlineColor, 0, outlineColor, 0];
+	if (cross.join() !== expectedCross.join()) {
+		throw new Error("outline four-way growth changed");
+	}
+	if (single[1] !== 0) throw new Error("outline mutated its input");
+
+	const full = outlinePixels(single, 3, 3, {
+		thickness: 1,
+		color: outlineColor,
+		placement: "outside",
+		diagonals: true,
+	});
+	if (full.filter((value) => value === outlineColor).length !== 8) {
+		throw new Error("outline diagonal growth changed");
+	}
+
+	// A selection clips the new outline pixels.
+	const clipMask = new Uint8Array([0, 1, 0, 0, 0, 0, 0, 0, 0]);
+	const clippedOutline = outlinePixels(single, 3, 3, {
+		thickness: 1,
+		color: outlineColor,
+		placement: "outside",
+		diagonals: true,
+		mask: clipMask,
+	});
+	if (
+		clippedOutline[1] !== outlineColor ||
+		clippedOutline[3] !== 0 ||
+		clippedOutline[5] !== 0
+	) {
+		throw new Error("outline selection clipping changed");
+	}
+
+	// Inside placement recolors the band without eating the center.
+	const solid = new Uint32Array(9).fill(center);
+	const inside = outlinePixels(solid, 3, 3, {
+		thickness: 1,
+		color: outlineColor,
+		placement: "inside",
+		diagonals: true,
+	});
+	if (inside[4] !== center || inside[0] !== outlineColor) {
+		throw new Error("inner outline placement changed");
+	}
+
+	// Drop shadow lands offset and leaves the source pixel alone.
+	const shadow = dropShadowPixels(single, 3, 3, {
+		offsetX: 1,
+		offsetY: 1,
+		spread: 0,
+		color: blue,
+	});
+	if (shadow[4] !== center || shadow[8] !== blue || shadow[0] !== 0) {
+		throw new Error("drop shadow offset changed");
+	}
+
+	const spreadShadow = dropShadowPixels(single, 3, 3, {
+		offsetX: 0,
+		offsetY: 0,
+		spread: 1,
+		color: blue,
+	});
+	if (
+		spreadShadow[4] !== center ||
+		spreadShadow[1] !== blue ||
+		spreadShadow[0] !== blue
+	) {
+		throw new Error("drop shadow spread changed");
+	}
+
+	// Color replace matches RGB, keeps alpha, and counts hits.
+	const replaceSource = new Uint32Array([
+		packColor("#ff0000", 128),
+		packColor("#00ff00"),
+		packColor("#ff0100"),
+		0,
+	]);
+	const replaceOptions = {
+		from: red,
+		to: blue,
+		tolerance: 0,
+		preserveAlpha: true,
+	};
+	const replaced = replaceColorPixels(replaceSource, 2, 2, replaceOptions);
+	if (replaced[0] !== packColor("#0000ff", 128)) {
+		throw new Error("color replace alpha preservation changed");
+	}
+	if (replaced[1] !== packColor("#00ff00") || replaced[3] !== 0) {
+		throw new Error("color replace exact match changed");
+	}
+	if (countColorReplacement(replaceSource, 2, 2, replaceOptions) !== 1) {
+		throw new Error("color replace match count changed");
+	}
+	const wide = { ...replaceOptions, tolerance: 1 };
+	if (countColorReplacement(replaceSource, 2, 2, wide) !== 2) {
+		throw new Error("color replace tolerance count changed");
+	}
+}
+
 assertCanvasSizePresets();
 assertLayerColors();
 assertPaletteSorting();
@@ -1057,6 +1176,7 @@ assertPaletteAnalysis();
 assertSheetMetadata();
 assertLayerGroups();
 assertSelectionTransform();
+assertFilters();
 assertProjectRoundtrip(makeDoc(64, 64, 2, 3, 41), "sparse");
 const opaqueDoc = makeDoc(64, 64, 1, 1, 42);
 for (const cel of opaqueDoc.layers[0]!.cels) cel.fill(0xff336699);

@@ -6,6 +6,7 @@ export type CommandGroup =
 	| "Edit"
 	| "View"
 	| "Project"
+	| "Effects"
 	| "Animation"
 	| "Layers"
 	| "Palette"
@@ -21,6 +22,9 @@ export interface CommandHost {
 	openExport: () => void;
 	openScaleCanvas: () => void;
 	openResizeCanvas: () => void;
+	openOutline: () => void;
+	openDropShadow: () => void;
+	openColorReplace: () => void;
 	openShortcuts: () => void;
 	openAbout: () => void;
 	openCommandPalette: () => void;
@@ -34,6 +38,9 @@ const NOOP_HOST: CommandHost = {
 	openExport: () => {},
 	openScaleCanvas: () => {},
 	openResizeCanvas: () => {},
+	openOutline: () => {},
+	openDropShadow: () => {},
+	openColorReplace: () => {},
 	openShortcuts: () => {},
 	openAbout: () => {},
 	openCommandPalette: () => {},
@@ -313,6 +320,27 @@ const ACTION_COMMANDS: CommandDef[] = [
 		label: "Crop to Selection",
 		group: "Project",
 		run: () => editor.cropToSelection(),
+	},
+	{
+		id: "effects.outline",
+		label: "Outline…",
+		group: "Effects",
+		keywords: "border stroke silhouette edge",
+		run: () => host.openOutline(),
+	},
+	{
+		id: "effects.drop-shadow",
+		label: "Drop shadow…",
+		group: "Effects",
+		keywords: "shadow offset spread silhouette",
+		run: () => host.openDropShadow(),
+	},
+	{
+		id: "effects.color-replace",
+		label: "Color replace…",
+		group: "Effects",
+		keywords: "recolor swap palette tolerance",
+		run: () => host.openColorReplace(),
 	},
 	{
 		id: "animation.play-pause",
