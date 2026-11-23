@@ -47,12 +47,13 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Per-cel opacity (and z-index) | 6 | 5 | 1.20 | | Implemented as **Cel properties** (double-click a cel, or use its right-click menu): a per-cel opacity slider and a z-index number input. Opacity multiplies the layer opacity during compositing on every render/export path, and z-index reorders cels within a frame. Cels carrying a custom opacity or z-index show a small indicator icon in the timeline, and both values persist with the project. |
 | Outline, drop shadow, and color-replace filters | 8 | 4 | 2.00 | | Implemented as a new **Effects** menu between Project and View. **Outline** grows a 1–8 px border outside the silhouette (or recolors its inside edge) with optional diagonal corners. **Drop shadow** offsets and spreads a colored shadow behind the silhouette. **Color replace** swaps a color with an optional RGB tolerance and alpha preservation. Each dialog previews the composited active frame, targets the active cel or all visible unlocked layers, respects the pixel selection, skips reference/hidden/locked layers, and applies as one undoable cel patch. The pure filters live in `filters.ts` and are covered by the core benchmarks. |
 | Undo history panel | 7 | 4 | 1.75 | | Implemented as **Edit → History…** (also in the command palette). Every undo entry now carries a label and optional context (the tool or operation plus layer/frame), and the dialog lists states from the earliest retained step through the redoable steps. Clicking an entry jumps through the existing undo/redo path, so selections, thumbnails, and dirty state stay consistent. Cel-patch entries remain compact; the footer reports undoable/redoable counts and approximate history memory. |
+| Dithering patterns and pattern brushes | 8 | 3 | 2.67 | | Implemented as live **Dither ink** on pencil, eraser, and fill, backed by a tileable pattern library: checker, 25%/75% densities, horizontal/vertical lines, diagonal, Bayer 4×4/8×8 at 50%, and custom masks. The picker offers canvas- or brush-aligned phase and X/Y offsets, and a custom footprint plus a tiled pattern provides pattern-brush behavior without a second tool. **Effects → Dither…** converts a frame to two colors or the active palette with ordered Bayer or Floyd–Steinberg error diffusion, serpentine scanning, a live preview, selection-limited writes, and one undo step. Shared mask editing and `localStorage` persistence keep the UI compact. |
+| Custom brushes (shapes, patterns, textured) | 8 | 5 | 1.60 | | Implemented with 1-bit masks: built-in square, circle, diamond, and ring presets plus custom masks created from the selection, an imported image, or the pixel mask editor. The **Brushes & dither patterns** library supports search, duplicate, edit, delete, and per-brush default size/opacity. Brushes apply to pencil, eraser, line, curve, and shape outlines, honour symmetry, selections, alpha lock, and ink opacity, show a footprint outline on the canvas, and persist in `localStorage` without touching project files or history. |
 
 ## Planned features
 
 | Feature | Appeal | Difficulty | Score | Strategic | Why / implementation notes |
 | --- | ---: | ---: | ---: | :---: | --- |
-| Dithering patterns and pattern brushes | 8 | 3 | 2.67 | | Add selectable dither masks (Bayer, checker, custom) to pencil/fill, plus standalone error-diffusion (Floyd–Steinberg) and ordered-dither filters over a selection. Reuse the gradient Bayer code and selection masks. |
 | Color-blindness simulation and palette preview | 5 | 2 | 2.50 | | Preview deuteranopia/protanopia/tritanopia and grayscale in the canvas without changing pixels. Useful for accessibility checks and palette design. |
 | Export presets | 7 | 3 | 2.33 | | Name and reuse export configurations (format, scale, trim, spacing, metadata, loop) so the right settings are one click. Pixelorama ships an `export_presets.cfg`; the community repeatedly asks for this. |
 | Rulers and draggable guides | 6 | 3 | 2.00 | | Horizontal/vertical guides with snapping, persisted per project, plus a quick measurement readout. Reuse the mirror-guide overlay and pointer mapping. |
@@ -61,8 +62,8 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Timelapse / process replay | 8 | 4 | 2.00 | ★ | Record a compact log of pixel deltas and replay the making-of as a GIF/video. Artists love posting process shots, and Pixel Spell already tracks per-stroke history, making this cheap. A genuine browser-native delight no desktop editor ships out of the box. |
 | Motion drawing (draw while playing) | 6 | 3 | 2.00 | | Paint into the animation while it plays (Pixelorama's “motion drawing”). Direct-manipulation feel for effects and onion-skin-assisted in-betweens. |
 | Gradient map layer | 7 | 4 | 1.75 | | Map luminance to a multi-stop gradient as a live filter, so a whole sprite can be recolored in one step (Pixelorama ships this; a standing Aseprite request). Useful for palette swaps and mood variants. |
+| Advanced brush and dither expansion | 7 | 4 | 1.75 | | Extend the shipped mask libraries with colored/image brushes and tint modes, brush spacing/angle/scatter, pattern transforms (scale, rotation, offset), custom threshold matrices and blue-noise dithering, extra diffusion kernels (Atkinson, Jarvis), brush-pack import/export with drag-and-drop, per-tool brush slots, and “brush from layer/content bounds.” Keeps the document format unchanged, so it is a comfortable follow-up to the completed brush/dither work. |
 | Accessibility and localization pass | 5 | 3 | 1.67 | | Full keyboard navigation, screen-reader labels for canvas actions, reduced-motion support, and i18n extraction. Good for reach and polish. |
-| Custom brushes (shapes, patterns, textured) | 8 | 5 | 1.60 | | A brush mask editor, saved brush library, and stamping pipeline. Build on `paintBrush` and `paintPixel`; add a brush preview and per-brush size/opacity. Include “custom brush from selection” (Aseprite v1.1). |
 | Pixel cleanup and recolor (de-AA, snap-to-grid, palette remap) | 8 | 5 | 1.60 | | Clean up AI-generated or anti-aliased art: remove anti-aliasing, snap pixels to a detected grid, and recolor an image to a target palette with perceptual matching. Directly addresses the “mixelated AI art” problem and complements the existing nearest-color snapping. |
 | Nine-slice / UI asset export | 6 | 4 | 1.50 | | Define nine-slice borders and export stretchable UI assets with metadata. Niche but valuable for game UI artists. |
 | Recent files / project library | 6 | 4 | 1.50 | | A local project browser backed by IndexedDB/File System Access API, with thumbnails and recent projects. Complements autosave and is the offline prerequisite for any later cloud sync. |
@@ -126,7 +127,7 @@ These add the most day-to-day value per unit of risk. Onion skinning and referen
 
 1. Layer groups, blend modes, and clipping masks — done
 2. Selection transform (scale/rotate/flip) — done
-3. Custom brushes and dithering patterns
+3. Custom brushes and dithering patterns — done
 4. Outline/shadow/color-replace filters — done
 5. Grayscale mode
 6. APNG/animated WebP export — done
@@ -159,6 +160,7 @@ Indexed color and tilemaps deepen the pixel-art/game-art focus. The MCP server, 
 - Pixel cleanup and recolor (de-AA, snap-to-grid, remap)
 - Per-cel opacity — done (per-frame layer visibility still planned)
 - Animated brushes and motion drawing
+- Advanced brush and dither expansion (colored/textured brushes, pattern transforms, blue-noise matrices, extra diffusion kernels, brush packs)
 - Macros / recordable actions
 - CSS / engine / headless export pipeline
 - PSD import/export

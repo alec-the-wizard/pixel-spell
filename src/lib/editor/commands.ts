@@ -1,5 +1,5 @@
 import { editor } from "./editor.svelte.js";
-import { TOOLS } from "./tools.js";
+import { TOOLS, usesDither } from "./tools.js";
 
 export type CommandGroup =
 	| "File"
@@ -25,6 +25,7 @@ export interface CommandHost {
 	openOutline: () => void;
 	openDropShadow: () => void;
 	openColorReplace: () => void;
+	openDither: () => void;
 	openShortcuts: () => void;
 	openAbout: () => void;
 	openCommandPalette: () => void;
@@ -41,6 +42,7 @@ const NOOP_HOST: CommandHost = {
 	openOutline: () => {},
 	openDropShadow: () => {},
 	openColorReplace: () => {},
+	openDither: () => {},
 	openShortcuts: () => {},
 	openAbout: () => {},
 	openCommandPalette: () => {},
@@ -249,6 +251,13 @@ const ACTION_COMMANDS: CommandDef[] = [
 		run: () => (editor.showPreview = !editor.showPreview),
 	},
 	{
+		id: "view.toggle-brush-preview",
+		label: "Toggle brush footprint preview",
+		group: "View",
+		keywords: "cursor outline stamp mask",
+		run: () => (editor.showBrushPreview = !editor.showBrushPreview),
+	},
+	{
 		id: "view.toggle-reference-board",
 		label: "Toggle reference board",
 		group: "View",
@@ -348,6 +357,47 @@ const ACTION_COMMANDS: CommandDef[] = [
 		group: "Effects",
 		keywords: "recolor swap palette tolerance",
 		run: () => host.openColorReplace(),
+	},
+	{
+		id: "effects.dither",
+		label: "Dither…",
+		group: "Effects",
+		keywords: "ordered bayer floyd steinberg error diffusion palette pattern",
+		run: () => host.openDither(),
+	},
+	{
+		id: "brush.new-from-selection",
+		label: "New brush from selection",
+		group: "Tools",
+		keywords: "brush custom stamp mask selection",
+		defaultKeys: ["mod+shift+b"],
+		enabled: () => editor.hasSelection,
+		run: () => {
+			const preset = editor.createBrushFromSelection();
+			if (preset) editor.openMaskLibrary("brush", preset.id);
+		},
+	},
+	{
+		id: "brush.library",
+		label: "Brush library…",
+		group: "Tools",
+		keywords: "brushes stamps custom masks manage edit",
+		run: () => editor.openMaskLibrary("brush"),
+	},
+	{
+		id: "dither.library",
+		label: "Dither patterns…",
+		group: "Tools",
+		keywords: "patterns dither mask checker bayer manage edit",
+		run: () => editor.openMaskLibrary("pattern"),
+	},
+	{
+		id: "dither.toggle",
+		label: "Toggle dither ink",
+		group: "Tools",
+		keywords: "pattern pencil fill eraser dithering",
+		enabled: () => usesDither(editor.tool),
+		run: () => editor.toggleDither(),
 	},
 	{
 		id: "animation.play-pause",

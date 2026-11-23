@@ -44,7 +44,13 @@ Key files:
 | `lib/editor/keybindings.svelte.ts` | Reactive keybindings, combo normalization, conflict checks, localStorage persistence |
 | `lib/editor/types.ts` | `PixelDoc`, `Layer`, `Frame`, `ToolId`, `Point` |
 | `lib/editor/doc.ts` | Document creation/cloning, layer compositing |
-| `lib/editor/draw.ts` | Brush, line, shapes (rectangle, ellipse, star, heart), flood fill, gradients |
+| `lib/editor/draw.ts` | Mask stamping, line, shapes (rectangle, ellipse, star, heart), flood fill, gradients |
+| `lib/editor/mask.ts` | Shared 1-bit brush/pattern masks, transforms, selection/image conversion, base64 storage |
+| `lib/editor/brush.ts` | Built-in brush shapes, custom mask generation, selection/image brush presets |
+| `lib/editor/brush-library.svelte.ts` | Custom brush library, active preset, and localStorage persistence |
+| `lib/editor/dither.ts` | Built-in/custom dither patterns, Bayer matrices, tiled sampling |
+| `lib/editor/dither-library.svelte.ts` | Custom dither pattern library and localStorage persistence |
+| `lib/editor/dither-filter.ts` | Pure ordered and Floyd–Steinberg dither filter |
 | `lib/editor/filters.ts` | Pure outline, drop-shadow, and color-replace pixel filters |
 | `lib/editor/render.ts` | Canvas scaling and thumbnail rendering |
 | `lib/editor/color.ts` | Hex/RGBA conversion and packed pixel helpers |
@@ -70,6 +76,14 @@ Key files:
 | `lib/components/editor/OutlineDialog.svelte` | Effects → Outline dialog: live preview, thickness/placement/color options, scope |
 | `lib/components/editor/DropShadowDialog.svelte` | Effects → Drop shadow dialog: live preview, offset/spread/color/opacity options, scope |
 | `lib/components/editor/ColorReplaceDialog.svelte` | Effects → Color replace dialog: live preview, from/to colors, tolerance, alpha preservation |
+| `lib/components/editor/DitherDialog.svelte` | Effects → Dither dialog: ordered/error-diffusion preview, target colors or active palette, scope |
+| `lib/components/editor/BrushSettings.svelte` | Tool-options brush picker, size, and ink-opacity controls |
+| `lib/components/editor/DitherSettings.svelte` | Per-tool dither ink toggle, pattern picker, alignment, and offsets |
+| `lib/components/editor/MaskLibraryDialog.svelte` | Tabbed brush/dither library, search, previews, inline mask editor, selection/image creation |
+| `lib/components/editor/MaskGridEditor.svelte` | Shared pixel mask editor canvas with paint/erase drag and grid overlay |
+| `lib/components/editor/MaskThumb.svelte` | Framework-light mask thumbnail renderer for brushes and tiled patterns |
+| `lib/components/editor/BrushPicker.svelte` | Popover brush grid with selection/image creation and library entry |
+| `lib/components/editor/DitherPicker.svelte` | Popover tiled dither-pattern grid and library entry |
 | `lib/components/editor/TimelinePanel.svelte` | Timeline toolbar, tag ranges, frame×layer table, frame context menu, onion/animation-mode/loop controls, add-layer row |
 | `lib/components/editor/CommandPalette.svelte` | `Ctrl+K` searchable command runner |
 | `lib/components/editor/ToolStrip.svelte` | Reorderable tool buttons, drop indicator, and bottom tools-menu button |
@@ -108,6 +122,10 @@ Key files:
 - The animation range is the frame selection: one selected frame means the whole timeline, two or more selected frames mean exactly those frames in timeline order. Playback and animation/video export both use `editor.animationFrameIndices`.
 - The Effects dialogs run pure filters from `filters.ts` through `editor.previewEffect(scope, transform)` and `editor.applyEffect(scope, transform)`. The scope is `active-cel` or `visible-layers`; both skip reference, hidden, and locked layers, and only the active frame is affected. Filters honour the active selection mask, previews composite the modified clone through `compositeFrame`, and applying writes filtered pixels into the existing buffers (so linked cels stay linked) behind one `pushHistoryCels` entry.
 - Onion skin state (`onionEnabled`, range, opacity, previous/next toggle, tints) is workspace-wide and does not touch the document, history, or dirty flag. `editor.onionSkins` returns the neighboring frame indices and hides them during playback.
+- Custom brushes and dither patterns are workspace libraries stored in `localStorage` (`pixel-spell-brushes`, `pixel-spell-dither-patterns`), like palettes. They are never written to project files, history, or autosaves. Built-ins live in code; only custom 1-bit masks are persisted. `editor.brushSize`, `brushOpacity`, `showBrushPreview`, `ditherEnabledByTool`, `ditherOffsetX/Y`, and `ditherAlign` are workspace state, not document state.
+- `stampMask` in `draw.ts` is the generic brush path: it takes a `PixelMask`, symmetry, selection clip, alpha lock, ink opacity, and an optional `DitherSampler`. `paintBrush` remains a cached square-mask wrapper for compatibility. `fillPixels` accepts an optional dither sampler as its final argument. `CanvasStage` snapshots the active brush mask, opacity, and dither sampler on pointer down so a whole gesture stays consistent; apply the same snapshot in plain strokes, shape outlines, curve previews, and pixel-perfect replays.
+- Live dither ink and the destructive dither filter are deliberately separate. The per-tool toggle lives in `DitherSettings.svelte`; `Effects → Dither…` opens `DitherDialog.svelte` and uses the pure `ditherPixels` filter through `editor.previewEffect`/`applyEffect`. Do not route cursor painting through the destructive filter, and do not make the filter mutate in place.
+- `MaskThumb.svelte` and `MaskGridEditor.svelte` render 1-bit masks. Typed arrays are not reactive, so mask editors bump a revision counter and libraries replace mask objects on save; keep that pattern when adding new mask surfaces.
 - Canvas transforms live in `editor.scaleCanvas`, `resizeCanvas`, `cropCanvasTo`, `cropToContent`, and `cropToSelection`. They transform every layer's cels (including reference layers), change `doc.width`/`height`, clear the pixel selection, and bump `structureRevision` + `revision`. They are undoable via `pushHistory`; do not transform only the active frame.
 - `canvas.ts` holds the pure pixel helpers: `scalePixelsNearest`, `resizePixels`, and `contentBoundsOf`. `contentBoundsOf` scans all frames and normal layers and ignores `role: "reference"` layers; reference-board images are not part of the document composite and are never transformed.
 - `MenuBar.svelte` lazily computes Crop to Content/Selection availability only while the Project menu is open, because content bounds are a full document scan. Keep that behavior instead of evaluating it on every menu-bar render.

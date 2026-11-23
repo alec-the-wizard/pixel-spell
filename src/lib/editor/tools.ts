@@ -143,3 +143,23 @@ const PIXEL_PERFECT_TOOLS = new Set<ToolId>([
 export function usesPixelPerfect(tool: ToolId): boolean {
 	return PIXEL_PERFECT_TOOLS.has(tool);
 }
+
+const BRUSH_TOOLS = new Set<ToolId>([
+	"pencil",
+	"eraser",
+	"line",
+	"curve",
+	"shape",
+]);
+
+/** Tools that stamp a brush footprint. */
+export function usesBrush(tool: ToolId): boolean {
+	return BRUSH_TOOLS.has(tool);
+}
+
+const DITHER_TOOLS = new Set<ToolId>(["pencil", "eraser", "fill"]);
+
+/** Tools that support live dither-pattern ink. */
+export function usesDither(tool: ToolId): boolean {
+	return DITHER_TOOLS.has(tool);
+}

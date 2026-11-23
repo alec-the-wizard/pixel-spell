@@ -10,6 +10,9 @@
 	import { editor } from "$lib/editor/editor.svelte.js";
 	import { TOOL_BY_ID, usesPixelPerfect } from "$lib/editor/tools.js";
 	import type { GradientDither } from "$lib/editor/types.js";
+	import BrushSettings from "./BrushSettings.svelte";
+	import DitherSettings from "./DitherSettings.svelte";
+	import MaskLibraryDialog from "./MaskLibraryDialog.svelte";
 	import ShapePicker from "./ShapePicker.svelte";
 	import ToolIcon from "./ToolIcon.svelte";
 
@@ -26,13 +29,6 @@
 
 	let tool = $derived(TOOL_BY_ID[editor.tool]);
 	let isShape = $derived(editor.tool === "shape");
-	let showSize = $derived(
-		editor.tool === "pencil" ||
-			editor.tool === "eraser" ||
-			editor.tool === "line" ||
-			editor.tool === "curve" ||
-			(isShape && !editor.shapeFilled),
-	);
 	let showPixelPerfect = $derived(
 		usesPixelPerfect(editor.tool) && !(isShape && editor.shapeFilled),
 	);
@@ -329,6 +325,8 @@
 					)}
 					<Switch bind:checked={editor.fillContiguous} aria-label="Contiguous" />
 				</div>
+
+				<DitherSettings />
 			{:else if editor.tool === "gradient"}
 				<div class="space-y-2.5">
 					<div class="flex items-center justify-between">
@@ -407,21 +405,7 @@
 					</div>
 				{/if}
 
-				{#if showSize}
-					<div class="space-y-2.5">
-						<div class="flex items-center justify-between">
-							<span class="text-xs font-medium">
-								{isShape ? "Outline size" : "Brush size"}
-							</span>
-							<span
-								class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground"
-							>
-								{editor.brushSize}px
-							</span>
-						</div>
-						<Slider type="single" min={1} max={8} step={1} bind:value={editor.brushSize} />
-					</div>
-				{/if}
+				<BrushSettings />
 
 				{#if isShape}
 					<div
@@ -434,6 +418,8 @@
 						<Switch bind:checked={editor.shapeFilled} aria-label="Filled shape" />
 					</div>
 				{/if}
+
+				<DitherSettings />
 
 				{#if showPixelPerfect}
 					<div
@@ -462,5 +448,6 @@
 			{/if}
 		</div>
 	</div>
+	<MaskLibraryDialog bind:open={editor.maskLibraryOpen} />
 </section>
 

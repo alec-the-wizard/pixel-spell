@@ -20,13 +20,15 @@
 		fillPixels,
 		gradientPixels,
 		jumblePixels,
-		paintBrush,
 		paintPixel,
 		plotCubicCurve,
 		plotLine,
 		plotShape,
 		sprayPixels,
+		stampMask,
 	} from "$lib/editor/draw.js";
+	import type { DitherSampler } from "$lib/editor/dither.js";
+	import type { PixelMask } from "$lib/editor/mask.js";
 	import {
 		colorSelectionMask,
 		isSelectionPoint,
@@ -39,7 +41,7 @@
 	import { transformSelection } from "$lib/editor/transform.js";
 	import { drawPixels, drawScaled } from "$lib/editor/render.js";
 	import { editor, type FloatingSelection } from "$lib/editor/editor.svelte.js";
-	import { isSelectionTool, TOOL_BY_ID } from "$lib/editor/tools.js";
+	import { isSelectionTool, TOOL_BY_ID, usesBrush } from "$lib/editor/tools.js";
 	import type {
 		MirrorAxis,
 		MirrorKind,
@@ -84,6 +86,7 @@
 	let onionCanvas: HTMLCanvasElement | undefined;
 	let onionFrameCanvas: HTMLCanvasElement | null = null;
 	let mirrorCanvas: HTMLCanvasElement | undefined;
+	let brushPreviewCanvas = $state<HTMLCanvasElement | undefined>();
 	let floatingCanvas: HTMLCanvasElement | null = null;
 	let mirrorCanvasHasContent = false;
 	/** Cached stage bounds; refreshed by the ResizeObserver. */
@@ -101,6 +104,10 @@
 	let strokeMirrors: readonly MirrorAxis[] = [];
 	/** Radial symmetry captured on pointer down, or null when it is off. */
 	let strokeRadial: RadialSymmetry | null = null;
+	/** Brush footprint, opacity, and dither mask captured on pointer down. */
+	let strokeBrushMask: PixelMask | null = null;
+	let strokeBrushOpacity = 255;
+	let strokeDither: DitherSampler | null = null;
 	let gradientStartColor = 0;
 	let gradientEndColor = 0;
 	let gradientHistoryPushed = false;
@@ -214,16 +221,35 @@
 	let gridStep = $derived(zoom * editor.gridSize);
 	let isDrawable = $derived(editor.activeLayerDrawable);
 
+	let brushPreviewMask = $derived(
+		usesBrush(editor.tool) && !(editor.tool === "shape" && editor.shapeFilled)
+			? editor.activeBrushMask
+			: null,
+	);
 	let brushCursorSize = $derived(
-		editor.tool === "pencil" ||
-			editor.tool === "eraser" ||
-			editor.tool === "line" ||
-			editor.tool === "curve" ||
-			(editor.tool === "shape" && !editor.shapeFilled)
-			? editor.brushSize
-			: 1,
+		brushPreviewMask
+			? Math.max(brushPreviewMask.width, brushPreviewMask.height)
+			: editor.tool === "pencil" ||
+				  editor.tool === "eraser" ||
+				  editor.tool === "line" ||
+				  editor.tool === "curve" ||
+				  (editor.tool === "shape" && !editor.shapeFilled)
+				? editor.brushSize
+				: 1,
 	);
 	let cursorOffset = $derived(Math.floor((brushCursorSize - 1) / 2));
+	let brushPreviewWidth = $derived(
+		brushPreviewMask ? brushPreviewMask.width * zoom : 0,
+	);
+	let brushPreviewHeight = $derived(
+		brushPreviewMask ? brushPreviewMask.height * zoom : 0,
+	);
+	let brushPreviewOffsetX = $derived(
+		brushPreviewMask ? Math.floor((brushPreviewMask.width - 1) / 2) : 0,
+	);
+	let brushPreviewOffsetY = $derived(
+		brushPreviewMask ? Math.floor((brushPreviewMask.height - 1) / 2) : 0,
+	);
 
 	let areaToolRadius = $derived(
 		editor.tool === "spray"
@@ -480,6 +506,89 @@
 			const context = overlayCanvas.getContext("2d");
 			if (!context) return;
 			drawOverlay(context, selection, floating, lasso, hover, doc.width, doc.height);
+		});
+		return () => cancelAnimationFrame(id);
+	});
+
+	$effect(() => {
+		// Brush footprint preview. It lives in its own small canvas so pointer
+		// movement never invalidates the sprite or the selection overlay.
+		const cursor = editor.cursor;
+		const mask = brushPreviewMask;
+		const currentZoom = zoom;
+		const visible = editor.showBrushPreview;
+		if (!brushPreviewCanvas || !cursor || !mask || !visible) {
+			if (brushPreviewCanvas) {
+				const context = brushPreviewCanvas.getContext("2d");
+				context?.clearRect(
+					0,
+					0,
+					brushPreviewCanvas.width,
+					brushPreviewCanvas.height,
+				);
+			}
+			return;
+		}
+		const id = requestAnimationFrame(() => {
+			if (!brushPreviewCanvas) return;
+			const width = Math.max(1, Math.round(mask.width * currentZoom));
+			const height = Math.max(1, Math.round(mask.height * currentZoom));
+			if (brushPreviewCanvas.width !== width) brushPreviewCanvas.width = width;
+			if (brushPreviewCanvas.height !== height) brushPreviewCanvas.height = height;
+			const context = brushPreviewCanvas.getContext("2d");
+			if (!context) return;
+			context.clearRect(0, 0, width, height);
+			const cellWidth = width / mask.width;
+			const cellHeight = height / mask.height;
+
+			context.fillStyle = "rgba(255,255,255,0.16)";
+			for (let y = 0; y < mask.height; y++) {
+				for (let x = 0; x < mask.width; x++) {
+					if (!mask.data[y * mask.width + x]) continue;
+					context.fillRect(
+						x * cellWidth,
+						y * cellHeight,
+						cellWidth,
+						cellHeight,
+					);
+				}
+			}
+
+			const edges = new Path2D();
+			for (let y = 0; y < mask.height; y++) {
+				for (let x = 0; x < mask.width; x++) {
+					if (!mask.data[y * mask.width + x]) continue;
+					const left = x * cellWidth;
+					const top = y * cellHeight;
+					const right = left + cellWidth;
+					const bottom = top + cellHeight;
+					if (x === 0 || !mask.data[y * mask.width + x - 1]) {
+						edges.moveTo(left, top);
+						edges.lineTo(left, bottom);
+					}
+					if (x === mask.width - 1 || !mask.data[y * mask.width + x + 1]) {
+						edges.moveTo(right, top);
+						edges.lineTo(right, bottom);
+					}
+					if (y === 0 || !mask.data[(y - 1) * mask.width + x]) {
+						edges.moveTo(left, top);
+						edges.lineTo(right, top);
+					}
+					if (
+						y === mask.height - 1 ||
+						!mask.data[(y + 1) * mask.width + x]
+					) {
+						edges.moveTo(left, bottom);
+						edges.lineTo(right, bottom);
+					}
+				}
+			}
+			context.lineWidth = 3;
+			context.strokeStyle = "rgba(0,0,0,0.65)";
+			context.stroke(edges);
+			context.lineWidth = 1;
+			context.strokeStyle = "rgba(255,255,255,0.95)";
+			context.stroke(edges);
 		});
 		return () => cancelAnimationFrame(id);
 	});
@@ -797,21 +906,32 @@
 		}
 	}
 
+	function captureStrokeInk(tool: ToolId): void {
+		strokeBrushMask = editor.activeBrushMask;
+		strokeBrushOpacity = editor.brushOpacityValue;
+		strokeDither = editor.ditherSamplerFor(tool);
+	}
+
+	function stampAt(
+		cel: Uint32Array,
+		x: number,
+		y: number,
+		color = strokeColor,
+	): void {
+		stampMask(cel, editor.doc.width, editor.doc.height, x, y, {
+			mask: strokeBrushMask ?? editor.activeBrushMask,
+			color: strokeTool === "eraser" ? 0 : color,
+			opacity: strokeBrushOpacity,
+			mirrors: strokeMirrors,
+			radial: strokeRadial,
+			clip: editor.selection,
+			lockAlpha: editor.lockAlpha,
+			dither: strokeDither,
+		});
+	}
+
 	function paintAt(cel: Uint32Array, x: number, y: number): void {
-		const color = strokeTool === "eraser" ? 0 : strokeColor;
-		paintBrush(
-			cel,
-			editor.doc.width,
-			editor.doc.height,
-			x,
-			y,
-			editor.brushSize,
-			color,
-			strokeMirrors,
-			strokeRadial,
-			editor.selection,
-			editor.lockAlpha,
-		);
+		stampAt(cel, x, y, strokeTool === "eraser" ? 0 : strokeColor);
 	}
 
 	function sprayAt(cel: Uint32Array, point: Point, count: number): boolean {
@@ -899,20 +1019,7 @@
 		cel.set(backup);
 
 		const color = strokeColor;
-		const stroke = (x: number, y: number) =>
-			paintBrush(
-				cel,
-				editor.doc.width,
-				editor.doc.height,
-				x,
-				y,
-				editor.brushSize,
-				color,
-				strokeMirrors,
-				strokeRadial,
-				editor.selection,
-				editor.lockAlpha,
-			);
+		const stroke = (x: number, y: number) => stampAt(cel, x, y, color);
 		const dot = (x: number, y: number) =>
 			paintPixel(
 				cel,
@@ -1005,19 +1112,7 @@
 		const control1 = curveControl1 ?? curveStart;
 		const control2 = curveControl2 ?? curveEnd;
 		const stroke = (x: number, y: number) =>
-			paintBrush(
-				cel,
-				editor.doc.width,
-				editor.doc.height,
-				x,
-				y,
-				editor.brushSize,
-				strokeColor,
-				strokeMirrors,
-				strokeRadial,
-				editor.selection,
-				editor.lockAlpha,
-			);
+			stampAt(cel, x, y, strokeColor);
 
 		const rawPath: Point[] = [];
 		plotCubicCurve(
@@ -1176,21 +1271,8 @@
 		if (!backup) return;
 		cel.set(backup);
 
-		const color = strokeTool === "eraser" ? 0 : strokeColor;
 		for (const point of strokePath) {
-			paintBrush(
-				cel,
-				editor.doc.width,
-				editor.doc.height,
-				point.x,
-				point.y,
-				editor.brushSize,
-				color,
-				strokeMirrors,
-				strokeRadial,
-				editor.selection,
-				editor.lockAlpha,
-			);
+			paintAt(cel, point.x, point.y);
 		}
 	}
 
@@ -2363,6 +2445,7 @@
 				strokeColor = secondary ? editor.secondaryCurrentColor : editor.currentColor;
 				strokeMirrors = editor.mirrorAxes;
 				strokeRadial = editor.radialSymmetry;
+				captureStrokeInk("curve");
 				curveStart = point;
 				curveEnd = point;
 				curveControl1 = point;
@@ -2388,6 +2471,7 @@
 		strokeColor = secondary ? editor.secondaryCurrentColor : editor.currentColor;
 		strokeMirrors = editor.mirrorAxes;
 		strokeRadial = editor.radialSymmetry;
+		captureStrokeInk(tool);
 		gradientStartColor = secondary ? editor.secondaryCurrentColor : editor.currentColor;
 		gradientEndColor = secondary ? editor.currentColor : editor.secondaryCurrentColor;
 
@@ -2414,6 +2498,7 @@
 						editor.activeFrame,
 						TOOL_BY_ID.fill.label,
 					),
+				strokeDither,
 			);
 			if (changed) editor.touch();
 			return;
@@ -2890,6 +2975,16 @@
 						style:width={`${(areaToolRadius * 2 + 1) * zoom}px`}
 						style:height={`${(areaToolRadius * 2 + 1) * zoom}px`}
 					></div>
+				{:else if brushPreviewMask && editor.showBrushPreview}
+					<canvas
+						bind:this={brushPreviewCanvas}
+						class="pointer-events-none absolute block"
+						style:left={`${(editor.cursor.x - brushPreviewOffsetX) * zoom}px`}
+						style:top={`${(editor.cursor.y - brushPreviewOffsetY) * zoom}px`}
+						style:width={`${brushPreviewWidth}px`}
+						style:height={`${brushPreviewHeight}px`}
+						aria-hidden="true"
+					></canvas>
 				{:else}
 					<div
 						class="pointer-events-none absolute border border-white/90 shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"

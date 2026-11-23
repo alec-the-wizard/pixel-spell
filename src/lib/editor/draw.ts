@@ -1,3 +1,11 @@
+import { blendPixelPacked } from "./blend.js";
+import {
+	BAYER_SIZES,
+	BAYER_THRESHOLDS,
+	ditherAllows,
+	type DitherSampler,
+} from "./dither.js";
+import { squareMask, type PixelMask } from "./mask.js";
 import type {
 	GradientDither,
 	GradientShape,
@@ -105,6 +113,98 @@ export function paintPixel(
 	forEachSymmetryPoint(x, y, width, height, mirrors, radial, set);
 }
 
+/** Applies one stamp of a custom mask, honoring symmetry, dithering and ink opacity. */
+export interface StampMaskOptions {
+	mask: PixelMask;
+	color: number;
+	/** Effective ink alpha (0–255). 255 replaces pixels exactly as before. */
+	opacity?: number;
+	mirrors?: readonly MirrorAxis[];
+	radial?: RadialSymmetry | null;
+	clip?: Uint8Array | null;
+	lockAlpha?: boolean;
+	dither?: DitherSampler | null;
+}
+
+export function stampMask(
+	cel: Uint32Array,
+	width: number,
+	height: number,
+	x: number,
+	y: number,
+	options: StampMaskOptions,
+): void {
+	const mask = options.mask;
+	const mirrors = options.mirrors ?? [];
+	const radial = options.radial ?? null;
+	const clip = options.clip ?? null;
+	const lockAlpha = options.lockAlpha ?? false;
+	const dither = options.dither ?? null;
+	const opacity = Math.max(0, Math.min(255, Math.round(options.opacity ?? 255)));
+	const color = options.color >>> 0;
+	const colorAlpha = color >>> 24;
+	const effectiveAlpha = Math.round((colorAlpha * opacity) / 255);
+	const offsetX = Math.floor((mask.width - 1) / 2);
+	const offsetY = Math.floor((mask.height - 1) / 2);
+
+	const set = (px: number, py: number, localX: number, localY: number): void => {
+		if (px < 0 || px >= width || py < 0 || py >= height) return;
+		const index = py * width + px;
+		if (clip && !clip[index]) return;
+		if (lockAlpha && (cel[index]! >>> 24) === 0) return;
+		if (dither && !ditherAllows(dither, px, py, localX, localY)) return;
+		if (colorAlpha === 0) {
+			// A transparent ink is the eraser. Opacity reduces the destination
+			// alpha instead of just ignoring the setting.
+			if (opacity >= 255) {
+				cel[index] = 0;
+				return;
+			}
+			const destination = cel[index]!;
+			const destinationAlpha = destination >>> 24;
+			const nextAlpha = Math.round(
+				(destinationAlpha * (255 - opacity)) / 255,
+			);
+			cel[index] =
+				nextAlpha === 0
+					? 0
+					: ((nextAlpha << 24) | (destination & 0x00ffffff)) >>> 0;
+			return;
+		}
+		if (opacity >= 255) {
+			cel[index] = color;
+			return;
+		}
+		cel[index] = blendPixelPacked("normal", color, cel[index]!, effectiveAlpha);
+	};
+
+	for (let dy = 0; dy < mask.height; dy++) {
+		for (let dx = 0; dx < mask.width; dx++) {
+			if (!mask.data[dy * mask.width + dx]) continue;
+			forEachSymmetryPoint(
+				x - offsetX + dx,
+				y - offsetY + dy,
+				width,
+				height,
+				mirrors,
+				radial,
+				(px, py) => set(px, py, dx - offsetX, dy - offsetY),
+			);
+		}
+	}
+}
+
+const squareMaskCache = new Map<number, PixelMask>();
+
+function cachedSquareMask(size: number): PixelMask {
+	const span = Math.max(1, Math.round(size));
+	const cached = squareMaskCache.get(span);
+	if (cached) return cached;
+	const mask = squareMask(span);
+	squareMaskCache.set(span, mask);
+	return mask;
+}
+
 /** Stamps a square brush of `size` pixels, honoring symmetry. */
 export function paintBrush(
 	cel: Uint32Array,
@@ -119,29 +219,14 @@ export function paintBrush(
 	clip: Uint8Array | null = null,
 	lockAlpha = false,
 ): void {
-	const span = Math.max(1, Math.round(size));
-	const offset = Math.floor((span - 1) / 2);
-	const set = (px: number, py: number) => {
-		if (px < 0 || px >= width || py < 0 || py >= height) return;
-		const index = py * width + px;
-		if (clip && !clip[index]) return;
-		if (lockAlpha && (cel[index]! >>> 24) === 0) return;
-		cel[index] = color;
-	};
-
-	for (let dy = 0; dy < span; dy++) {
-		for (let dx = 0; dx < span; dx++) {
-			forEachSymmetryPoint(
-				x - offset + dx,
-				y - offset + dy,
-				width,
-				height,
-				mirrors,
-				radial,
-				set,
-			);
-		}
-	}
+	stampMask(cel, width, height, x, y, {
+		mask: cachedSquareMask(size),
+		color,
+		mirrors,
+		radial,
+		clip,
+		lockAlpha,
+	});
 }
 
 /** Bresenham line between two points. */
@@ -507,59 +592,6 @@ function colorMatches(a: number, b: number, tolerance: number): boolean {
 	);
 }
 
-interface BayerPattern {
-	size: number;
-	mask: number;
-	shift: number;
-	thresholds: Float32Array;
-}
-
-function bayerThresholds(values: number[], size: number): Float32Array {
-	const total = size * size;
-	return new Float32Array(values.map((value) => (value + 0.5) / total));
-}
-
-const BAYER_PATTERNS: Record<Exclude<GradientDither, "none">, BayerPattern> = {
-	bayer2: {
-		size: 2,
-		mask: 1,
-		shift: 1,
-		thresholds: bayerThresholds([0, 2, 3, 1], 2),
-	},
-	bayer4: {
-		size: 4,
-		mask: 3,
-		shift: 2,
-		thresholds: bayerThresholds(
-			[
-				0, 8, 2, 10,
-				12, 4, 14, 6,
-				3, 11, 1, 9,
-				15, 7, 13, 5,
-			],
-			4,
-		),
-	},
-	bayer8: {
-		size: 8,
-		mask: 7,
-		shift: 3,
-		thresholds: bayerThresholds(
-			[
-				0, 32, 8, 40, 2, 34, 10, 42,
-				48, 16, 56, 24, 50, 18, 58, 26,
-				12, 44, 4, 36, 14, 46, 6, 38,
-				60, 28, 52, 20, 62, 30, 54, 22,
-				3, 35, 11, 43, 1, 33, 9, 41,
-				51, 19, 59, 27, 49, 17, 57, 25,
-				15, 47, 7, 39, 13, 45, 5, 37,
-				63, 31, 55, 23, 61, 29, 53, 21,
-			],
-			8,
-		),
-	},
-};
-
 interface RegionMask {
 	mask: Uint8Array;
 	minX: number;
@@ -698,6 +730,7 @@ export function fillPixels(
 	clip: Uint8Array | null = null,
 	lockAlpha = false,
 	onFirstChange?: () => void,
+	dither: DitherSampler | null = null,
 ): boolean {
 	if (x < 0 || x >= width || y < 0 || y >= height) return false;
 
@@ -728,6 +761,7 @@ export function fillPixels(
 		for (let px = minX; px <= maxX; px++) {
 			const index = row + px;
 			if (mask[index] !== REGION_MATCH || cel[index] === color) continue;
+			if (dither && !ditherAllows(dither, px, py, px, py)) continue;
 			if (!changed) {
 				onFirstChange?.();
 				changed = true;
@@ -805,7 +839,10 @@ export function gradientPixels(
 
 	const { mask, minX, minY, maxX, maxY } = region;
 	const radius = Math.sqrt(lengthSquared);
-	const pattern = dither === "none" ? null : BAYER_PATTERNS[dither];
+	const patternSize =
+		dither === "none" ? 0 : BAYER_SIZES[dither];
+	const thresholds =
+		dither === "none" ? null : BAYER_THRESHOLDS[dither];
 	let changed = false;
 
 	for (let y = minY; y <= maxY; y++) {
@@ -825,10 +862,10 @@ export function gradientPixels(
 			amount = Math.max(0, Math.min(1, amount));
 
 			let next: number;
-			if (pattern) {
+			if (thresholds && patternSize > 0) {
 				const threshold =
-					pattern.thresholds[
-						((y & pattern.mask) << pattern.shift) + (x & pattern.mask)
+					thresholds[
+						(y % patternSize) * patternSize + (x % patternSize)
 					]!;
 				next = amount > threshold ? endColor : startColor;
 			} else {

@@ -46,7 +46,27 @@ import {
 	fitPixelsToCanvas,
 } from "./reference.js";
 import { selectionBounds } from "./selection.js";
-import { usesPixelPerfect } from "./tools.js";
+import {
+	activeBrushPreset,
+	brushLibrary,
+	createBrushFromImportedPixels,
+	createBrushFromSelection,
+	findBrush,
+	setActiveBrush,
+} from "./brush-library.svelte.js";
+import { brushMaskFor } from "./brush.js";
+import {
+	activeDitherPatternPreset,
+	setActiveDitherPattern,
+} from "./dither-library.svelte.js";
+import {
+	type DitherAlign,
+	type DitherPattern,
+	type DitherSampler,
+} from "./dither.js";
+import type { PixelMask } from "./mask.js";
+import type { BrushPreset } from "./brush.js";
+import { usesDither, usesPixelPerfect } from "./tools.js";
 import { toolLayout } from "./tool-layout.svelte.js";
 import {
 	DEFAULT_PALETTE_ID,
@@ -315,6 +335,12 @@ export class EditorState {
 	effectOutlineOpen = $state(false);
 	effectDropShadowOpen = $state(false);
 	effectColorReplaceOpen = $state(false);
+	effectDitherOpen = $state(false);
+	/** Shared brush/pattern library dialog. */
+	maskLibraryOpen = $state(false);
+	maskLibraryTab = $state<"brush" | "pattern">("brush");
+	/** When set, the library opens directly in its mask editor for this item. */
+	maskLibraryEditId = $state<string | null>(null);
 	/** Undo history dialog. */
 	historyOpen = $state(false);
 	/**
@@ -327,6 +353,15 @@ export class EditorState {
 	paletteCycleDirection = $state<PaletteCycleDirection>("forward");
 
 	brushSize = $state(1);
+	/** Ink opacity for brush stamps, 1–100. */
+	brushOpacity = $state(100);
+	/** Show a footprint outline under the cursor for custom brush shapes. */
+	showBrushPreview = $state(true);
+	/** Live dither ink is enabled per drawing tool. */
+	ditherEnabledByTool = $state<Partial<Record<ToolId, boolean>>>({});
+	ditherOffsetX = $state(0);
+	ditherOffsetY = $state(0);
+	ditherAlign = $state<DitherAlign>("canvas");
 	sprayRadius = $state(6);
 	sprayRate = $state(40);
 	blurRadius = $state(4);
@@ -463,6 +498,10 @@ export class EditorState {
 		this.palettes = paletteState.palettes;
 		this.activePaletteId = paletteState.activeId;
 		this.paletteLocked = paletteState.locked;
+
+		const brush = activeBrushPreset();
+		this.brushSize = Math.max(1, Math.min(64, brush.defaultSize));
+		this.brushOpacity = Math.max(1, Math.min(100, brush.defaultOpacity));
 	}
 
 	get activeLayer(): Layer {
@@ -550,6 +589,132 @@ export class EditorState {
 	/** The active palette can be edited when it is custom and unlocked. */
 	get paletteEditable(): boolean {
 		return !this.activePalette.builtin && !this.paletteLocked;
+	}
+
+	/** Active workspace brush. */
+	get activeBrush(): BrushPreset {
+		return activeBrushPreset();
+	}
+
+	/** The footprint stamped at the current brush size. */
+	get activeBrushMask(): PixelMask {
+		return brushMaskFor(this.activeBrush, this.brushSize);
+	}
+
+	/** Longest side of the current footprint, for cursor previews. */
+	get brushFootprintSize(): number {
+		const mask = this.activeBrushMask;
+		return Math.max(mask.width, mask.height);
+	}
+
+	/** Ink alpha in 0–255 for the paint pipeline. */
+	get brushOpacityValue(): number {
+		return Math.max(0, Math.min(255, Math.round(this.brushOpacity * 2.55)));
+	}
+
+	get activeDitherPattern(): DitherPattern {
+		return activeDitherPatternPreset();
+	}
+
+	/** Whether live dither ink is enabled for a tool. */
+	ditherEnabledFor(tool: ToolId): boolean {
+		return usesDither(tool) && this.ditherEnabledByTool[tool] === true;
+	}
+
+	setDitherEnabled(tool: ToolId, enabled: boolean): void {
+		if (!usesDither(tool)) return;
+		this.ditherEnabledByTool = {
+			...this.ditherEnabledByTool,
+			[tool]: enabled,
+		};
+	}
+
+	toggleDither(tool: ToolId = this.tool): void {
+		this.setDitherEnabled(tool, !this.ditherEnabledFor(tool));
+	}
+
+	/** Snapshot object for one stroke/fill, or null when dither ink is off. */
+	ditherSamplerFor(tool: ToolId): DitherSampler | null {
+		if (!this.ditherEnabledFor(tool)) return null;
+		return {
+			pattern: this.activeDitherPattern,
+			offsetX: Math.round(this.ditherOffsetX),
+			offsetY: Math.round(this.ditherOffsetY),
+			// Flood fill has no brush-local coordinate system; it is always
+			// anchored to the artwork.
+			align: tool === "fill" ? "canvas" : this.ditherAlign,
+		};
+	}
+
+	setDitherOffset(x: number, y: number): void {
+		if (Number.isFinite(x)) this.ditherOffsetX = Math.round(x);
+		if (Number.isFinite(y)) this.ditherOffsetY = Math.round(y);
+	}
+
+	/** Selects a brush and optionally loads its saved size/opacity defaults. */
+	selectBrush(id: string, applyDefaults = true): boolean {
+		const preset = findBrush(id);
+		if (!preset || !setActiveBrush(id)) return false;
+		if (applyDefaults) {
+			this.brushSize = Math.max(1, Math.min(64, preset.defaultSize));
+			this.brushOpacity = Math.max(1, Math.min(100, preset.defaultOpacity));
+		}
+		return true;
+	}
+
+	setBrushSize(size: number): void {
+		if (!Number.isFinite(size)) return;
+		this.brushSize = Math.max(1, Math.min(64, Math.round(size)));
+	}
+
+	setBrushOpacity(opacity: number): void {
+		if (!Number.isFinite(opacity)) return;
+		this.brushOpacity = Math.max(1, Math.min(100, Math.round(opacity)));
+	}
+
+	/** Creates a custom brush from the current selection and selects it. */
+	createBrushFromSelection(): BrushPreset | null {
+		const mask = this.selection;
+		if (!mask) return null;
+		const preset = createBrushFromSelection(
+			mask,
+			this.doc.width,
+			this.doc.height,
+			`Selection brush ${brushLibrary.custom.length + 1}`,
+		);
+		if (preset) this.selectBrush(preset.id);
+		return preset;
+	}
+
+	/** Imports a decoded image as a custom brush and selects it. */
+	importBrushPixels(
+		pixels: Uint32Array,
+		width: number,
+		height: number,
+		name: string,
+	): BrushPreset | null {
+		const preset = createBrushFromImportedPixels(
+			pixels,
+			width,
+			height,
+			name,
+		);
+		if (preset) this.selectBrush(preset.id);
+		return preset;
+	}
+
+	selectDitherPattern(id: string): boolean {
+		return setActiveDitherPattern(id);
+	}
+
+	/** Opens the shared library on one tab, optionally editing an item. */
+	openMaskLibrary(
+		tab: "brush" | "pattern" = "brush",
+		editId: string | null = null,
+	): void {
+		this.maskLibraryTab = tab;
+		this.maskLibraryEditId = editId;
+		this.maskLibraryOpen = true;
 	}
 
 	/**

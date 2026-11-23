@@ -1,6 +1,7 @@
 <script lang="ts">
 	import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
 	import Asterisk from "@lucide/svelte/icons/asterisk";
+	import Brush from "@lucide/svelte/icons/brush";
 	import Check from "@lucide/svelte/icons/check";
 	import ChevronDown from "@lucide/svelte/icons/chevron-down";
 	import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste";
@@ -14,6 +15,7 @@
 	import FlipHorizontal2 from "@lucide/svelte/icons/flip-horizontal-2";
 	import FlipVertical2 from "@lucide/svelte/icons/flip-vertical-2";
 	import FolderOpen from "@lucide/svelte/icons/folder-open";
+	import Grid2x2 from "@lucide/svelte/icons/grid-2x2";
 	import Grid3x3 from "@lucide/svelte/icons/grid-3x3";
 	import History from "@lucide/svelte/icons/history";
 	import Images from "@lucide/svelte/icons/images";
@@ -64,6 +66,7 @@
 		onOutline,
 		onDropShadow,
 		onColorReplace,
+		onDither,
 		onHistory,
 	}: {
 		onNew: () => void;
@@ -79,6 +82,7 @@
 		onOutline: () => void;
 		onDropShadow: () => void;
 		onColorReplace: () => void;
+		onDither: () => void;
 		onHistory: () => void;
 	} = $props();
 
@@ -302,6 +306,10 @@
 					<Replace class="size-4" />
 					Color replace…
 				</DropdownMenu.Item>
+				<DropdownMenu.Item onSelect={onDither}>
+					<Grid2x2 class="size-4" />
+					Dither…
+				</DropdownMenu.Item>
 			</DropdownMenu.Content>
 		</DropdownMenu.Root>
 
@@ -332,6 +340,10 @@
 				<DropdownMenu.CheckboxItem bind:checked={editor.showPreview}>
 					<ScanEye class="size-4" />
 					Show preview
+				</DropdownMenu.CheckboxItem>
+				<DropdownMenu.CheckboxItem bind:checked={editor.showBrushPreview}>
+					<Brush class="size-4" />
+					Show brush preview
 				</DropdownMenu.CheckboxItem>
 				<DropdownMenu.CheckboxItem bind:checked={editor.showReferenceBoard}>
 					<Images class="size-4" />

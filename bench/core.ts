@@ -29,7 +29,26 @@ import {
 	paintBrush,
 	plotShape,
 	sprayPixels,
+	stampMask,
 } from "../src/lib/editor/draw.js";
+import {
+	BUILTIN_BRUSHES,
+	brushMaskFor,
+	brushPreviewMask,
+} from "../src/lib/editor/brush.js";
+import {
+	BUILTIN_DITHER_PATTERNS,
+	ditherAllows,
+	ditherPatternAt,
+} from "../src/lib/editor/dither.js";
+import { ditherPixels } from "../src/lib/editor/dither-filter.js";
+import {
+	decodeMask,
+	encodeMask,
+	maskFromRows,
+	maskFromSelection,
+	scaleMaskToLongest,
+} from "../src/lib/editor/mask.js";
 import {
 	exportGif,
 	sheetAnimations,
@@ -272,6 +291,63 @@ measure("paintBrush 10k stamps size4 + 2 mirrors", 20, 3, () => {
 			mirrors,
 		);
 	}
+});
+
+measure("stampMask 16x16 10k stamps", 10, 2, () => {
+	const working = new Uint32Array(cel);
+	const mask = brushMaskFor(BUILTIN_BRUSHES[1]!, 16);
+	for (let index = 0; index < 10_000; index++) {
+		stampMask(working, width, height, index % width, (index * 7) % height, {
+			mask,
+			color: 0xff00ff00,
+			mirrors,
+		});
+	}
+});
+
+measure("ditherPixels ordered 512x512", 10, 2, () => {
+	const working = new Uint32Array(cel);
+	ditherPixels(working, width, height, {
+		method: "ordered",
+		matrix: "bayer4",
+		diffusion: "floyd-steinberg",
+		serpentine: true,
+		target: "two-color",
+		lightColor: 0xffffffff,
+		darkColor: 0xff000000,
+	});
+});
+
+const benchPalette = Array.from({ length: 32 }, (_, index) =>
+	packColor(
+		`#${((index * 0x0f1f3f) & 0xffffff).toString(16).padStart(6, "0")}`,
+	),
+);
+measure("ditherPixels palette 512x512", 5, 1, () => {
+	const working = new Uint32Array(cel);
+	ditherPixels(working, width, height, {
+		method: "ordered",
+		matrix: "bayer4",
+		diffusion: "floyd-steinberg",
+		serpentine: true,
+		target: "palette",
+		lightColor: 0xffffffff,
+		darkColor: 0xff000000,
+		palette: benchPalette,
+	});
+});
+
+measure("ditherPixels floyd 512x512", 5, 1, () => {
+	const working = new Uint32Array(cel);
+	ditherPixels(working, width, height, {
+		method: "diffusion",
+		matrix: "bayer4",
+		diffusion: "floyd-steinberg",
+		serpentine: true,
+		target: "two-color",
+		lightColor: 0xffffffff,
+		darkColor: 0xff000000,
+	});
 });
 
 measure("plotShape star 256x256 outline", 100, 10, () => {
@@ -1053,6 +1129,230 @@ function assertSelectionTransform(): void {
 	}
 }
 
+function assertBrushAndDither(): void {
+	const mask = maskFromRows(["#.", ".#"]);
+	const encoded = encodeMask(mask);
+	const decoded = decodeMask(mask.width, mask.height, encoded);
+	if (!decoded || decoded.data.join() !== mask.data.join()) {
+		throw new Error("mask encode/decode round-trip changed");
+	}
+
+	const selection = new Uint8Array(16);
+	for (const index of [5, 6, 9, 10]) selection[index] = 1;
+	const fromSelection = maskFromSelection(selection, 4, 4);
+	if (
+		!fromSelection ||
+		fromSelection.x !== 1 ||
+		fromSelection.y !== 1 ||
+		fromSelection.mask.width !== 2 ||
+		fromSelection.mask.height !== 2 ||
+		fromSelection.mask.data.join() !== "1,1,1,1"
+	) {
+		throw new Error("brush from selection bounds changed");
+	}
+
+	const scaled = scaleMaskToLongest(maskFromRows(["#.", ".."]), 4);
+	if (
+		scaled.width !== 4 ||
+		scaled.height !== 4 ||
+		scaled.data.join() !== "1,1,0,0,1,1,0,0,0,0,0,0,0,0,0,0"
+	) {
+		throw new Error("mask nearest scaling changed");
+	}
+
+	const red = packColor("#ff0000");
+	const target = new Uint32Array(16);
+	const fullMask = maskFromRows(["##", "##"]);
+	stampMask(target, 4, 4, 1, 1, { mask: fullMask, color: red });
+	if (
+		target[5] !== red ||
+		target[6] !== red ||
+		target[9] !== red ||
+		target[10] !== red ||
+		target[0] !== 0
+	) {
+		throw new Error("custom mask stamping changed");
+	}
+
+	const clipped = new Uint32Array(16);
+	const clip = new Uint8Array(16);
+	clip[5] = 1;
+	stampMask(clipped, 4, 4, 1, 1, { mask: fullMask, color: red, clip });
+	if (clipped.filter((value) => value === red).length !== 1 || clipped[5] !== red) {
+		throw new Error("brush selection clipping changed");
+	}
+
+	const faded = new Uint32Array(1);
+	stampMask(faded, 1, 1, 0, 0, {
+		mask: maskFromRows(["#"]),
+		color: red,
+		opacity: 128,
+	});
+	if ((faded[0]! >>> 24) !== 128 || (faded[0]! & 0x00ffffff) !== 0x000000ff) {
+		throw new Error("brush ink opacity changed");
+	}
+
+	const erased = new Uint32Array([packColor("#ff0000")]);
+	stampMask(erased, 1, 1, 0, 0, {
+		mask: maskFromRows(["#"]),
+		color: 0,
+		opacity: 128,
+	});
+	if ((erased[0]! >>> 24) !== 127) {
+		throw new Error("eraser opacity changed");
+	}
+
+	const checker = BUILTIN_DITHER_PATTERNS[0]!;
+	const sampler = {
+		pattern: checker,
+		offsetX: 0,
+		offsetY: 0,
+		align: "canvas" as const,
+	};
+	const ditherStamp = new Uint32Array(16);
+	stampMask(ditherStamp, 4, 4, 1, 1, {
+		mask: fullMask,
+		color: red,
+		dither: sampler,
+	});
+	let ditherCount = 0;
+	for (let y = 1; y <= 2; y++) {
+		for (let x = 1; x <= 2; x++) {
+			if (ditherStamp[y * 4 + x] === red) ditherCount++;
+		}
+	}
+	if (ditherCount !== 2) throw new Error("live dither stamp count changed");
+	if (ditherPatternAt(checker, -1, -1) !== ditherPatternAt(checker, 1, 1)) {
+		throw new Error("dither negative offset phase changed");
+	}
+
+	const fill = new Uint32Array(16);
+	fillPixels(fill, 4, 4, 0, 0, red, 0, true, null, false, undefined, sampler);
+	if (fill.filter((value) => value === red).length !== 8) {
+		throw new Error("dithered flood fill count changed");
+	}
+
+	const gray = packColor("#808080");
+	const grayPixels = new Uint32Array(64).fill(gray);
+	const ordered = ditherPixels(grayPixels, 8, 8, {
+		method: "ordered",
+		matrix: "bayer4",
+		diffusion: "floyd-steinberg",
+		serpentine: true,
+		target: "two-color",
+		lightColor: packColor("#ffffff"),
+		darkColor: packColor("#000000"),
+	});
+	const white = packColor("#ffffff");
+	const black = packColor("#000000");
+	let whiteCount = 0;
+	let blackCount = 0;
+	for (const value of ordered) {
+		if ((value >>> 24) !== 255) throw new Error("ordered dither lost alpha");
+		if (value === white) whiteCount++;
+		else if (value === black) blackCount++;
+		else throw new Error("ordered dither produced an extra color");
+	}
+	if (whiteCount === 0 || blackCount === 0) {
+		throw new Error("ordered dither did not mix both colors");
+	}
+
+	const selected = new Uint8Array(64);
+	for (let index = 0; index < 4; index++) selected[index] = 1;
+	const diffused = ditherPixels(grayPixels, 8, 8, {
+		method: "diffusion",
+		matrix: "bayer4",
+		diffusion: "floyd-steinberg",
+		serpentine: true,
+		target: "two-color",
+		lightColor: white,
+		darkColor: black,
+		mask: selected,
+	});
+	const diffusedAgain = ditherPixels(grayPixels, 8, 8, {
+		method: "diffusion",
+		matrix: "bayer4",
+		diffusion: "floyd-steinberg",
+		serpentine: true,
+		target: "two-color",
+		lightColor: white,
+		darkColor: black,
+		mask: selected,
+	});
+	if (diffused.join() !== diffusedAgain.join()) {
+		throw new Error("error diffusion is not deterministic");
+	}
+	for (let index = 4; index < diffused.length; index++) {
+		if (diffused[index] !== gray) {
+			throw new Error("dither selection leaked outside its mask");
+		}
+	}
+
+	const palette = [packColor("#ff0000"), packColor("#00ff00"), packColor("#0000ff")];
+	const paletteResult = ditherPixels(grayPixels, 8, 8, {
+		method: "ordered",
+		matrix: "bayer4",
+		diffusion: "floyd-steinberg",
+		serpentine: true,
+		target: "palette",
+		lightColor: white,
+		darkColor: black,
+		palette,
+	});
+	const allowed = new Set(palette.map((color) => color & 0x00ffffff));
+	for (const value of paletteResult) {
+		if (!allowed.has(value & 0x00ffffff)) {
+			throw new Error("palette dither produced an off-palette color");
+		}
+	}
+
+	const exactPalette = [
+		packColor("#112233"),
+		packColor("#445566"),
+		packColor("#778899"),
+		packColor("#aabbcc"),
+		packColor("#ddeeff"),
+	];
+	const exactSource = new Uint32Array(16).fill(exactPalette[2]!);
+	const exactResult = ditherPixels(exactSource, 4, 4, {
+		method: "ordered",
+		matrix: "bayer4",
+		diffusion: "floyd-steinberg",
+		serpentine: true,
+		target: "palette",
+		lightColor: white,
+		darkColor: black,
+		palette: exactPalette,
+	});
+	if (exactResult.some((value) => value !== exactPalette[2])) {
+		throw new Error("palette dither changed an exact palette color");
+	}
+
+	const circle = brushMaskFor(BUILTIN_BRUSHES[1]!, 16);
+	const preview = brushPreviewMask(BUILTIN_BRUSHES[1]!, 8);
+	if (
+		circle.width !== 16 ||
+		preview.width !== 8 ||
+		!circle.data.some((value) => value === 0)
+	) {
+		throw new Error("built-in brush mask generation changed");
+	}
+
+	// Dither alignment changes the phase relative to the stroke.
+	const brushSampler = {
+		pattern: checker,
+		offsetX: 0,
+		offsetY: 0,
+		align: "brush" as const,
+	};
+	if (
+		ditherAllows(sampler, 10, 10, 1, 0) ===
+		ditherAllows(brushSampler, 10, 10, 1, 0)
+	) {
+		throw new Error("dither alignment did not change sampling");
+	}
+}
+
 function assertFilters(): void {
 	const red = packColor("#ff0000");
 	const blue = packColor("#0000ff");
@@ -1176,6 +1476,7 @@ assertPaletteAnalysis();
 assertSheetMetadata();
 assertLayerGroups();
 assertSelectionTransform();
+assertBrushAndDither();
 assertFilters();
 assertProjectRoundtrip(makeDoc(64, 64, 2, 3, 41), "sparse");
 const opaqueDoc = makeDoc(64, 64, 1, 1, 42);
