@@ -46,6 +46,7 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Linked cels / continuous layers | 8 | 5 | 1.60 | | Implemented: cels can be linked so editing one writes through to all linked copies. Select a contiguous range of cels, right-click it, and choose **Link cels** to share one buffer across the selected frames of every selected layer; **Unlink cels** gives each selected cel its own copy. **Link cels** is disabled for a single selected frame, while **Unlink cels** also works on a single cel. A **continuous** layer toggle (a `link-2`/`link-2-off` button beside the lock) auto-links each newly added cel to the active frame, keeping a chain in sync. Linked cels share one pixel buffer and render a blue connector line between the cels in the timeline. Links and the continuous flag survive save/open, undo/redo, canvas transforms, and project switches. |
 | Per-cel opacity (and z-index) | 6 | 5 | 1.20 | | Implemented as **Cel properties** (double-click a cel, or use its right-click menu): a per-cel opacity slider and a z-index number input. Opacity multiplies the layer opacity during compositing on every render/export path, and z-index reorders cels within a frame. Cels carrying a custom opacity or z-index show a small indicator icon in the timeline, and both values persist with the project. |
 | Outline, drop shadow, and color-replace filters | 8 | 4 | 2.00 | | Implemented as a new **Effects** menu between Project and View. **Outline** grows a 1–8 px border outside the silhouette (or recolors its inside edge) with optional diagonal corners. **Drop shadow** offsets and spreads a colored shadow behind the silhouette. **Color replace** swaps a color with an optional RGB tolerance and alpha preservation. Each dialog previews the composited active frame, targets the active cel or all visible unlocked layers, respects the pixel selection, skips reference/hidden/locked layers, and applies as one undoable cel patch. The pure filters live in `filters.ts` and are covered by the core benchmarks. |
+| Undo history panel | 7 | 4 | 1.75 | | Implemented as **Edit → History…** (also in the command palette). Every undo entry now carries a label and optional context (the tool or operation plus layer/frame), and the dialog lists states from the earliest retained step through the redoable steps. Clicking an entry jumps through the existing undo/redo path, so selections, thumbnails, and dirty state stay consistent. Cel-patch entries remain compact; the footer reports undoable/redoable counts and approximate history memory. |
 
 ## Planned features
 
@@ -59,7 +60,6 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Custom grid offsets and isometric grid | 6 | 3 | 2.00 | | Offset the grid origin and add isometric/diagonal (and later hexagonal) grid modes. Mostly rendering/UI work; useful for tiles and isometric art. |
 | Timelapse / process replay | 8 | 4 | 2.00 | ★ | Record a compact log of pixel deltas and replay the making-of as a GIF/video. Artists love posting process shots, and Pixel Spell already tracks per-stroke history, making this cheap. A genuine browser-native delight no desktop editor ships out of the box. |
 | Motion drawing (draw while playing) | 6 | 3 | 2.00 | | Paint into the animation while it plays (Pixelorama's “motion drawing”). Direct-manipulation feel for effects and onion-skin-assisted in-betweens. |
-| Undo history panel | 7 | 4 | 1.75 | | Show named history entries, allow jumping to a point, and keep the cel-patch history compact. Requires history labels and a non-linear apply path. |
 | Gradient map layer | 7 | 4 | 1.75 | | Map luminance to a multi-stop gradient as a live filter, so a whole sprite can be recolored in one step (Pixelorama ships this; a standing Aseprite request). Useful for palette swaps and mood variants. |
 | Accessibility and localization pass | 5 | 3 | 1.67 | | Full keyboard navigation, screen-reader labels for canvas actions, reduced-motion support, and i18n extraction. Good for reach and polish. |
 | Custom brushes (shapes, patterns, textured) | 8 | 5 | 1.60 | | A brush mask editor, saved brush library, and stamping pipeline. Build on `paintBrush` and `paintPixel`; add a brush preview and per-brush size/opacity. Include “custom brush from selection” (Aseprite v1.1). |
@@ -130,7 +130,7 @@ These add the most day-to-day value per unit of risk. Onion skinning and referen
 4. Outline/shadow/color-replace filters — done
 5. Grayscale mode
 6. APNG/animated WebP export — done
-7. Undo history panel
+7. Undo history panel — done
 8. Palette ramps, lock, and color cycling — done
 9. Advanced color cycling (bake and generate) — done
 10. Linked cels / continuous layers — done

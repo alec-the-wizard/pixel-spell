@@ -144,6 +144,13 @@ const ACTION_COMMANDS: CommandDef[] = [
 		run: () => editor.redo(),
 	},
 	{
+		id: "edit.history",
+		label: "History…",
+		group: "Edit",
+		keywords: "undo redo steps states timeline past",
+		run: () => (editor.historyOpen = true),
+	},
+	{
 		id: "edit.copy-selection",
 		label: "Copy selection",
 		group: "Edit",

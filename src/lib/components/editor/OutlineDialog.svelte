@@ -103,8 +103,11 @@
 			diagonals,
 			mask,
 		};
-		const changed = editor.applyEffect(scope, (pixels) =>
-			outlinePixels(pixels, editor.doc.width, editor.doc.height, options),
+		const changed = editor.applyEffect(
+			scope,
+			(pixels) =>
+				outlinePixels(pixels, editor.doc.width, editor.doc.height, options),
+			"Outline",
 		);
 		if (changed > 0) {
 			open = false;

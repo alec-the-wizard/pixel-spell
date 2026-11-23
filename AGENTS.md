@@ -88,6 +88,7 @@ Key files:
 | `lib/components/editor/ResizeCanvasDialog.svelte` | Resize canvas with preview and anchor grid |
 | `lib/components/editor/CanvasTransformPreview.svelte` | Shared fit-to-stage canvas preview |
 | `lib/components/editor/TimelineDock.svelte` | Draggable canvas/timeline splitter and persisted timeline height |
+| `lib/components/editor/HistoryDialog.svelte` | `Edit → History…` dialog: labeled undo states, jump-to-state rows, undo/redo counts, and history memory |
 | `lib/components/editor/CelThumb.svelte` | Per-cel thumbnail canvas |
 | `lib/components/editor/ProjectTabs.svelte` | Project tab strip, inline tab renaming, new-project button, unsaved-close dialog |
 
@@ -111,6 +112,7 @@ Key files:
 - `canvas.ts` holds the pure pixel helpers: `scalePixelsNearest`, `resizePixels`, and `contentBoundsOf`. `contentBoundsOf` scans all frames and normal layers and ignores `role: "reference"` layers; reference-board images are not part of the document composite and are never transformed.
 - `MenuBar.svelte` lazily computes Crop to Content/Selection availability only while the Project menu is open, because content bounds are a full document scan. Keep that behavior instead of evaluating it on every menu-bar render.
 - Pixel edits use `editor.pushHistoryCel(layerId, frame)` and structural edits use `editor.pushHistory()`. Do not use `pushHistory()` for a brush stroke: it clones every layer and frame. `pushHistoryCels` records several cels at once (for example, clearing a frame).
+- Every history entry carries a label and optional detail for the history dialog (`Edit → History…`, command `edit.history`, state `editor.historyOpen`). Pass a user-facing label to `pushHistory(label)`, `pushHistoryCel(layerId, frame, label)`, and `pushHistoryCels(patches, label)` when adding a new undoable action; cel entries derive their layer/frame detail automatically. `editor.historyRows` lists states oldest-first, including the base row and redoable steps, and `editor.jumpToHistory(position)` reaches one by stepping the normal undo/redo path. Do not apply stored entries directly outside `undo()`/`redo()`.
 - `compositeFrameCached(doc, frame, revision, includeReferences)` memoizes up to eight frame variants and returns a shared read-only buffer. It defaults to excluding reference layers so export/preview paths are safe. `CanvasStage` passes `true` for the viewport; `Preview`, `ExportDialog`, and export encoders use the default. Use `compositeFrame` when a caller may need to own or mutate the buffer.
 - `render.ts` reuses a scratch canvas/ImageData and exposes `drawPixels`, `drawScaled`, and `drawThumbnail`. Do not allocate a new canvas per draw.
 - Reference layers are ordinary `Layer` values with `role: "reference"`, locked by default. They participate in the viewport composite and are skipped by `clearLayer`/`clearFrame`, drawing guards, and all export paths. Added/imported frames copy the current reference-layer cel so static references persist.

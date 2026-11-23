@@ -180,14 +180,38 @@ interface CelPatch {
 	pixels: Uint32Array;
 }
 
+/** Common metadata for one undoable action, used by the history dialog. */
+interface HistoryMeta {
+	id: string;
+	/** Action name, for example "Paint" or "Add layer". */
+	label: string;
+	/** Optional context, for example "Layer 2 · Frame 3". */
+	detail?: string;
+}
+
 /**
  * History entries are either a full document clone (structural edits) or one
  * or more previous cel buffers (pixel edits). Pixel edits are the common case,
  * so this avoids cloning every layer and frame on every brush stroke.
  */
 type HistoryEntry =
-	| { kind: "full"; doc: PixelDoc }
-	| { kind: "cels"; patches: CelPatch[] };
+	| ({ kind: "full"; doc: PixelDoc } & HistoryMeta)
+	| ({ kind: "cels"; patches: CelPatch[] } & HistoryMeta);
+
+/**
+ * One row of the undo history dialog. Positions count applied actions from
+ * the oldest recorded state (0) to the newest redoable state.
+ */
+export interface HistoryRow {
+	id: string;
+	label: string;
+	detail: string;
+	position: number;
+	/** Number of cel patches the entry stores, or 0 for a full snapshot. */
+	cells: number;
+	current: boolean;
+	redoable: boolean;
+}
 
 interface ProjectSnapshot {
 	doc: PixelDoc;
@@ -291,6 +315,8 @@ export class EditorState {
 	effectOutlineOpen = $state(false);
 	effectDropShadowOpen = $state(false);
 	effectColorReplaceOpen = $state(false);
+	/** Undo history dialog. */
+	historyOpen = $state(false);
 	/**
 	 * Inclusive palette range used by the Color Cycles dialog. Cycling is a
 	 * workspace preference and is intentionally not stored in project files.
@@ -558,6 +584,80 @@ export class EditorState {
 
 	get canRedo(): boolean {
 		return this.redoCount > 0;
+	}
+
+	/** Number of applied actions; also the index of the current history row. */
+	get historyPosition(): number {
+		return this.undoCount;
+	}
+
+	/** Applied plus redoable actions. */
+	get historyTotal(): number {
+		return this.undoCount + this.redoCount;
+	}
+
+	/** Approximate memory held by undo and redo snapshots, in bytes. */
+	get historyBytes(): number {
+		// The reactive counters invalidate this getter when history changes;
+		// the byte totals themselves live outside the reactive graph.
+		void this.undoCount;
+		void this.redoCount;
+		return this.#undoBytes + this.#redoBytes;
+	}
+
+	/**
+	 * Linear list of history states for the history dialog: the oldest state
+	 * first, then one row per applied action, then the redoable states.
+	 */
+	get historyRows(): HistoryRow[] {
+		// Read the reactive counters so the row list refreshes after every push,
+		// undo, redo, and project switch.
+		const current = this.undoCount;
+		const redoCount = this.redoCount;
+		const undo = this.#undo;
+		const redo = this.#redo;
+
+		const rows: HistoryRow[] = [
+			{
+				id: "history-base",
+				label: "Initial state",
+				detail: "Earliest retained state",
+				position: 0,
+				cells: 0,
+				current: current === 0,
+				redoable: current !== 0,
+			},
+		];
+
+		undo.forEach((entry, index) => {
+			const position = index + 1;
+			rows.push({
+				id: entry.id,
+				label: entry.label,
+				detail: entry.detail ?? "",
+				position,
+				cells: entry.kind === "cels" ? entry.patches.length : 0,
+				current: position === current,
+				redoable: false,
+			});
+		});
+
+		// The redo stack is last-in-first-out, so walk it backwards to show the
+		// states in the order they would be restored.
+		for (let index = redo.length - 1; index >= 0; index--) {
+			const entry = redo[index]!;
+			rows.push({
+				id: entry.id,
+				label: entry.label,
+				detail: entry.detail ?? "",
+				position: current + (redoCount - index),
+				cells: entry.kind === "cels" ? entry.patches.length : 0,
+				current: false,
+				redoable: true,
+			});
+		}
+
+		return rows;
 	}
 
 	get frameCount(): number {
@@ -939,7 +1039,7 @@ export class EditorState {
 		const cel = layer?.cels[floating.frame];
 		if (!cel) return false;
 
-		this.pushHistoryCel(floating.layerId, floating.frame);
+		this.pushHistoryCel(floating.layerId, floating.frame, "Move selection");
 
 		const width = this.doc.width;
 		const height = this.doc.height;
@@ -1038,7 +1138,11 @@ export class EditorState {
 
 		if (changed) {
 			if (!floating.historyPushed) {
-				this.pushHistoryCel(floating.layerId, floating.frame);
+				this.pushHistoryCel(
+					floating.layerId,
+					floating.frame,
+					"Place selection",
+				);
 			}
 			for (let y = 0; y < floating.height; y++) {
 				const destY = floating.originY + y;
@@ -1319,7 +1423,7 @@ export class EditorState {
 		for (const frame of targets) {
 			for (const layer of layers) patches.push({ layerId: layer.id, frame });
 		}
-		this.pushHistoryCels(patches);
+		this.pushHistoryCels(patches, "Bake color cycle");
 
 		for (const frame of targets) {
 			for (const layer of layers) {
@@ -1369,7 +1473,7 @@ export class EditorState {
 		const width = this.doc.width;
 		const height = this.doc.height;
 
-		this.pushHistory();
+		this.pushHistory("Generate color cycle");
 
 		const inserted: Frame[] = [];
 		for (let step = 0; step < count; step++) {
@@ -1809,11 +1913,8 @@ export class EditorState {
 		);
 	}
 
-	/** Records a full document snapshot. Used for structural edits. */
-	pushHistory(): void {
-		// Any new edit implicitly applies content that is still floating.
-		if (this.floating) this.commitFloatingSelection();
-		const entry: HistoryEntry = { kind: "full", doc: cloneDoc(this.doc) };
+	/** Pushes a labeled entry and clears the redo stack. */
+	#recordHistory(entry: HistoryEntry): void {
 		this.#undo.push(entry);
 		this.#undoBytes += this.#entryBytes(entry);
 		this.#trimHistory();
@@ -1823,6 +1924,38 @@ export class EditorState {
 		this.redoCount = 0;
 		this.dirty = true;
 		this.modified = true;
+	}
+
+	/** Human-readable context for a cel patch, shown in the history dialog. */
+	#celDetail(patches: readonly CelPatch[]): string {
+		if (patches.length === 0) return "";
+		const frames = new Set(patches.map((patch) => patch.frame));
+		const layerIds = new Set(patches.map((patch) => patch.layerId));
+		const first = patches[0]!;
+
+		if (layerIds.size === 1) {
+			const layer = this.doc.layers.find((item) => item.id === first.layerId);
+			const name = layer?.name ?? "Layer";
+			return frames.size === 1
+				? `${name} · Frame ${first.frame + 1}`
+				: `${name} · ${frames.size} frames`;
+		}
+		if (frames.size === 1) {
+			return `${layerIds.size} layers · Frame ${first.frame + 1}`;
+		}
+		return `${patches.length} cels`;
+	}
+
+	/** Records a full document snapshot. Used for structural edits. */
+	pushHistory(label = "Edit document"): void {
+		// Any new edit implicitly applies content that is still floating.
+		if (this.floating) this.commitFloatingSelection();
+		this.#recordHistory({
+			kind: "full",
+			doc: cloneDoc(this.doc),
+			id: uid("history"),
+			label,
+		});
 	}
 
 	/**
@@ -1832,28 +1965,29 @@ export class EditorState {
 	pushHistoryCel(
 		layerId: string = this.activeLayerId,
 		frame: number = this.activeFrame,
+		label = "Pixel edit",
 	): void {
 		if (this.floating) this.commitFloatingSelection();
 		const layer = this.doc.layers.find((item) => item.id === layerId);
 		const cel = layer?.cels[frame];
 		if (!cel) return;
-		const entry: HistoryEntry = {
+		const patches: CelPatch[] = [
+			{ layerId, frame, pixels: new Uint32Array(cel) },
+		];
+		this.#recordHistory({
 			kind: "cels",
-			patches: [{ layerId, frame, pixels: new Uint32Array(cel) }],
-		};
-		this.#undo.push(entry);
-		this.#undoBytes += this.#entryBytes(entry);
-		this.#trimHistory();
-		this.#redo = [];
-		this.#redoBytes = 0;
-		this.undoCount = this.#undo.length;
-		this.redoCount = 0;
-		this.dirty = true;
-		this.modified = true;
+			patches,
+			id: uid("history"),
+			label,
+			detail: this.#celDetail(patches),
+		});
 	}
 
 	/** Records several cels at once (for example, clearing a whole frame). */
-	pushHistoryCels(patches: { layerId: string; frame: number }[]): void {
+	pushHistoryCels(
+		patches: { layerId: string; frame: number }[],
+		label = "Pixel edit",
+	): void {
 		if (this.floating) this.commitFloatingSelection();
 		const captured: CelPatch[] = [];
 		for (const patch of patches) {
@@ -1867,16 +2001,13 @@ export class EditorState {
 			});
 		}
 		if (captured.length === 0) return;
-		const entry: HistoryEntry = { kind: "cels", patches: captured };
-		this.#undo.push(entry);
-		this.#undoBytes += this.#entryBytes(entry);
-		this.#trimHistory();
-		this.#redo = [];
-		this.#redoBytes = 0;
-		this.undoCount = this.#undo.length;
-		this.redoCount = 0;
-		this.dirty = true;
-		this.modified = true;
+		this.#recordHistory({
+			kind: "cels",
+			patches: captured,
+			id: uid("history"),
+			label,
+			detail: this.#celDetail(captured),
+		});
 	}
 
 	#trimHistory(): void {
@@ -1894,7 +2025,13 @@ export class EditorState {
 	/** Captures the current state of the cels an entry will overwrite. */
 	#captureHistoryEntry(entry: HistoryEntry): HistoryEntry {
 		if (entry.kind === "full") {
-			return { kind: "full", doc: cloneDoc(this.doc) };
+			return {
+				kind: "full",
+				doc: cloneDoc(this.doc),
+				id: entry.id,
+				label: entry.label,
+				detail: entry.detail,
+			};
 		}
 		const patches: CelPatch[] = [];
 		for (const patch of entry.patches) {
@@ -1906,7 +2043,13 @@ export class EditorState {
 				pixels: cel ? new Uint32Array(cel) : new Uint32Array(patch.pixels),
 			});
 		}
-		return { kind: "cels", patches };
+		return {
+			kind: "cels",
+			patches,
+			id: entry.id,
+			label: entry.label,
+			detail: entry.detail,
+		};
 	}
 
 	#applyHistoryEntry(entry: HistoryEntry): void {
@@ -1948,6 +2091,35 @@ export class EditorState {
 		this.#afterHistoryRestore();
 		this.undoCount = this.#undo.length;
 		this.redoCount = this.#redo.length;
+	}
+
+	/**
+	 * Jumps to a history position (see `historyRows`). Position 0 is the oldest
+	 * recorded state and `historyPosition` is the current one; later positions
+	 * are redoable states. Each step reuses `undo`/`redo` so selection restore,
+	 * labels, and byte accounting stay consistent.
+	 */
+	jumpToHistory(position: number): void {
+		if (this.floating) this.commitFloatingSelection();
+		const total = this.#undo.length + this.#redo.length;
+		const target = clamp(Math.round(position), 0, total);
+		let current = this.#undo.length;
+
+		while (current > target) {
+			this.undo();
+			if (this.#undo.length === current) break;
+			current = this.#undo.length;
+		}
+		while (current < target) {
+			this.redo();
+			if (this.#undo.length === current) break;
+			current = this.#undo.length;
+		}
+	}
+
+	/** Undoes until the document matches the earliest retained state. */
+	revertHistory(): void {
+		this.jumpToHistory(0);
 	}
 
 	#afterHistoryRestore(): void {
@@ -2302,7 +2474,7 @@ export class EditorState {
 		const imageHeight = Math.max(1, Math.round(image.height));
 		if (image.pixels.length === 0) return;
 
-		this.pushHistory();
+		this.pushHistory("Import layer");
 		const layer = createLayer(
 			image.name.trim().slice(0, 60) || "Imported layer",
 			this.doc.width,
@@ -2352,7 +2524,7 @@ export class EditorState {
 		}
 
 		if (!target && this.doc.layers.length >= MAX_PROJECT_LAYERS) return;
-		this.pushHistory();
+		this.pushHistory("Import frame");
 		if (!target) {
 			target = createLayer(
 				image.name.trim().slice(0, 60) || "Imported frame",
@@ -2419,7 +2591,7 @@ export class EditorState {
 		const imageHeight = Math.max(1, Math.round(image.height));
 		if (image.pixels.length === 0) return;
 
-		this.pushHistory();
+		this.pushHistory("Import reference layer");
 		const layer = createLayer(
 			image.name.trim().slice(0, 60) || "Reference",
 			this.doc.width,
@@ -2465,7 +2637,7 @@ export class EditorState {
 		const imageHeight = Math.max(1, Math.round(image.height));
 		if (image.pixels.length === 0) return false;
 
-		this.pushHistoryCel(layer.id, this.activeFrame);
+		this.pushHistoryCel(layer.id, this.activeFrame, "Replace reference");
 		cel.set(
 			fitPixelsToCanvas(
 				image.pixels,
@@ -2492,7 +2664,7 @@ export class EditorState {
 		const imageWidth = Math.max(1, Math.round(image.imageWidth));
 		const imageHeight = Math.max(1, Math.round(image.imageHeight));
 
-		this.pushHistory();
+		this.pushHistory("Add board reference");
 		const placement = defaultReferencePlacement(
 			this.doc.width,
 			this.doc.height,
@@ -2528,7 +2700,7 @@ export class EditorState {
 			(reference) => reference.id === id,
 		);
 		if (index < 0) return;
-		this.pushHistory();
+		this.pushHistory("Remove board reference");
 		this.doc.references.splice(index, 1);
 		if (this.activeReferenceId === id) this.activeReferenceId = null;
 		this.structureRevision++;
@@ -2994,7 +3166,7 @@ export class EditorState {
 		});
 		if (plans.every((plan) => plan.alreadyLinked)) return;
 
-		this.pushHistory();
+		this.pushHistory("Link cels");
 		const size = this.doc.width * this.doc.height;
 		for (const plan of plans) {
 			if (plan.alreadyLinked) continue;
@@ -3030,7 +3202,7 @@ export class EditorState {
 		});
 		if (plans.every((plan) => plan.targets.length === 0)) return;
 
-		this.pushHistory();
+		this.pushHistory("Unlink cels");
 		for (const plan of plans) {
 			for (const frame of plan.targets) {
 				const cel = plan.layer.cels[frame];
@@ -3144,7 +3316,7 @@ export class EditorState {
 	/** Adds an empty layer at the bottom of the stack and makes it active. */
 	addLayer(): void {
 		if (this.doc.layers.length >= MAX_PROJECT_LAYERS) return;
-		this.pushHistory();
+		this.pushHistory("Add layer");
 		const layer = createLayer(
 			this.#nextLayerName(),
 			this.doc.width,
@@ -3175,7 +3347,7 @@ export class EditorState {
 	/** Adds a new empty group at the bottom of the stack. */
 	addGroup(): void {
 		if (this.doc.layers.length >= MAX_PROJECT_LAYERS) return;
-		this.pushHistory();
+		this.pushHistory("Add group");
 		const group = createGroup(this.#nextGroupName());
 		this.doc.layers.unshift(group);
 		this.#setActiveLayer(group.id);
@@ -3209,7 +3381,7 @@ export class EditorState {
 		);
 		if (roots.length === 0) return;
 
-		this.pushHistory();
+		this.pushHistory("Group layers");
 		const topmost = roots[roots.length - 1]!;
 		const parentId = topmost.parentId;
 		const removedIds = new Set<string>();
@@ -3281,7 +3453,7 @@ export class EditorState {
 		// Only indent when the very next sibling above is a group.
 		const target = layers[blockEnd];
 		if (!target || depths[blockEnd]! !== depth || !isGroupLayer(target)) return;
-		this.pushHistory();
+		this.pushHistory("Indent layer");
 		this.#reparentActiveBlock(target.id, target.id);
 		this.activeReferenceId = null;
 		this.structureRevision++;
@@ -3304,7 +3476,7 @@ export class EditorState {
 			(layer) => ids.includes(layer.id) && layer.parentId !== undefined,
 		);
 		if (moving.length === 0) return;
-		this.pushHistory();
+		this.pushHistory("Outdent layers");
 		// Move topmost layers first so sibling order survives the moves.
 		for (const source of moving.reverse()) {
 			const index = layers.findIndex((layer) => layer.id === source.id);
@@ -3361,7 +3533,7 @@ export class EditorState {
 		const block = layers.slice(index, end);
 		if (layers.length + block.length > MAX_PROJECT_LAYERS) return;
 
-		this.pushHistory();
+		this.pushHistory("Duplicate layer");
 		const idMap = new Map<string, string>();
 		for (const item of block) {
 			idMap.set(item.id, uid(isGroupLayer(item) ? "group" : "layer"));
@@ -3400,7 +3572,7 @@ export class EditorState {
 			0,
 			layers.findIndex((layer) => selected.has(layer.id)),
 		);
-		this.pushHistory();
+		this.pushHistory("Delete layers");
 
 		const groupIds = layers
 			.filter((layer) => selected.has(layer.id) && isGroupLayer(layer))
@@ -3455,7 +3627,7 @@ export class EditorState {
 		const target = blockIndex + direction;
 		if (target < 0 || target >= blocks.length) return;
 
-		this.pushHistory();
+		this.pushHistory("Reorder layer");
 		const a = blocks[blockIndex]!;
 		const b = blocks[target]!;
 		const aLayers = layers.slice(a.start, a.end);
@@ -3542,7 +3714,7 @@ export class EditorState {
 			return false;
 		}
 
-		this.pushHistory();
+		this.pushHistory("Move layer");
 		layers.splice(0, layers.length, ...desired);
 		if (newParentId) root.parentId = newParentId;
 		else delete root.parentId;
@@ -3631,7 +3803,7 @@ export class EditorState {
 		}
 		if (!changed) return;
 
-		this.pushHistoryCel(layer.id, this.activeFrame);
+		this.pushHistoryCel(layer.id, this.activeFrame, "Delete selection");
 		for (let i = 0; i < cel.length; i++) {
 			if (mask[i]) cel[i] = 0;
 		}
@@ -3641,7 +3813,7 @@ export class EditorState {
 	clearLayer(): void {
 		const layer = this.activeLayer;
 		if (!layer || isGroupLayer(layer) || layer.role === "reference") return;
-		this.pushHistoryCel(layer.id, this.activeFrame);
+		this.pushHistoryCel(layer.id, this.activeFrame, "Clear layer");
 		const cel = layer.cels[this.activeFrame];
 		if (cel) this.#clearCel(cel);
 		this.revision++;
@@ -3654,6 +3826,7 @@ export class EditorState {
 		);
 		this.pushHistoryCels(
 			editableLayers.map((layer) => ({ layerId: layer.id, frame })),
+			"Clear frame",
 		);
 		for (const layer of editableLayers) {
 			const cel = layer.cels[frame];
@@ -3720,6 +3893,7 @@ export class EditorState {
 	applyEffect(
 		scope: EffectScope,
 		transform: (pixels: Uint32Array) => Uint32Array,
+		label = "Apply effect",
 	): number {
 		if (this.floating) this.commitFloatingSelection();
 
@@ -3736,6 +3910,7 @@ export class EditorState {
 
 		this.pushHistoryCels(
 			pending.map((entry) => ({ layerId: entry.layer.id, frame })),
+			label,
 		);
 		for (const entry of pending) entry.cel.set(entry.next);
 		// An effect can rewrite every visible layer at once, so every cel
@@ -3786,8 +3961,9 @@ export class EditorState {
 		width: number,
 		height: number,
 		transform: (cel: Uint32Array) => Uint32Array,
+		label: string,
 	): void {
-		this.pushHistory();
+		this.pushHistory(label);
 		for (const layer of this.doc.layers) {
 			// Transform each distinct buffer once so linked cels stay linked.
 			const transformed = new Map<Uint32Array, Uint32Array>();
@@ -3827,8 +4003,12 @@ export class EditorState {
 
 		const oldWidth = this.doc.width;
 		const oldHeight = this.doc.height;
-		this.#applyCanvasTransform(nextWidth, nextHeight, (cel) =>
-			scalePixelsNearest(cel, oldWidth, oldHeight, nextWidth, nextHeight),
+		this.#applyCanvasTransform(
+			nextWidth,
+			nextHeight,
+			(cel) =>
+				scalePixelsNearest(cel, oldWidth, oldHeight, nextWidth, nextHeight),
+			"Scale canvas",
 		);
 		return true;
 	}
@@ -3865,16 +4045,20 @@ export class EditorState {
 		const offsetY = Math.round(
 			(nextHeight - oldHeight) * clamp(anchorY, 0, 1),
 		);
-		this.#applyCanvasTransform(nextWidth, nextHeight, (cel) =>
-			resizePixels(
-				cel,
-				oldWidth,
-				oldHeight,
-				nextWidth,
-				nextHeight,
-				offsetX,
-				offsetY,
-			),
+		this.#applyCanvasTransform(
+			nextWidth,
+			nextHeight,
+			(cel) =>
+				resizePixels(
+					cel,
+					oldWidth,
+					oldHeight,
+					nextWidth,
+					nextHeight,
+					offsetX,
+					offsetY,
+				),
+			"Resize canvas",
 		);
 		return true;
 	}
@@ -3885,6 +4069,7 @@ export class EditorState {
 		y: number,
 		width: number,
 		height: number,
+		label = "Crop canvas",
 	): boolean {
 		const oldWidth = this.doc.width;
 		const oldHeight = this.doc.height;
@@ -3917,16 +4102,20 @@ export class EditorState {
 			return false;
 		}
 
-		this.#applyCanvasTransform(cropWidth, cropHeight, (cel) =>
-			resizePixels(
-				cel,
-				oldWidth,
-				oldHeight,
-				cropWidth,
-				cropHeight,
-				-cropX,
-				-cropY,
-			),
+		this.#applyCanvasTransform(
+			cropWidth,
+			cropHeight,
+			(cel) =>
+				resizePixels(
+					cel,
+					oldWidth,
+					oldHeight,
+					cropWidth,
+					cropHeight,
+					-cropX,
+					-cropY,
+				),
+			label,
 		);
 		return true;
 	}
@@ -3940,6 +4129,7 @@ export class EditorState {
 			bounds.y,
 			bounds.width,
 			bounds.height,
+			"Crop to content",
 		);
 	}
 
@@ -3952,6 +4142,7 @@ export class EditorState {
 			bounds.y,
 			bounds.width,
 			bounds.height,
+			"Crop to selection",
 		);
 	}
 
@@ -4101,7 +4292,7 @@ export class EditorState {
 		const width = this.doc.width;
 		const height = this.doc.height;
 
-		this.pushHistory();
+		this.pushHistory("Paste frames");
 		const pasted: Frame[] = [];
 		for (const [offset, source] of clipboard.frames.entries()) {
 			const target = insertAt + offset;
@@ -4156,7 +4347,7 @@ export class EditorState {
 		const dx = Number.isFinite(offsetX) ? Math.round(offsetX) : 0;
 		const dy = Number.isFinite(offsetY) ? Math.round(offsetY) : 0;
 
-		this.pushHistory();
+		this.pushHistory("Duplicate frames");
 		const duplicated: Frame[] = [];
 		for (const [offset, sourceIndex] of indices.entries()) {
 			const source = this.doc.frames[sourceIndex]!;
@@ -4201,7 +4392,7 @@ export class EditorState {
 		if (indices.length >= this.doc.frames.length) return;
 
 		const activeId = this.doc.frames[this.activeFrame]?.id;
-		this.pushHistory();
+		this.pushHistory("Delete frames");
 		const removedFrameIds = new Set<string>();
 		for (let position = indices.length - 1; position >= 0; position--) {
 			const index = indices[position]!;
@@ -4275,7 +4466,7 @@ export class EditorState {
 		if (order.every((value, index) => value === index)) return;
 
 		const activeId = this.doc.frames[this.activeFrame]!.id;
-		this.pushHistory();
+		this.pushHistory("Reorder frames");
 
 		const frames = this.doc.frames.slice();
 		this.doc.frames.splice(
@@ -4316,7 +4507,7 @@ export class EditorState {
 		if (indices.every((index) => this.doc.frames[index]!.duration === value)) {
 			return;
 		}
-		this.pushHistory();
+		this.pushHistory("Frame duration");
 		for (const index of indices) {
 			this.doc.frames[index]!.duration = value;
 		}
@@ -4334,7 +4525,7 @@ export class EditorState {
 		) {
 			return;
 		}
-		this.pushHistory();
+		this.pushHistory("Frame tag");
 		for (const index of indices) {
 			this.doc.frames[index]!.tag = value;
 		}
@@ -4394,7 +4585,7 @@ export class EditorState {
 	/** Adds an empty frame at the end of the timeline and makes it active. */
 	addFrame(): void {
 		if (this.doc.frames.length >= MAX_PROJECT_FRAMES) return;
-		this.pushHistory();
+		this.pushHistory("Add frame");
 		const index = this.doc.frames.length;
 		const sourceIndex = this.activeFrame;
 		const sourceFrame = this.doc.frames[sourceIndex]!;

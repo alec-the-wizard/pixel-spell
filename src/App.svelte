@@ -6,6 +6,7 @@
 	import ColorReplaceDialog from "$lib/components/editor/ColorReplaceDialog.svelte";
 	import CommandPalette from "$lib/components/editor/CommandPalette.svelte";
 	import DropShadowDialog from "$lib/components/editor/DropShadowDialog.svelte";
+	import HistoryDialog from "$lib/components/editor/HistoryDialog.svelte";
 	import LazyExportDialog from "$lib/components/editor/LazyExportDialog.svelte";
 	import LazyImportDialog from "$lib/components/editor/LazyImportDialog.svelte";
 	import OutlineDialog from "$lib/components/editor/OutlineDialog.svelte";
@@ -348,6 +349,7 @@
 			onOutline={() => (editor.effectOutlineOpen = true)}
 			onDropShadow={() => (editor.effectDropShadowOpen = true)}
 			onColorReplace={() => (editor.effectColorReplaceOpen = true)}
+			onHistory={() => (editor.historyOpen = true)}
 		/>
 
 		<div class="flex min-h-0 flex-1">
@@ -373,6 +375,7 @@
 	<OutlineDialog bind:open={editor.effectOutlineOpen} />
 	<DropShadowDialog bind:open={editor.effectDropShadowOpen} />
 	<ColorReplaceDialog bind:open={editor.effectColorReplaceOpen} />
+	<HistoryDialog bind:open={editor.historyOpen} />
 	<RecoveryDialog
 		bind:open={recoveryOpen}
 		projects={recoveredProjects}

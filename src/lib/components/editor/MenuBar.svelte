@@ -15,6 +15,7 @@
 	import FlipVertical2 from "@lucide/svelte/icons/flip-vertical-2";
 	import FolderOpen from "@lucide/svelte/icons/folder-open";
 	import Grid3x3 from "@lucide/svelte/icons/grid-3x3";
+	import History from "@lucide/svelte/icons/history";
 	import Images from "@lucide/svelte/icons/images";
 	import Info from "@lucide/svelte/icons/info";
 	import Keyboard from "@lucide/svelte/icons/keyboard";
@@ -63,6 +64,7 @@
 		onOutline,
 		onDropShadow,
 		onColorReplace,
+		onHistory,
 	}: {
 		onNew: () => void;
 		onOpen: () => void;
@@ -77,6 +79,7 @@
 		onOutline: () => void;
 		onDropShadow: () => void;
 		onColorReplace: () => void;
+		onHistory: () => void;
 	} = $props();
 
 	let projectMenuOpen = $state(false);
@@ -205,6 +208,11 @@
 					{#if shortcutLabel("edit.redo")}
 						<DropdownMenu.Shortcut>{shortcutLabel("edit.redo")}</DropdownMenu.Shortcut>
 					{/if}
+				</DropdownMenu.Item>
+				<DropdownMenu.Separator />
+				<DropdownMenu.Item onSelect={onHistory}>
+					<History class="size-4" />
+					History…
 				</DropdownMenu.Item>
 				<DropdownMenu.Separator />
 				<DropdownMenu.Item

@@ -39,7 +39,7 @@
 	import { transformSelection } from "$lib/editor/transform.js";
 	import { drawPixels, drawScaled } from "$lib/editor/render.js";
 	import { editor, type FloatingSelection } from "$lib/editor/editor.svelte.js";
-	import { isSelectionTool } from "$lib/editor/tools.js";
+	import { isSelectionTool, TOOL_BY_ID } from "$lib/editor/tools.js";
 	import type {
 		MirrorAxis,
 		MirrorKind,
@@ -2408,7 +2408,12 @@
 				editor.fillContiguous,
 				editor.selection,
 				editor.lockAlpha,
-				() => editor.pushHistoryCel(layer.id, editor.activeFrame),
+				() =>
+					editor.pushHistoryCel(
+						layer.id,
+						editor.activeFrame,
+						TOOL_BY_ID.fill.label,
+					),
 			);
 			if (changed) editor.touch();
 			return;
@@ -2427,7 +2432,11 @@
 			return;
 		}
 
-		editor.pushHistoryCel(layer.id, editor.activeFrame);
+		editor.pushHistoryCel(
+			layer.id,
+			editor.activeFrame,
+			TOOL_BY_ID[tool].label,
+		);
 		backup = new Uint32Array(cel);
 		drawing = true;
 		start = point;
@@ -2538,7 +2547,11 @@
 				if (!curveEnd || curveEnd.x !== point.x || curveEnd.y !== point.y) {
 					curveEnd = point;
 					if (!curveHistoryPushed) {
-						editor.pushHistoryCel(editor.activeLayerId, editor.activeFrame);
+						editor.pushHistoryCel(
+							editor.activeLayerId,
+							editor.activeFrame,
+							TOOL_BY_ID.curve.label,
+						);
 						curveHistoryPushed = true;
 					}
 					const cel = editor.activeLayer.cels[editor.activeFrame];
@@ -2594,7 +2607,11 @@
 				last = point;
 				changed = drawGradient(cel, point, () => {
 					if (gradientHistoryPushed) return;
-					editor.pushHistoryCel(editor.activeLayerId, editor.activeFrame);
+					editor.pushHistoryCel(
+						editor.activeLayerId,
+						editor.activeFrame,
+						TOOL_BY_ID.gradient.label,
+					);
 					gradientHistoryPushed = true;
 				});
 			}

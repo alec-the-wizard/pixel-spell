@@ -106,8 +106,11 @@
 			color: shadowColor,
 			mask,
 		};
-		const changed = editor.applyEffect(scope, (pixels) =>
-			dropShadowPixels(pixels, editor.doc.width, editor.doc.height, options),
+		const changed = editor.applyEffect(
+			scope,
+			(pixels) =>
+				dropShadowPixels(pixels, editor.doc.width, editor.doc.height, options),
+			"Drop shadow",
 		);
 		if (changed > 0) {
 			open = false;

@@ -118,8 +118,16 @@
 			preserveAlpha,
 			mask,
 		};
-		const changed = editor.applyEffect(scope, (pixels) =>
-			replaceColorPixels(pixels, editor.doc.width, editor.doc.height, options),
+		const changed = editor.applyEffect(
+			scope,
+			(pixels) =>
+				replaceColorPixels(
+					pixels,
+					editor.doc.width,
+					editor.doc.height,
+					options,
+				),
+			"Color replace",
 		);
 		if (changed > 0) {
 			open = false;
