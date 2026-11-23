@@ -139,6 +139,34 @@ export function sortPaletteColors(
 		.map((entry) => entry.color);
 }
 
+/**
+ * Moves one palette entry to an insertion index in the visible order and
+ * returns a new array. `insertAt` is a gap index (0..colors.length), so
+ * dropping an entry into the gap before the following color lands it there.
+ */
+export function reorderPaletteColor(
+	colors: readonly string[],
+	from: number,
+	insertAt: number,
+): string[] {
+	const next = [...colors];
+	if (!Number.isInteger(from) || from < 0 || from >= next.length) return next;
+
+	const [moved] = next.splice(from, 1);
+	if (moved === undefined) return next;
+
+	const clamped = Math.max(
+		0,
+		Math.min(Math.round(insertAt), colors.length),
+	);
+	const target = Math.max(
+		0,
+		Math.min(clamped - (from < clamped ? 1 : 0), next.length),
+	);
+	next.splice(target, 0, moved);
+	return next;
+}
+
 /** True when both arrays contain the same colors, including duplicates. */
 function sameColorSet(a: string[], b: string[]): boolean {
 	if (a.length !== b.length) return false;

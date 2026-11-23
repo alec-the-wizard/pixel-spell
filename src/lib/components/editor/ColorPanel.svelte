@@ -112,6 +112,87 @@
 		editor.sortPalette(activePalette.id, value as PaletteSortMode);
 	}
 
+	/** Color list scroller; also hosts the swatch drag-and-drop handlers. */
+	let paletteListEl = $state<HTMLDivElement | null>(null);
+	let draggingPaletteIndex = $state<number | null>(null);
+	/** Gap index (0..count) the dragged swatch would land in. */
+	let paletteDropIndex = $state<number | null>(null);
+
+	/**
+	 * Gap before which the dragged swatch would be inserted. Walks the cells in
+	 * reading order so wrapped rows resolve by row, then by column midpoint.
+	 */
+	function paletteInsertionIndex(clientX: number, clientY: number): number {
+		if (!paletteListEl) return paletteColorCount;
+		const items = paletteListEl.querySelectorAll<HTMLElement>(
+			"[data-palette-color]",
+		);
+		let index = 0;
+		for (const item of items) {
+			const rect = item.getBoundingClientRect();
+			if (clientY > rect.bottom) {
+				index++;
+				continue;
+			}
+			if (clientY < rect.top) break;
+			if (clientX > rect.left + rect.width / 2) {
+				index++;
+				continue;
+			}
+			break;
+		}
+		return index;
+	}
+
+	/** The visible gap while dragging, or null when the drop is a no-op. */
+	let paletteDropGap = $derived.by(() => {
+		const gap = paletteDropIndex;
+		const from = draggingPaletteIndex;
+		if (gap === null || from === null) return null;
+		if (gap === from || gap === from + 1) return null;
+		return gap;
+	});
+
+	function handlePaletteDragStart(event: DragEvent, index: number): void {
+		if (!paletteEditable) {
+			event.preventDefault();
+			return;
+		}
+		draggingPaletteIndex = index;
+		paletteDropIndex = null;
+		if (event.dataTransfer) {
+			event.dataTransfer.effectAllowed = "move";
+			event.dataTransfer.setData("text/plain", activePalette.colors[index] ?? "");
+		}
+	}
+
+	function handlePaletteDragOver(event: DragEvent): void {
+		if (draggingPaletteIndex === null) return;
+		event.preventDefault();
+		if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+		paletteDropIndex = paletteInsertionIndex(event.clientX, event.clientY);
+	}
+
+	function handlePaletteDragLeave(event: DragEvent): void {
+		const next = event.relatedTarget as Node | null;
+		if (next && paletteListEl?.contains(next)) return;
+		paletteDropIndex = null;
+	}
+
+	function handlePaletteDrop(event: DragEvent): void {
+		if (draggingPaletteIndex === null) return;
+		event.preventDefault();
+		const insertAt =
+			paletteDropIndex ?? paletteInsertionIndex(event.clientX, event.clientY);
+		editor.movePaletteColor(draggingPaletteIndex, insertAt);
+		endPaletteDrag();
+	}
+
+	function endPaletteDrag(): void {
+		draggingPaletteIndex = null;
+		paletteDropIndex = null;
+	}
+
 	let renamingPalette = $state(false);
 	let renameDraft = $state("");
 	let renameInput = $state<HTMLInputElement | null>(null);
@@ -187,8 +268,8 @@
 		</span>
 	</header>
 
-	<div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-		<div class="grid grid-cols-[1fr_auto_1fr] items-center gap-1.5">
+	<div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+		<div class="grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-1.5">
 			<button
 				type="button"
 				class="flex items-center justify-between gap-2 rounded-lg border p-1.5 text-left text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent/60"
@@ -239,7 +320,7 @@
 			</button>
 		</div>
 
-		<div class="space-y-2 pt-1">
+		<div class="flex min-h-0 flex-1 flex-col gap-2 pt-1">
 			<div class="flex items-center justify-between">
 				<div class="flex items-center gap-1.5">
 					<span class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -450,9 +531,9 @@
 				</Button>
 			</div>
 
-			<div class="p-1">
+			<div class="flex min-h-0 flex-1 flex-col">
 				{#if paletteNotice}
-					<p class="px-2 pb-1 text-[10px] text-muted-foreground" aria-live="polite">
+					<p class="px-1 pb-1 text-[10px] text-muted-foreground" aria-live="polite">
 						{paletteNotice}
 					</p>
 				{/if}
@@ -467,34 +548,64 @@
 						{/if}
 					</p>
 				{:else}
-					<div class="grid grid-cols-8 gap-1.5">
-						{#each activePalette.colors as color, index}
-							<div class="group relative aspect-square">
-								<button
-									type="button"
-									class="relative size-full rounded-[5px] ring-1 ring-black/10 transition-transform group-hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-									style={`background-color: ${color}`}
-									title={`${color} — color ${index + 1}. Left click: primary, right click: secondary.`}
-									aria-label={`Use color ${color}, color ${index + 1}`}
-									onclick={() => choosePaletteColor(color, "primary")}
-									oncontextmenu={(event) => {
-										event.preventDefault();
-										choosePaletteColor(color, "secondary");
-									}}
+					<div
+						bind:this={paletteListEl}
+						class="min-h-24 flex-1 overflow-y-auto p-1.5"
+						role="group"
+						aria-label="Palette colors"
+						ondragover={handlePaletteDragOver}
+						ondragleave={handlePaletteDragLeave}
+						ondrop={handlePaletteDrop}
+					>
+						<div class="grid grid-cols-8 gap-1.5">
+							{#each activePalette.colors as color, index}
+								<div
+									class="group relative aspect-square hover:z-10"
+									data-palette-color
 								>
-									{#if editor.primaryColor === color && editor.alpha === 255}
+									{#if paletteDropGap === index}
 										<span
-											class="pointer-events-none absolute left-0.5 top-0.5 size-1.5 rounded-full bg-background ring-1 ring-foreground"
+											class="pointer-events-none absolute inset-y-0 -left-[4px] z-20 w-0.5 rounded-full bg-primary"
+											aria-hidden="true"
 										></span>
 									{/if}
-									{#if editor.secondaryColor === color && editor.secondaryAlpha === 255}
+									<button
+										type="button"
+										class="relative size-full rounded-[5px] ring-1 ring-black/10 transition-transform group-hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+										class:opacity-40={draggingPaletteIndex === index}
+										style={`background-color: ${color}`}
+										title={`${color} — color ${index + 1}. Left click: primary, right click: secondary.${paletteEditable ? " Drag to reorder." : ""}`}
+										aria-label={`Use color ${color}, color ${index + 1}`}
+										draggable={paletteEditable}
+										onclick={() => choosePaletteColor(color, "primary")}
+										oncontextmenu={(event) => {
+											event.preventDefault();
+											choosePaletteColor(color, "secondary");
+										}}
+										ondragstart={(event) =>
+											handlePaletteDragStart(event, index)}
+										ondragend={endPaletteDrag}
+									>
+										{#if editor.primaryColor === color && editor.alpha === 255}
+											<span
+												class="pointer-events-none absolute left-0.5 top-0.5 size-1.5 rounded-full bg-background ring-1 ring-foreground"
+											></span>
+										{/if}
+										{#if editor.secondaryColor === color && editor.secondaryAlpha === 255}
+											<span
+												class="pointer-events-none absolute bottom-0.5 right-0.5 size-1.5 rounded-full bg-background ring-1 ring-foreground"
+											></span>
+										{/if}
+									</button>
+									{#if index === paletteColorCount - 1 && paletteDropGap === paletteColorCount}
 										<span
-											class="pointer-events-none absolute bottom-0.5 right-0.5 size-1.5 rounded-full bg-background ring-1 ring-foreground"
+											class="pointer-events-none absolute inset-y-0 -right-[4px] z-20 w-0.5 rounded-full bg-primary"
+											aria-hidden="true"
 										></span>
 									{/if}
-								</button>
-							</div>
-						{/each}
+								</div>
+							{/each}
+						</div>
 					</div>
 				{/if}
 			</div>

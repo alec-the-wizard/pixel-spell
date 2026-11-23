@@ -53,6 +53,7 @@ import {
 	createDefaultPalette,
 	loadPaletteState,
 	nearestPaletteColor,
+	reorderPaletteColor,
 	savePaletteState,
 	sortPaletteColors,
 	type Palette,
@@ -1517,6 +1518,26 @@ export class EditorState {
 		const palette = this.activePalette;
 		if (!this.paletteEditable || palette.colors.length === 0) return;
 		this.#removePaletteColorAt(palette, palette.colors.length - 1);
+	}
+
+	/**
+	 * Moves a palette swatch into a new gap. A manual arrangement becomes the
+	 * palette's original order and clears any active sort mode.
+	 */
+	movePaletteColor(from: number, insertAt: number): boolean {
+		const palette = this.activePalette;
+		if (!this.paletteEditable) return false;
+
+		const colors = reorderPaletteColor(palette.colors, from, insertAt);
+		if (colors.every((color, index) => color === palette.colors[index])) {
+			return false;
+		}
+
+		palette.colors = colors;
+		palette.originalColors = [...colors];
+		palette.sortMode = "original";
+		this.#persistPalettes();
+		return true;
 	}
 
 	#removePaletteColorAt(palette: Palette, index: number): void {

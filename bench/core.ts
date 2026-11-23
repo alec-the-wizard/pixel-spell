@@ -45,6 +45,7 @@ import {
 } from "../src/lib/editor/layer-color.js";
 import {
 	nearestPaletteColor,
+	reorderPaletteColor,
 	sortPaletteColors,
 } from "../src/lib/editor/palette.js";
 import {
@@ -606,6 +607,34 @@ function assertPaletteSorting(): void {
 	}
 }
 
+function assertPaletteReordering(): void {
+	const colors = ["#111111", "#222222", "#333333", "#444444"];
+	const down = reorderPaletteColor(colors, 0, 3);
+	if (down.join() !== ["#222222", "#333333", "#111111", "#444444"].join()) {
+		throw new Error("palette reorder into a later gap changed");
+	}
+	const up = reorderPaletteColor(colors, 3, 1);
+	if (up.join() !== ["#111111", "#444444", "#222222", "#333333"].join()) {
+		throw new Error("palette reorder into an earlier gap changed");
+	}
+	const end = reorderPaletteColor(colors, 1, colors.length);
+	if (end.join() !== ["#111111", "#333333", "#444444", "#222222"].join()) {
+		throw new Error("palette reorder to the end changed");
+	}
+	if (reorderPaletteColor(colors, 0, 0).join() !== colors.join()) {
+		throw new Error("palette reorder into its own gap changed the order");
+	}
+	if (reorderPaletteColor(colors, 2, 3).join() !== colors.join()) {
+		throw new Error("palette reorder into the next gap changed the order");
+	}
+	if (reorderPaletteColor(colors, 9, 0).join() !== colors.join()) {
+		throw new Error("palette reorder accepted an invalid source index");
+	}
+	if (colors[0] !== "#111111") {
+		throw new Error("palette reordering mutated the source");
+	}
+}
+
 function assertPaletteRamps(): void {
 	const endpoint = "#1d2b53";
 	const endColor = "#ff77a8";
@@ -1021,6 +1050,7 @@ function assertSelectionTransform(): void {
 assertCanvasSizePresets();
 assertLayerColors();
 assertPaletteSorting();
+assertPaletteReordering();
 assertPaletteRamps();
 assertPaletteCycling();
 assertPaletteAnalysis();
