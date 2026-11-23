@@ -2,6 +2,7 @@
 	import { Slider } from "$lib/components/ui/slider/index.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
 	import BrushPicker from "./BrushPicker.svelte";
+	import OptionLabel from "./OptionLabel.svelte";
 
 	let visible = $derived(
 		editor.tool === "pencil" ||
@@ -18,7 +19,10 @@
 
 		<div class="space-y-2.5">
 			<div class="flex items-center justify-between">
-				<span class="text-xs font-medium">Brush size</span>
+				<OptionLabel
+					label="Brush size"
+					help="Size of the brush stamp in pixels. Custom brushes keep their aspect ratio and scale nearest-neighbor."
+				/>
 				<span
 					class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground"
 				>
@@ -32,9 +36,6 @@
 				step={1}
 				bind:value={editor.brushSize}
 			/>
-			<span class="block text-[10px] text-muted-foreground">
-				Custom brushes keep their aspect ratio and scale nearest-neighbor.
-			</span>
 		</div>
 
 		<div class="space-y-2.5">
