@@ -1,5 +1,6 @@
 import { blendPixelPacked, normalizeBlendMode } from "./blend.js";
 import { packColor } from "./color.js";
+import { applyGroupEffectChain, cloneGroupEffects } from "./group-effects.js";
 import type {
 	AnimationMode,
 	BackgroundKind,
@@ -274,6 +275,9 @@ export function cloneDoc(doc: PixelDoc): PixelDoc {
 			...(layer.clipping ? { clipping: true } : {}),
 			...(layer.collapsed ? { collapsed: true } : {}),
 			...(layer.continuous ? { continuous: true } : {}),
+			...(layer.effects?.length
+				? { effects: cloneGroupEffects(layer.effects) }
+				: {}),
 		};
 	});
 
@@ -499,9 +503,17 @@ function compositeNodeInto(
 				count,
 			);
 		}
+		// Effects run on the group's composited contents, so nested groups have
+		// already applied their own stacks before this one runs.
+		const effected = applyGroupEffectChain(
+			groupBuffer,
+			doc.width,
+			doc.height,
+			layer.effects,
+		);
 		blendLayerInto(
 			output,
-			groupBuffer,
+			effected,
 			count,
 			opacityByteOf(layer),
 			layer.blendMode ?? "normal",
@@ -598,6 +610,15 @@ function blendNodePixelInto(
 	);
 }
 
+/** True when any group has at least one enabled effect. */
+export function hasEnabledGroupEffects(doc: PixelDoc): boolean {
+	for (const layer of doc.layers) {
+		if (!isGroupLayer(layer)) continue;
+		if (layer.effects?.some((effect) => effect.enabled)) return true;
+	}
+	return false;
+}
+
 /** Composites a single pixel; used by the eyedropper instead of a full frame. */
 export function compositePixel(
 	doc: PixelDoc,
@@ -607,6 +628,12 @@ export function compositePixel(
 ): number {
 	if (x < 0 || x >= doc.width || y < 0 || y >= doc.height) return 0;
 	const index = y * doc.width + x;
+
+	// Pixel-at-a-time compositing cannot run neighborhood filters, so fall back
+	// to a full composite when a group effect is active.
+	if (hasEnabledGroupEffects(doc)) {
+		return compositeFrame(doc, frameIndex, true)[index] ?? 0;
+	}
 
 	const { roots } = buildLayerTree(frameOrderedLayers(doc, frameIndex));
 	let output = 0;

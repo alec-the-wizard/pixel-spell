@@ -32,6 +32,11 @@ import {
 } from "./doc.js";
 import { normalizeBlendMode } from "./blend.js";
 import {
+	MAX_GROUP_EFFECTS,
+	applyGroupEffect,
+	createGroupEffect,
+} from "./group-effects.js";
+import {
 	MAX_PROJECT_FRAMES,
 	MAX_PROJECT_LAYERS,
 	saveProjectFile,
@@ -103,6 +108,9 @@ import type {
 	Frame,
 	GradientDither,
 	GradientShape,
+	GroupEffect,
+	GroupEffectKind,
+	GroupEffectOptions,
 	Layer,
 	MirrorAxis,
 	MirrorKind,
@@ -3939,6 +3947,204 @@ export class EditorState {
 		else delete layer.collapsed;
 		this.dirty = true;
 		this.modified = true;
+	}
+
+	/** Marks a group effect stack change for the composite and thumbnails. */
+	#afterGroupEffectChange(): void {
+		this.structureRevision++;
+		this.layerAppearanceRevision++;
+		this.revision++;
+		this.dirty = true;
+		this.modified = true;
+	}
+
+	#groupEffectTarget(
+		layerId: string,
+		effectId: string,
+	): { group: Layer; effect: GroupEffect; index: number } | null {
+		const group = this.doc.layers.find((layer) => layer.id === layerId);
+		if (!group || !isGroupLayer(group)) return null;
+		const index = group.effects?.findIndex((effect) => effect.id === effectId) ?? -1;
+		if (index < 0) return null;
+		return { group, effect: group.effects![index]!, index };
+	}
+
+	/** Appends a new effect block to a group and returns its id. */
+	addGroupEffect(layerId: string, kind: GroupEffectKind): string | null {
+		const group = this.doc.layers.find((layer) => layer.id === layerId);
+		if (!group || !isGroupLayer(group)) return null;
+		if ((group.effects?.length ?? 0) >= MAX_GROUP_EFFECTS) return null;
+		this.pushHistory("Add group effect");
+		const effect = createGroupEffect(kind, this.activePalette.colors);
+		group.effects = [...(group.effects ?? []), effect];
+		this.#afterGroupEffectChange();
+		return effect.id;
+	}
+
+	/** Replaces one effect's options. Returns false when nothing changed. */
+	updateGroupEffect(
+		layerId: string,
+		effectId: string,
+		options: GroupEffectOptions,
+	): boolean {
+		const target = this.#groupEffectTarget(layerId, effectId);
+		if (!target) return false;
+		const next: GroupEffectOptions = {
+			...options,
+			...(options.palette ? { palette: [...options.palette] } : {}),
+		};
+		if (JSON.stringify(target.effect.options) === JSON.stringify(next)) {
+			return false;
+		}
+		this.pushHistory("Edit group effect");
+		target.effect.options = next;
+		this.#afterGroupEffectChange();
+		return true;
+	}
+
+	toggleGroupEffect(layerId: string, effectId: string): void {
+		const target = this.#groupEffectTarget(layerId, effectId);
+		if (!target) return;
+		this.pushHistory(
+			target.effect.enabled ? "Disable group effect" : "Enable group effect",
+		);
+		target.effect.enabled = !target.effect.enabled;
+		this.#afterGroupEffectChange();
+	}
+
+	removeGroupEffect(layerId: string, effectId: string): void {
+		const target = this.#groupEffectTarget(layerId, effectId);
+		if (!target) return;
+		this.pushHistory("Remove group effect");
+		const next = (target.group.effects ?? []).filter(
+			(effect) => effect.id !== effectId,
+		);
+		if (next.length > 0) target.group.effects = next;
+		else delete target.group.effects;
+		this.#afterGroupEffectChange();
+	}
+
+	/** Moves an effect block before or after another block in the same group. */
+	moveGroupEffect(
+		layerId: string,
+		effectId: string,
+		targetId: string,
+		side: "before" | "after",
+	): void {
+		const target = this.#groupEffectTarget(layerId, targetId);
+		if (!target || effectId === targetId) return;
+		const effects = target.group.effects;
+		if (!effects) return;
+		const from = effects.findIndex((effect) => effect.id === effectId);
+		if (from < 0) return;
+		const next = [...effects];
+		const [moved] = next.splice(from, 1);
+		if (!moved) return;
+		let to = next.findIndex((effect) => effect.id === targetId);
+		if (to < 0) return;
+		if (side === "after") to++;
+		this.pushHistory("Reorder group effects");
+		next.splice(to, 0, moved);
+		target.group.effects = next;
+		this.#afterGroupEffectChange();
+	}
+
+	/** Composites the active frame with a staged effect on one group. */
+	previewGroupEffect(
+		layerId: string,
+		effectId: string,
+		draft: GroupEffect,
+	): Uint32Array {
+		const layers = this.doc.layers.map((layer) => {
+			if (layer.id !== layerId) return layer;
+			const effects = (layer.effects ?? []).map((effect) =>
+				effect.id === effectId
+					? {
+							...draft,
+							options: {
+								...draft.options,
+								...(draft.options.palette
+									? { palette: [...draft.options.palette] }
+									: {}),
+							},
+						}
+					: effect,
+			);
+			if (!effects.some((effect) => effect.id === effectId)) {
+				effects.push(draft);
+			}
+			return { ...layer, effects };
+		});
+		return compositeFrame({ ...this.doc, layers }, this.activeFrame, true);
+	}
+
+	/**
+	 * Writes one effect into every paint-layer cel inside the group (all frames)
+	 * and removes the block. Linked cels stay linked because each distinct buffer
+	 * is only transformed once. Returns the number of buffers that changed.
+	 */
+	bakeGroupEffect(
+		layerId: string,
+		effectId: string,
+		options?: GroupEffectOptions,
+	): number {
+		const layers = this.doc.layers;
+		const groupIndex = layers.findIndex((layer) => layer.id === layerId);
+		if (groupIndex < 0) return 0;
+		const group = layers[groupIndex]!;
+		if (!isGroupLayer(group)) return 0;
+		const effect = group.effects?.find((entry) => entry.id === effectId);
+		if (!effect) return 0;
+
+		const { start, end } = subtreeRange(layers, groupIndex);
+		const targets = layers
+			.slice(start + 1, end)
+			.filter(
+				(layer) =>
+					!isGroupLayer(layer) &&
+					layer.role !== "reference" &&
+					layer.visible &&
+					layer.opacity > 0,
+			);
+		if (targets.length === 0) return 0;
+
+		const bakeEffect: GroupEffect = {
+			...effect,
+			enabled: true,
+			options: {
+				...effect.options,
+				...options,
+				...(options?.palette ? { palette: [...options.palette] } : {}),
+			},
+		};
+
+		this.pushHistory("Bake group effect");
+		let changed = 0;
+		for (const layer of targets) {
+			const transformed = new Map<Uint32Array, Uint32Array>();
+			layer.cels = layer.cels.map((cel) => {
+				const cached = transformed.get(cel);
+				if (cached) return cached;
+				const next = applyGroupEffect(
+					cel,
+					this.doc.width,
+					this.doc.height,
+					bakeEffect,
+				);
+				const result = this.#sameCelPixels(cel, next) ? cel : next;
+				if (result !== cel) changed++;
+				transformed.set(cel, result);
+				return result;
+			});
+		}
+
+		const remaining = (group.effects ?? []).filter(
+			(entry) => entry.id !== effectId,
+		);
+		if (remaining.length > 0) group.effects = remaining;
+		else delete group.effects;
+		this.#afterGroupEffectChange();
+		return changed;
 	}
 
 	deleteSelection(): void {

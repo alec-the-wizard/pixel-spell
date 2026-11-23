@@ -10,12 +10,13 @@ import {
 	uid,
 } from "./doc.js";
 import { normalizeLayerColor } from "./layer-color.js";
+import { normalizeGroupEffects } from "./group-effects.js";
 import {
 	MAX_REFERENCE_BYTES,
 	MAX_REFERENCE_COUNT,
 	MAX_TOTAL_REFERENCE_BYTES,
 } from "./reference.js";
-import type { Frame, Layer, PixelDoc, ReferenceImage } from "./types.js";
+import type { Frame, GroupEffect, Layer, PixelDoc, ReferenceImage } from "./types.js";
 
 export interface LoadedProject {
 	doc: PixelDoc;
@@ -27,7 +28,7 @@ export interface LoadedProject {
 
 const MAGIC = [0x50, 0x58, 0x53, 0x50]; // "PXSP"
 /** Only the current format is accepted; this app has no released legacy files. */
-const FORMAT_VERSION = 4;
+const FORMAT_VERSION = 5;
 const METHOD_RAW = 0;
 const METHOD_RLE = 1;
 const HEADER_SIZE = 4 + 1 + 1 + 2 + 2 + 1 + 2 + 2 + 4;
@@ -59,6 +60,7 @@ interface ProjectMeta {
 		clipping?: boolean;
 		collapsed?: boolean;
 		continuous?: boolean;
+		effects?: GroupEffect[];
 	}[];
 	/** Per-cel properties, keyed by frame index (frame ids are regenerated). */
 	celProps?: { layerId: string; frame: number; opacity?: number; zIndex?: number }[];
@@ -268,6 +270,7 @@ export function serializeProject(
 			...(layer.clipping ? { clipping: true } : {}),
 			...(layer.collapsed ? { collapsed: true } : {}),
 			...(layer.continuous ? { continuous: true } : {}),
+			...(layer.effects?.length ? { effects: layer.effects } : {}),
 		})),
 	};
 
@@ -526,6 +529,7 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 
 		const color = normalizeLayerColor(rawLayer.color);
 		const blendMode = normalizeBlendMode(rawLayer.blendMode);
+		const effects = isGroup ? normalizeGroupEffects(rawLayer.effects) : [];
 		// A parent must already be parsed (parents precede children), which also
 		// makes malformed or cyclic trees impossible.
 		const parentId =
@@ -551,6 +555,7 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 			...(rawLayer.clipping === true ? { clipping: true } : {}),
 			...(rawLayer.collapsed === true ? { collapsed: true } : {}),
 			...(rawLayer.continuous === true ? { continuous: true } : {}),
+			...(effects.length > 0 ? { effects } : {}),
 		});
 	}
 

@@ -40,6 +40,7 @@
 	import { cn } from "$lib/utils.js";
 	import DuplicateFramesDialog from "./DuplicateFramesDialog.svelte";
 	import FramePropertiesDialog from "./FramePropertiesDialog.svelte";
+	import GroupEffectDialog from "./GroupEffectDialog.svelte";
 	import LayerPropertiesDialog from "./LayerPropertiesDialog.svelte";
 	import CelPropertiesDialog from "./CelPropertiesDialog.svelte";
 	import TimelineLayerRow, { LAYER_INDENT } from "./TimelineLayerRow.svelte";
@@ -51,6 +52,15 @@
 	let celPropertiesTarget = $state<{ layerId: string; frameIndex: number } | null>(
 		null,
 	);
+	let effectDialogOpen = $state(false);
+	let effectDialogLayerId = $state<string | null>(null);
+	let effectDialogEffectId = $state<string | null>(null);
+
+	function openGroupEffect(layerId: string, effectId: string): void {
+		effectDialogLayerId = layerId;
+		effectDialogEffectId = effectId;
+		effectDialogOpen = true;
+	}
 
 	let contextMenu = $state<
 		| { kind: "frame"; x: number; y: number; frameIndex: number }
@@ -130,8 +140,8 @@
 	// actually visible (plus a little overscan) are rendered. The sticky header
 	// and layer column remain, and spacer cells preserve the scroll extents.
 	const BASE_LAYER_COLUMN_WIDTH = 240;
-	const FRAME_COLUMN_WIDTH = 52; // w-13
-	const LAYER_ROW_HEIGHT = 52; // h-13
+	const FRAME_COLUMN_WIDTH = 56; // w-14
+	const LAYER_ROW_HEIGHT = 56; // h-14
 	const OVERSCAN = 4;
 
 	/** Deepest nesting level, so the layer column can grow to fit its guides. */
@@ -1147,7 +1157,7 @@
 						{@const selected = editor.isFrameSelected(index)}
 						<th
 							scope="col"
-							class="sticky top-6 z-20 h-8 w-13 min-w-13 border-b border-r bg-background p-0 align-middle"
+							class="sticky top-6 z-20 h-8 w-14 min-w-14 border-b border-r bg-background p-0 align-middle"
 						>
 							<button
 								type="button"
@@ -1251,6 +1261,7 @@
 						onCelDoubleClick={openCelProperties}
 						onLayerContextMenu={handleLayerContextMenu}
 						onLayerProperties={openLayerProperties}
+						onEditEffect={openGroupEffect}
 						onDragStart={(event) => beginLayerDrag(event, row.layer)}
 						onDragOver={(mode) => updateLayerDrop(row.layer, mode)}
 						onDrop={(mode) => finishLayerDrop(row.layer, mode)}
@@ -1498,6 +1509,11 @@
 <LayerPropertiesDialog bind:open={layerPropertiesOpen} />
 <DuplicateFramesDialog bind:open={duplicateFramesOpen} />
 <CelPropertiesDialog bind:open={celPropertiesOpen} target={celPropertiesTarget} />
+<GroupEffectDialog
+	bind:open={effectDialogOpen}
+	layerId={effectDialogLayerId}
+	effectId={effectDialogEffectId}
+/>
 
 <svelte:window
 	onpointerdown={handleWindowPointerDown}

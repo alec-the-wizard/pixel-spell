@@ -63,6 +63,55 @@ export interface Frame {
 /** Reference layers are visible in the viewport but are never exported. */
 export type LayerRole = "reference";
 
+/** Non-destructive effects that can be attached to a group node. */
+export type GroupEffectKind =
+	| "outline"
+	| "drop-shadow"
+	| "color-replace"
+	| "dither";
+
+/**
+ * Options for one group effect. Fields are only meaningful for the matching
+ * `GroupEffect.kind`; the rest keep their defaults.
+ */
+export interface GroupEffectOptions {
+	// Outline
+	thickness?: number;
+	color?: string;
+	placement?: "outside" | "inside";
+	diagonals?: boolean;
+	// Drop shadow
+	offsetX?: number;
+	offsetY?: number;
+	spread?: number;
+	opacity?: number;
+	// Color replace
+	from?: string;
+	to?: string;
+	tolerance?: number;
+	preserveAlpha?: boolean;
+	// Dither
+	method?: "ordered" | "diffusion";
+	matrix?: "bayer2" | "bayer4" | "bayer8";
+	serpentine?: boolean;
+	target?: "two-color" | "palette";
+	lightColor?: string;
+	darkColor?: string;
+	/** Palette snapshot used by palette-target dithering. */
+	palette?: string[];
+}
+
+/**
+ * One effect block on a group. Effects run left-to-right on the group's
+ * composited contents; nested groups run before their ancestors.
+ */
+export interface GroupEffect {
+	id: string;
+	kind: GroupEffectKind;
+	enabled: boolean;
+	options: GroupEffectOptions;
+}
+
 /** How a layer (or group) blends with the content already composited below it. */
 export type BlendMode =
 	| "normal"
@@ -105,6 +154,8 @@ export interface Layer {
 	collapsed?: boolean;
 	/** Continuous layers auto-link newly added cels to the active frame. */
 	continuous?: boolean;
+	/** Non-destructive effect stack for a group node (missing means none). */
+	effects?: GroupEffect[];
 }
 
 /** Per-cel presentation properties (opacity and stacking order). */

@@ -62,6 +62,7 @@ import {
 	outlinePixels,
 	replaceColorPixels,
 } from "../src/lib/editor/filters.js";
+import { createGroupEffect } from "../src/lib/editor/group-effects.js";
 import { parseProject, serializeProject } from "../src/lib/editor/file.js";
 import {
 	LAYER_COLOR_PRESETS,
@@ -604,6 +605,75 @@ function assertLayerGroups(): void {
 	}
 	if (restoredPlain!.cels[0]![1] !== packColor("#abcdef")) {
 		throw new Error("group round-trip plain pixel changed");
+	}
+
+	// Group effects are non-destructive and run inner-group-first.
+	const effectDoc = createDoc(1, 1);
+	effectDoc.layers = [];
+	const outerEffectGroup = createGroup("Outer effects");
+	const innerEffectGroup = createGroup("Inner effects", outerEffectGroup.id);
+	const effectLayer = createLayer("Effect child", 1, 1, 1);
+	effectLayer.parentId = innerEffectGroup.id;
+	effectLayer.cels[0]![0] = packColor("#ff0000");
+	const innerReplace = createGroupEffect("color-replace");
+	innerReplace.options.from = "#ff0000";
+	innerReplace.options.to = "#00ff00";
+	const outerReplace = createGroupEffect("color-replace");
+	outerReplace.options.from = "#00ff00";
+	outerReplace.options.to = "#ffff00";
+	innerEffectGroup.effects = [innerReplace];
+	outerEffectGroup.effects = [outerReplace];
+	effectDoc.layers.push(outerEffectGroup, innerEffectGroup, effectLayer);
+
+	if (compositeFrame(effectDoc, 0)[0] !== packColor("#ffff00")) {
+		throw new Error("nested group effect order changed");
+	}
+	if (effectLayer.cels[0]![0] !== packColor("#ff0000")) {
+		throw new Error("group effect mutated its source cel");
+	}
+
+	// Disabling the inner block leaves the outer green→yellow replacement inert.
+	innerReplace.enabled = false;
+	if (compositeFrame(effectDoc, 0)[0] !== packColor("#ff0000")) {
+		throw new Error("disabled group effect still applied");
+	}
+	innerReplace.enabled = true;
+
+	// Effects survive project serialization and cloneDoc keeps them isolated.
+	const effectBytes = serializeProject(
+		effectDoc,
+		palette,
+		"effects",
+		0,
+		effectLayer.id,
+	);
+	const effectParsed = parseProject(effectBytes);
+	if (!effectParsed) throw new Error("group effect round-trip parse failed");
+	const restoredOuterEffects = effectParsed.doc.layers.find(
+		(layer) => layer.name === "Outer effects",
+	);
+	const restoredInnerEffects = effectParsed.doc.layers.find(
+		(layer) => layer.name === "Inner effects",
+	);
+	if (
+		restoredOuterEffects?.effects?.length !== 1 ||
+		restoredInnerEffects?.effects?.length !== 1
+	) {
+		throw new Error("group effect round-trip lost blocks");
+	}
+	if (
+		restoredOuterEffects.effects[0]!.kind !== "color-replace" ||
+		restoredOuterEffects.effects[0]!.options.from !== "#00ff00" ||
+		restoredOuterEffects.effects[0]!.options.to !== "#ffff00"
+	) {
+		throw new Error("group effect round-trip changed options");
+	}
+
+	const clone = cloneDoc(effectDoc);
+	const clonedInner = clone.layers.find((layer) => layer.name === "Inner effects");
+	clonedInner!.effects![0]!.options.to = "#123456";
+	if (innerReplace.options.to !== "#00ff00") {
+		throw new Error("cloneDoc shared group effect options");
 	}
 }
 

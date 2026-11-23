@@ -6,22 +6,42 @@
 <script lang="ts">
 	import ChevronDown from "@lucide/svelte/icons/chevron-down";
 	import ChevronRight from "@lucide/svelte/icons/chevron-right";
+	import Ellipsis from "@lucide/svelte/icons/ellipsis";
 	import Eye from "@lucide/svelte/icons/eye";
 	import EyeOff from "@lucide/svelte/icons/eye-off";
+	import Flame from "@lucide/svelte/icons/flame";
+	import FunnelPlus from "@lucide/svelte/icons/funnel-plus";
+	import Grid2x2 from "@lucide/svelte/icons/grid-2x2";
+	import GripVertical from "@lucide/svelte/icons/grip-vertical";
+	import Layers2 from "@lucide/svelte/icons/layers-2";
 	import LetterZ from "@lucide/svelte/icons/letter-z";
 	import Link2 from "@lucide/svelte/icons/link-2";
 	import Link2Off from "@lucide/svelte/icons/link-2-off";
 	import Lock from "@lucide/svelte/icons/lock";
 	import LockOpen from "@lucide/svelte/icons/lock-open";
 	import Opacity from "@lucide/svelte/icons/opacity";
+	import Pencil from "@lucide/svelte/icons/pencil";
+	import Replace from "@lucide/svelte/icons/replace";
 	import ScanEye from "@lucide/svelte/icons/scan-eye";
 	import Scissors from "@lucide/svelte/icons/scissors";
+	import SquareDashed from "@lucide/svelte/icons/square-dashed";
+	import Trash2 from "@lucide/svelte/icons/trash-2";
 	import { Button } from "$lib/components/ui/button/index.js";
+	import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
 	import { BLEND_MODE_LABELS } from "$lib/editor/blend.js";
 	import { isGroupLayer } from "$lib/editor/doc.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
+	import {
+		GROUP_EFFECT_KINDS,
+		GROUP_EFFECT_LABELS,
+		groupEffectSummary,
+	} from "$lib/editor/group-effects.js";
 	import { layerTint } from "$lib/editor/layer-color.js";
-	import type { Layer } from "$lib/editor/types.js";
+	import type {
+		GroupEffect,
+		GroupEffectKind,
+		Layer,
+	} from "$lib/editor/types.js";
 	import { cn } from "$lib/utils.js";
 	import CelThumb from "./CelThumb.svelte";
 
@@ -39,6 +59,7 @@
 		onCelDoubleClick,
 		onLayerContextMenu,
 		onLayerProperties,
+		onEditEffect,
 		onDragStart,
 		onDragOver,
 		onDrop,
@@ -65,6 +86,7 @@
 		onCelDoubleClick?: (layerId: string, frameIndex: number) => void;
 		onLayerContextMenu: (event: MouseEvent, layer: Layer) => void;
 		onLayerProperties: (layer: Layer) => void;
+		onEditEffect?: (layerId: string, effectId: string) => void;
 		onDragStart?: (event: DragEvent) => void;
 		onDragOver?: (mode: "before" | "after" | "into" | null) => void;
 		onDrop?: (mode: "before" | "after" | "into") => void;
@@ -176,7 +198,178 @@
 		event.preventDefault();
 		onDrop?.(dragMode(event));
 	}
+
+	let effectDragId = $state<string | null>(null);
+	let effectDrop = $state<{ id: string; side: "before" | "after" } | null>(null);
+
+	function beginEffectDrag(event: DragEvent, effectId: string): void {
+		event.stopPropagation();
+		effectDragId = effectId;
+		if (event.dataTransfer) {
+			event.dataTransfer.effectAllowed = "move";
+			event.dataTransfer.setData("text/plain", effectId);
+		}
+	}
+
+	function effectDragOver(event: DragEvent, effectId: string): void {
+		if (!effectDragId || effectDragId === effectId) return;
+		event.preventDefault();
+		event.stopPropagation();
+		const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+		effectDrop = {
+			id: effectId,
+			side:
+				event.clientX < rect.left + rect.width / 2 ? "before" : "after",
+		};
+		if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+	}
+
+	function finishEffectDrag(event: DragEvent, effectId: string): void {
+		if (!effectDragId) return;
+		event.preventDefault();
+		event.stopPropagation();
+		const side =
+			effectDrop?.id === effectId ? effectDrop.side : "after";
+		editor.moveGroupEffect(layer.id, effectDragId, effectId, side);
+		effectDragId = null;
+		effectDrop = null;
+	}
+
+	function endEffectDrag(): void {
+		effectDragId = null;
+		effectDrop = null;
+	}
+
+	function addEffect(kind: GroupEffectKind): void {
+		const id = editor.addGroupEffect(layer.id, kind);
+		if (id) onEditEffect?.(layer.id, id);
+	}
+
+	function effectDropShadow(effect: GroupEffect): string | undefined {
+		if (effectDrop?.id !== effect.id) return undefined;
+		return effectDrop.side === "before"
+			? "inset 2px 0 0 0 var(--primary)"
+			: "inset -2px 0 0 0 var(--primary)";
+	}
 </script>
+
+{#snippet effectIcon(kind: GroupEffectKind, className: string)}
+	{#if kind === "outline"}
+		<SquareDashed class={className} />
+	{:else if kind === "drop-shadow"}
+		<Layers2 class={className} />
+	{:else if kind === "color-replace"}
+		<Replace class={className} />
+	{:else}
+		<Grid2x2 class={className} />
+	{/if}
+{/snippet}
+
+{#snippet groupEffects()}
+	<div class="flex h-full min-w-0 items-center gap-1.5 px-2">
+		{#each layer.effects ?? [] as effect (effect.id)}
+			<div
+				class={cn(
+					"flex h-8 max-w-56 shrink-0 items-center rounded-md border bg-background shadow-sm",
+					!effect.enabled && "opacity-45",
+				)}
+				role="group"
+				aria-label={`${GROUP_EFFECT_LABELS[effect.kind]} effect block`}
+				style:box-shadow={effectDropShadow(effect)}
+				ondragover={(event) => effectDragOver(event, effect.id)}
+				ondrop={(event) => finishEffectDrag(event, effect.id)}
+			>
+				<span
+					class="flex h-full cursor-grab items-center pl-1.5 pr-0.5 text-muted-foreground/70"
+					title="Drag to reorder effects"
+					role="button"
+					tabindex="-1"
+					aria-label={`Reorder ${GROUP_EFFECT_LABELS[effect.kind]}`}
+					draggable="true"
+					ondragstart={(event) => beginEffectDrag(event, effect.id)}
+					ondragend={endEffectDrag}
+				>
+					<GripVertical class="size-3" />
+				</span>
+				<button
+					type="button"
+					class="flex h-full min-w-0 items-center gap-1 rounded-sm px-1 text-[10px] font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+					title={`${GROUP_EFFECT_LABELS[effect.kind]} · ${groupEffectSummary(effect)}. Click to customize.`}
+					onclick={() => onEditEffect?.(layer.id, effect.id)}
+				>
+					{@render effectIcon(effect.kind, "size-3 shrink-0 text-primary")}
+					<span class="truncate">{GROUP_EFFECT_LABELS[effect.kind]}</span>
+				</button>
+				<Button
+					variant="ghost"
+					size="icon-xs"
+					class="size-6 shrink-0 text-muted-foreground"
+					title={effect.enabled ? `Disable ${GROUP_EFFECT_LABELS[effect.kind]}` : `Enable ${GROUP_EFFECT_LABELS[effect.kind]}`}
+					aria-label={effect.enabled ? `Disable ${GROUP_EFFECT_LABELS[effect.kind]}` : `Enable ${GROUP_EFFECT_LABELS[effect.kind]}`}
+					aria-pressed={effect.enabled}
+					onclick={() => editor.toggleGroupEffect(layer.id, effect.id)}
+				>
+					{#if effect.enabled}
+						<Eye class="size-3" />
+					{:else}
+						<EyeOff class="size-3" />
+					{/if}
+				</Button>
+				<DropdownMenu.Root>
+					<DropdownMenu.Trigger
+						class="flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+						aria-label={`${GROUP_EFFECT_LABELS[effect.kind]} options`}
+						title="Effect actions"
+					>
+						<Ellipsis class="size-3.5" />
+					</DropdownMenu.Trigger>
+					<DropdownMenu.Content class="w-44" align="start">
+						<DropdownMenu.Item
+							onSelect={() => onEditEffect?.(layer.id, effect.id)}
+						>
+							<Pencil class="size-3.5" />
+							Edit effect…
+						</DropdownMenu.Item>
+						<DropdownMenu.Item
+							disabled={!effect.enabled}
+							onSelect={() => editor.bakeGroupEffect(layer.id, effect.id)}
+						>
+							<Flame class="size-3.5" />
+							Bake effect
+						</DropdownMenu.Item>
+						<DropdownMenu.Separator />
+						<DropdownMenu.Item
+							class="text-destructive"
+							onSelect={() => editor.removeGroupEffect(layer.id, effect.id)}
+						>
+							<Trash2 class="size-3.5" />
+							Remove effect
+						</DropdownMenu.Item>
+					</DropdownMenu.Content>
+				</DropdownMenu.Root>
+			</div>
+		{/each}
+
+		<DropdownMenu.Root>
+			<DropdownMenu.Trigger
+				class="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+				aria-label="Add group effect"
+				title="Add group effect"
+			>
+				<FunnelPlus class="size-4" />
+			</DropdownMenu.Trigger>
+			<DropdownMenu.Content class="w-44" align="start">
+				<DropdownMenu.Label>Add effect block</DropdownMenu.Label>
+				{#each GROUP_EFFECT_KINDS as option (option.id)}
+					<DropdownMenu.Item onSelect={() => addEffect(option.id)}>
+						{@render effectIcon(option.id, "size-3.5 text-muted-foreground")}
+						{option.label}
+					</DropdownMenu.Item>
+				{/each}
+			</DropdownMenu.Content>
+		</DropdownMenu.Root>
+	</div>
+{/snippet}
 
 {#snippet indentGuides()}
 	{#if indentLevels.length > 0}
@@ -200,7 +393,7 @@
 		<th
 			scope="row"
 			class={cn(
-				"sticky left-0 z-10 h-13 w-[var(--layer-col-width)] min-w-[var(--layer-col-width)] max-w-[var(--layer-col-width)] border-b border-r p-0 text-left align-middle",
+				"sticky left-0 z-10 h-14 w-[var(--layer-col-width)] min-w-[var(--layer-col-width)] max-w-[var(--layer-col-width)] border-b border-r p-0 text-left align-middle",
 				!layer.color && headerClass,
 			)}
 			style:background={headerBackground}
@@ -213,7 +406,7 @@
 			oncontextmenu={handleHeaderContextMenu}
 		>
 			<div
-				class="relative flex h-13 items-center gap-1"
+				class="relative flex h-14 items-center gap-1"
 				style:padding-left={`${4 + depth * LAYER_INDENT}px`}
 			>
 				{@render indentGuides()}
@@ -283,9 +476,11 @@
 		</th>
 		<td
 			colspan={editor.doc.frames.length + 2}
-			class="h-13 border-b"
+			class="h-14 overflow-hidden border-b p-0"
 			style:background={layer.color ? layerTint(layer.color, 9) : undefined}
-		></td>
+		>
+			{@render groupEffects()}
+		</td>
 	</tr>
 {:else}
 	<tr
@@ -296,7 +491,7 @@
 		<th
 			scope="row"
 			class={cn(
-				"sticky left-0 z-10 h-13 w-[var(--layer-col-width)] min-w-[var(--layer-col-width)] max-w-[var(--layer-col-width)] border-b border-r p-0 text-left align-middle",
+				"sticky left-0 z-10 h-14 w-[var(--layer-col-width)] min-w-[var(--layer-col-width)] max-w-[var(--layer-col-width)] border-b border-r p-0 text-left align-middle",
 				!layer.color && headerClass,
 			)}
 			style:background={headerBackground}
@@ -309,7 +504,7 @@
 			oncontextmenu={handleHeaderContextMenu}
 		>
 			<div
-				class="relative flex h-13 items-center gap-1 pr-2"
+				class="relative flex h-14 items-center gap-1 pr-2"
 				style:padding-left={`${4 + depth * LAYER_INDENT}px`}
 			>
 				{@render indentGuides()}
@@ -412,7 +607,7 @@
 		{#if firstFrame > 0}
 			<td
 				colspan={firstFrame}
-				class="h-13 border-b"
+				class="h-14 border-b"
 				style:background={layer.color ? layerTint(layer.color, 9) : undefined}
 			></td>
 		{/if}
@@ -429,7 +624,7 @@
 
 			<td
 				class={cn(
-					"relative h-13 w-13 min-w-13 border-b border-r",
+					"relative h-14 w-14 min-w-14 border-b border-r",
 					selectedCel && "bg-primary/15",
 				)}
 				style:background={cellBackground(selectedCel)}
@@ -499,17 +694,17 @@
 		{#if trailingFrames > 0}
 			<td
 				colspan={trailingFrames}
-				class="h-13 border-b"
+				class="h-14 border-b"
 				style:background={layer.color ? layerTint(layer.color, 9) : undefined}
 			></td>
 		{/if}
 
 		<td
-			class="h-13 w-10 min-w-10 border-b"
+			class="h-14 w-10 min-w-10 border-b"
 			style:background={layer.color ? layerTint(layer.color, 9) : undefined}
 		></td>
 		<td
-			class="h-13 border-b"
+			class="h-14 border-b"
 			style:background={layer.color ? layerTint(layer.color, 9) : undefined}
 		></td>
 	</tr>
