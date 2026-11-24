@@ -51,6 +51,7 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Custom brushes (shapes, patterns, textured) | 8 | 5 | 1.60 | | Implemented with 1-bit masks: built-in square, circle, diamond, and ring presets plus custom masks created from the selection, an imported image, or the pixel mask editor. The **Brushes & dither patterns** library supports search, duplicate, edit, delete, and per-brush default size/opacity. Brushes apply to pencil, eraser, line, curve, and shape outlines, honour symmetry, selections, alpha lock, and ink opacity, show a footprint outline on the canvas, and persist in `localStorage` without touching project files or history. |
 | Gradient map layer | 7 | 4 | 1.75 | | Implemented as both an **Effects → Gradient map…** destructive filter and a non-destructive group effect block. Brightness (Rec. 709 luminance or channel average) selects a color from a 2–16 stop gradient, with RGB or OKLab blending, optional inversion, hard stops from duplicate positions, and preserved alpha. The destructive dialog previews the composited frame and applies to the active cel or all visible unlocked layers behind one undo step; the group block runs on the group's composite, can be reordered or disabled, is baked across every frame through the normal group-effect path, and serializes in the project metadata. |
 | Custom grid offsets and isometric/hex grid | 6 | 3 | 2.00 | | Implemented: the main **Grid** now supports square (independent horizontal and vertical cell sizes), isometric diamond, and hexagonal (pointy- or flat-top) modes, each with X/Y offsets; the **Pixel grid** is an independent every-pixel overlay. Both are toggled from the View menu and the bottom-left canvas pill, advanced options live in a **Grid settings** dialog opened from either place, and workspace preferences persist in `localStorage`. |
+| Timelapse / process replay | 8 | 4 | 2.00 | ★ | Implemented as **File → Export timelapse…**, a video-style dialog with format, scale, playback-speed, quality, loop, background, preview, and size warnings. Each frame is one retained undo state of the active animation frame, rebuilt by applying history entries backwards from the current document, so no separate recording system exists. The **Edit → History…** dialog gained a workspace-wide **Saved steps** slider (10–500) with a pixel-patch/full-snapshot memory estimate; the existing 128 MB history budget still applies. |
 
 ## Planned features
 
@@ -60,7 +61,6 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Export presets | 7 | 3 | 2.33 | | Name and reuse export configurations (format, scale, trim, spacing, metadata, loop) so the right settings are one click. Pixelorama ships an `export_presets.cfg`; the community repeatedly asks for this. |
 | Rulers and draggable guides | 6 | 3 | 2.00 | | Horizontal/vertical guides with snapping, persisted per project, plus a quick measurement readout. Reuse the mirror-guide overlay and pointer mapping. |
 | Split view / second zoom window | 6 | 3 | 2.00 | | A second viewport showing the same document at another zoom, or a detached 1× preview. Reuse `drawScaled` and the preview component. |
-| Timelapse / process replay | 8 | 4 | 2.00 | ★ | Record a compact log of pixel deltas and replay the making-of as a GIF/video. Artists love posting process shots, and Pixel Spell already tracks per-stroke history, making this cheap. A genuine browser-native delight no desktop editor ships out of the box. |
 | Motion drawing (draw while playing) | 6 | 3 | 2.00 | | Paint into the animation while it plays (Pixelorama's “motion drawing”). Direct-manipulation feel for effects and onion-skin-assisted in-betweens. |
 | Advanced brush and dither expansion | 7 | 4 | 1.75 | | Extend the shipped mask libraries with colored/image brushes and tint modes, brush spacing/angle/scatter, pattern transforms (scale, rotation, offset), custom threshold matrices and blue-noise dithering, extra diffusion kernels (Atkinson, Jarvis), brush-pack import/export with drag-and-drop, per-tool brush slots, and “brush from layer/content bounds.” Keeps the document format unchanged, so it is a comfortable follow-up to the completed brush/dither work. |
 | Accessibility and localization pass | 5 | 3 | 1.67 | | Full keyboard navigation, screen-reader labels for canvas actions, reduced-motion support, and i18n extraction. Good for reach and polish. |
@@ -149,7 +149,7 @@ This phase closes the biggest gaps versus Aseprite and Photoshop-style workflows
 4. Aseprite `.aseprite` import/export
 5. Desktop app (Tauri) with native file access and autosave
 6. WebGL shader filters
-7. Timelapse / process replay
+7. Timelapse / process replay — done
 8. Shareable live preview links
 
 Indexed color and tilemaps deepen the pixel-art/game-art focus. The MCP server, desktop app, WebGL shaders, and browser-native share/timelapse features make Pixel Spell useful in AI-assisted and offline workflows where most browser editors stop.
@@ -228,13 +228,12 @@ The appeal is that no desktop competitor offers the same discoverability and zer
 
 ### Timelapse / process replay
 
-Because history already stores per-stroke cel patches, a replay feature can be built without a new recording system:
+Shipped as **File → Export timelapse…** without a separate recording system:
 
-1. Append compact pixel-delta records (or reuse history entries) as the user paints.
-2. On demand, replay them into a GIF/WebP/video at a chosen speed, optionally skipping long pauses.
-3. Offer “export timelapse” from the export dialog and an in-app replay scrubber.
-
-This is a delight feature with strong social-sharing appeal and little model risk.
+1. The retained undo stack already keeps each action's previous document state (full structural snapshots or per-cel patches).
+2. The builder walks that stack backwards from the current document, composites each recovered state of the active frame, and turns the states into one synthetic animation document. Export then reuses the existing GIF, APNG, animated WebP, and video encoders.
+3. The **Edit → History…** dialog exposes the workspace-wide saved-step count (10–500) and estimates memory for pixel-only steps versus structural snapshots. It is not stored per project, and the existing 128 MB history budget still caps retention.
+4. The timelapse dialog offers the same format, scale, speed, quality, loop, background, preview, and size warnings as video export; each history step becomes one frame.
 
 ### Linked cels / continuous layers
 

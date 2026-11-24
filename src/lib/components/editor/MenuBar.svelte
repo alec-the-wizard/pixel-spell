@@ -14,6 +14,7 @@
 	import FileDown from "@lucide/svelte/icons/file-down";
 	import FileInput from "@lucide/svelte/icons/file-input";
 	import FilePlus2 from "@lucide/svelte/icons/file-plus-2";
+	import Film from "@lucide/svelte/icons/film";
 	import FlipHorizontal2 from "@lucide/svelte/icons/flip-horizontal-2";
 	import FlipVertical2 from "@lucide/svelte/icons/flip-vertical-2";
 	import FolderOpen from "@lucide/svelte/icons/folder-open";
@@ -61,6 +62,7 @@
 		onImport,
 		onImportUrl,
 		onExport,
+		onExportTimelapse,
 		onCommandPalette,
 		onShortcuts,
 		onAbout,
@@ -80,6 +82,7 @@
 		onImport: () => void;
 		onImportUrl: () => void;
 		onExport: () => void;
+		onExportTimelapse: () => void;
 		onCommandPalette: () => void;
 		onShortcuts: () => void;
 		onAbout: () => void;
@@ -197,6 +200,10 @@
 				<DropdownMenu.Item onSelect={onExport}>
 					<FileDown class="size-4" />
 					Export…
+				</DropdownMenu.Item>
+				<DropdownMenu.Item onSelect={onExportTimelapse}>
+					<Film class="size-4" />
+					Export timelapse…
 				</DropdownMenu.Item>
 			</DropdownMenu.Content>
 		</DropdownMenu.Root>

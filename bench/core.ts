@@ -108,6 +108,7 @@ import {
 	transformSelection,
 	warpScaleSkew,
 } from "../src/lib/editor/transform.js";
+import { buildTimelapseDoc } from "../src/lib/editor/timelapse.js";
 import type { BlendMode, MirrorAxis, PixelDoc } from "../src/lib/editor/types.js";
 
 function mulberry32(seed: number): () => number {
@@ -1910,6 +1911,82 @@ measure("exportGif 128x128x12", 4, 1, () => {
 });
 
 // --- Animation sequencing ------------------------------------------------
+function assertTimelapse(): void {
+	const doc = createDoc(2, 2);
+	const layer = doc.layers[0]!;
+	const base = new Uint32Array(layer.cels[0]!);
+	const afterFirst = new Uint32Array(base);
+	afterFirst[0] = packColor("#ff0000");
+	const afterSecond = new Uint32Array(afterFirst);
+	afterSecond[1] = packColor("#00ff00");
+	layer.cels[0]!.set(afterSecond);
+
+	const entries = [
+		{
+			kind: "cels" as const,
+			patches: [{ layerId: layer.id, frame: 0, pixels: new Uint32Array(base) }],
+		},
+		{
+			kind: "cels" as const,
+			patches: [
+				{ layerId: layer.id, frame: 0, pixels: new Uint32Array(afterFirst) },
+			],
+		},
+	];
+	const build = buildTimelapseDoc(doc, entries, 0);
+	if (build.steps !== 2 || build.frames.length !== 3) {
+		throw new Error("timelapse: expected 2 steps and 3 frames");
+	}
+	const [first, second, third] = build.frames as [
+		Uint32Array,
+		Uint32Array,
+		Uint32Array,
+	];
+	if (first[0] !== 0 || first[1] !== 0) {
+		throw new Error("timelapse: base frame should be empty");
+	}
+	if (second[0] !== packColor("#ff0000") || second[1] !== 0) {
+		throw new Error("timelapse: first step frame is wrong");
+	}
+	if (
+		third[0] !== packColor("#ff0000") ||
+		third[1] !== packColor("#00ff00")
+	) {
+		throw new Error("timelapse: final frame is wrong");
+	}
+
+	// A structural entry restores the whole earlier document.
+	const fullDoc = createDoc(2, 2);
+	fullDoc.layers[0]!.cels[0]!.fill(packColor("#0000ff"));
+	doc.layers[0]!.cels[0]!.set(afterSecond);
+	const withFull = buildTimelapseDoc(
+		doc,
+		[{ kind: "full", doc: fullDoc }],
+		0,
+	);
+	if (withFull.frames.length !== 2) {
+		throw new Error("timelapse: full entry should add one state");
+	}
+	if (withFull.frames[0]![0] !== packColor("#0000ff")) {
+		throw new Error("timelapse: full entry did not restore pixels");
+	}
+	if (withFull.frames[1]![0] !== packColor("#ff0000")) {
+		throw new Error("timelapse: final state after full entry is wrong");
+	}
+
+	// Canvas resizes create states with other dimensions; earlier frames are
+	// normalized into the current canvas instead of shrinking the video.
+	const smallDoc = createDoc(1, 1);
+	smallDoc.layers[0]!.cels[0]!.fill(packColor("#00ffff"));
+	const resized = buildTimelapseDoc(doc, [{ kind: "full", doc: smallDoc }], 0);
+	if (resized.frames[0]!.length !== 4 || resized.doc.width !== 2) {
+		throw new Error("timelapse: resized earlier state was not normalized");
+	}
+	if (resized.frames[0]![0] !== packColor("#00ffff")) {
+		throw new Error("timelapse: resized earlier pixels were lost");
+	}
+}
+
 function assertAnimationSequence(): void {
 	const expected: [readonly number[], "forward" | "backward" | "ping-pong", boolean, number[]][] = [
 		[[0, 1, 2], "forward", true, [0, 1, 2]],
@@ -1938,6 +2015,7 @@ function assertAnimationSequence(): void {
 		throw new Error("normalizeAnimationMode rejected backward");
 	}
 }
+assertTimelapse();
 assertAnimationSequence();
 
 // --- Report ---------------------------------------------------------------

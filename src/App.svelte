@@ -12,6 +12,7 @@
 	import GridSettingsDialog from "$lib/components/editor/GridSettingsDialog.svelte";
 	import HistoryDialog from "$lib/components/editor/HistoryDialog.svelte";
 	import LazyExportDialog from "$lib/components/editor/LazyExportDialog.svelte";
+	import LazyTimelapseDialog from "$lib/components/editor/LazyTimelapseDialog.svelte";
 	import LazyImportDialog from "$lib/components/editor/LazyImportDialog.svelte";
 	import OutlineDialog from "$lib/components/editor/OutlineDialog.svelte";
 	import RecoveryDialog from "$lib/components/editor/RecoveryDialog.svelte";
@@ -43,6 +44,7 @@
 	let aboutOpen = $state(false);
 	let importDialogOpen = $state(false);
 	let exportDialogOpen = $state(false);
+	let timelapseDialogOpen = $state(false);
 	let scaleCanvasOpen = $state(false);
 	let resizeCanvasOpen = $state(false);
 	let importFile = $state<File | null>(null);
@@ -299,6 +301,7 @@
 		openImport: openImportPicker,
 		openImportUrl,
 		openExport: () => (exportDialogOpen = true),
+		openTimelapse: () => (timelapseDialogOpen = true),
 		openScaleCanvas: () => (scaleCanvasOpen = true),
 		openResizeCanvas: () => (resizeCanvasOpen = true),
 		openGridSettings: () => (editor.gridSettingsOpen = true),
@@ -363,6 +366,7 @@
 			onImport={openImportPicker}
 			onImportUrl={openImportUrl}
 			onExport={() => (exportDialogOpen = true)}
+			onExportTimelapse={() => (timelapseDialogOpen = true)}
 			onCommandPalette={() => (commandPaletteOpen = true)}
 			onShortcuts={() => (shortcutsOpen = true)}
 			onAbout={() => (aboutOpen = true)}
@@ -396,6 +400,7 @@
 	<AboutDialog bind:open={aboutOpen} />
 	<LazyImportDialog bind:open={importDialogOpen} file={importFile} />
 	<LazyExportDialog bind:open={exportDialogOpen} />
+	<LazyTimelapseDialog bind:open={timelapseDialogOpen} />
 	<ScaleCanvasDialog bind:open={scaleCanvasOpen} />
 	<ResizeCanvasDialog bind:open={resizeCanvasOpen} />
 	<GridSettingsDialog bind:open={editor.gridSettingsOpen} />

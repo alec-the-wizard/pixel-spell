@@ -61,6 +61,7 @@ import {
 	fitPixelsToCanvas,
 } from "./reference.js";
 import { selectionBounds } from "./selection.js";
+import { buildTimelapseDoc, type TimelapseBuild } from "./timelapse.js";
 import {
 	activeBrushPreset,
 	brushLibrary,
@@ -134,9 +135,39 @@ import type {
 	ViewportSize,
 } from "./types.js";
 
-const HISTORY_LIMIT = 80;
+/** Default number of undo steps kept per project. Workspace-configurable. */
+export const DEFAULT_HISTORY_LIMIT = 80;
+export const HISTORY_LIMIT_MIN = 10;
+export const HISTORY_LIMIT_MAX = 500;
+export const HISTORY_LIMIT_KEY = "pixel-spell-history-limit";
 /** Keep undo history bounded even for very large documents. */
 const HISTORY_BYTE_LIMIT = 128 * 1024 * 1024;
+
+/** Reads the workspace-wide saved-step count from local storage. */
+function loadHistoryLimit(): number {
+	try {
+		const raw = localStorage.getItem(HISTORY_LIMIT_KEY);
+		if (!raw) return DEFAULT_HISTORY_LIMIT;
+		const value = Number(raw);
+		if (!Number.isFinite(value)) return DEFAULT_HISTORY_LIMIT;
+		return Math.max(
+			HISTORY_LIMIT_MIN,
+			Math.min(HISTORY_LIMIT_MAX, Math.round(value)),
+		);
+	} catch {
+		return DEFAULT_HISTORY_LIMIT;
+	}
+}
+
+/** Persists the workspace-wide saved-step count. Storage failures are non-fatal. */
+function saveHistoryLimit(value: number): void {
+	try {
+		localStorage.setItem(HISTORY_LIMIT_KEY, String(value));
+	} catch {
+		// Storage can be unavailable in private browsing contexts.
+	}
+}
+
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 64;
 /** Zoom limits for the floating preview window. */
@@ -484,6 +515,8 @@ export class EditorState {
 
 	undoCount = $state(0);
 	redoCount = $state(0);
+	/** Workspace-wide number of undo steps retained per project. */
+	historyLimit = $state(loadHistoryLimit());
 	/** Increments only when undo/redo restores a document. */
 	historyActionRevision = $state(0);
 
@@ -804,6 +837,56 @@ export class EditorState {
 		void this.undoCount;
 		void this.redoCount;
 		return this.#undoBytes + this.#redoBytes;
+	}
+
+	/** Bytes needed to store one single-cel pixel patch at the current size. */
+	get historyStepBytes(): number {
+		return this.doc.width * this.doc.height * 4;
+	}
+
+	/** Bytes needed for one full-document structural snapshot. */
+	get historySnapshotBytes(): number {
+		return (
+			this.doc.width *
+			this.doc.height *
+			4 *
+			Math.max(1, this.doc.frames.length) *
+			Math.max(1, this.doc.layers.length)
+		);
+	}
+
+	/**
+	 * Changes the workspace-wide saved-step count, persists it, and trims the
+	 * active project plus every inactive snapshot so the new limit applies
+	 * immediately.
+	 */
+	setHistoryLimit(value: number): void {
+		const next = Math.max(
+			HISTORY_LIMIT_MIN,
+			Math.min(HISTORY_LIMIT_MAX, Math.round(value)),
+		);
+		if (next === this.historyLimit) return;
+		this.historyLimit = next;
+		saveHistoryLimit(next);
+		this.#trimHistory();
+		for (const snapshot of this.#states.values()) {
+			while (snapshot.undo.length > next) {
+				const removed = snapshot.undo.shift();
+				if (!removed) break;
+				snapshot.undoBytes -= this.#entryBytes(removed);
+			}
+			if (snapshot.undoBytes < 0) snapshot.undoBytes = 0;
+		}
+		this.undoCount = this.#undo.length;
+		this.redoCount = this.#redo.length;
+	}
+
+	/**
+	 * Builds an export-ready document whose frames replay the retained history
+	 * of the active animation frame. Does not modify the document or history.
+	 */
+	buildTimelapse(): TimelapseBuild {
+		return buildTimelapseDoc(this.doc, this.#undo, this.activeFrame);
 	}
 
 	/**
@@ -2259,7 +2342,7 @@ export class EditorState {
 
 	#trimHistory(): void {
 		while (
-			this.#undo.length > HISTORY_LIMIT ||
+			this.#undo.length > this.historyLimit ||
 			(this.#undo.length > 1 && this.#undoBytes > HISTORY_BYTE_LIMIT)
 		) {
 			const removed = this.#undo.shift();

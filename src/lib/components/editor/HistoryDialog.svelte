@@ -5,7 +5,12 @@
 	import Undo2 from "@lucide/svelte/icons/undo-2";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import * as Dialog from "$lib/components/ui/dialog/index.js";
-	import { editor } from "$lib/editor/editor.svelte.js";
+	import { Slider } from "$lib/components/ui/slider/index.js";
+	import {
+		editor,
+		HISTORY_LIMIT_MAX,
+		HISTORY_LIMIT_MIN,
+	} from "$lib/editor/editor.svelte.js";
 	import { cn } from "$lib/utils.js";
 
 	let { open = $bindable(false) } = $props();
@@ -16,6 +21,10 @@
 	let redoable = $derived(editor.redoCount);
 	let position = $derived(editor.historyPosition);
 	let total = $derived(editor.historyTotal);
+	let stepEstimate = $derived(editor.historyLimit * editor.historyStepBytes);
+	let snapshotEstimate = $derived(
+		editor.historyLimit * editor.historySnapshotBytes,
+	);
 
 	function formatBytes(bytes: number): string {
 		if (bytes < 1024) return `${bytes} B`;
@@ -56,6 +65,37 @@
 				to that state; making a new edit discards the redoable steps below it.
 			</Dialog.Description>
 		</Dialog.Header>
+
+		<div class="grid gap-2 rounded-lg border bg-muted/20 p-3">
+			<div class="flex items-start justify-between gap-3">
+				<div class="grid gap-0.5">
+					<span class="text-xs font-medium">Saved steps</span>
+					<span class="text-[10px] text-muted-foreground">
+						Applies to every project and sets how much of the process a timelapse
+						can replay.
+					</span>
+				</div>
+				<span
+					class="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground"
+				>
+					{editor.historyLimit}
+				</span>
+			</div>
+			<Slider
+				type="single"
+				min={HISTORY_LIMIT_MIN}
+				max={HISTORY_LIMIT_MAX}
+				step={10}
+				value={editor.historyLimit}
+				onValueChange={(value) => editor.setHistoryLimit(value)}
+				aria-label="Saved history steps"
+			/>
+			<p class="text-[10px] text-muted-foreground">
+				Estimated memory: ≈ {formatBytes(stepEstimate)} for pixel-only steps, up to
+				≈ {formatBytes(snapshotEstimate)} if every step is a structural snapshot.
+				History is also capped by a 128 MB budget.
+			</p>
+		</div>
 
 		<div
 			bind:this={list}

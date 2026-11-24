@@ -20,6 +20,7 @@ export interface CommandHost {
 	openImport: () => void;
 	openImportUrl: () => void;
 	openExport: () => void;
+	openTimelapse: () => void;
 	openScaleCanvas: () => void;
 	openResizeCanvas: () => void;
 	openGridSettings: () => void;
@@ -40,6 +41,7 @@ const NOOP_HOST: CommandHost = {
 	openImport: () => {},
 	openImportUrl: () => {},
 	openExport: () => {},
+	openTimelapse: () => {},
 	openScaleCanvas: () => {},
 	openResizeCanvas: () => {},
 	openGridSettings: () => {},
@@ -134,6 +136,14 @@ const ACTION_COMMANDS: CommandDef[] = [
 		keywords: "png gif sprite sheet",
 		defaultKeys: [],
 		run: () => host.openExport(),
+	},
+	{
+		id: "file.export-timelapse",
+		label: "Export timelapse…",
+		group: "File",
+		keywords: "history process replay making of video gif",
+		defaultKeys: [],
+		run: () => host.openTimelapse(),
 	},
 	{
 		id: "edit.undo",
