@@ -43,6 +43,16 @@ import {
 	serializeProject,
 	type LoadedProject,
 } from "./file.js";
+import {
+	DEFAULT_GRID_SETTINGS,
+	loadGridSettings,
+	normalizeGridOffset,
+	normalizeGridSize,
+	saveGridSettings,
+	type GridMode,
+	type GridSettings,
+	type HexGridOrientation,
+} from "./grid.js";
 import { normalizeLayerColor } from "./layer-color.js";
 import {
 	MAX_REFERENCE_COUNT,
@@ -204,6 +214,8 @@ function readStoredTheme(): "light" | "dark" {
 		return "light";
 	}
 }
+
+const initialGrid = loadGridSettings();
 
 interface CelPatch {
 	layerId: string;
@@ -430,8 +442,15 @@ export class EditorState {
 	onionTintPrevious = $state("#ef4444");
 	onionTintNext = $state("#22c55e");
 
-	showGrid = $state(true);
-	gridSize = $state(1);
+	showGrid = $state(initialGrid.enabled);
+	showPixelGrid = $state(initialGrid.pixelEnabled);
+	gridMode = $state<GridMode>(initialGrid.mode);
+	gridWidth = $state(initialGrid.width);
+	gridHeight = $state(initialGrid.height);
+	gridOffsetX = $state(initialGrid.offsetX);
+	gridOffsetY = $state(initialGrid.offsetY);
+	gridHexOrientation = $state<HexGridOrientation>(initialGrid.hexOrientation);
+	gridSettingsOpen = $state(false);
 	showPreview = $state(false);
 	/** Preview window converts its copy to 8-bit grayscale without touching cels. */
 	previewGrayscale = $state(false);
@@ -1960,9 +1979,55 @@ export class EditorState {
 		this.zoom = clamp(this.effectiveZoom - 1, MIN_ZOOM, MAX_ZOOM);
 	}
 
+	setGridWidth(size: number): void {
+		this.gridWidth = normalizeGridSize(size, this.gridWidth);
+	}
+
+	setGridHeight(size: number): void {
+		this.gridHeight = normalizeGridSize(size, this.gridHeight);
+	}
+
+	/** Set both directions at once; used by the pill's square presets. */
 	setGridSize(size: number): void {
-		if (!Number.isFinite(size)) return;
-		this.gridSize = clamp(Math.round(size), 1, 64);
+		const next = normalizeGridSize(size, this.gridWidth);
+		this.gridWidth = next;
+		this.gridHeight = next;
+	}
+
+	setGridOffsetX(offset: number): void {
+		this.gridOffsetX = normalizeGridOffset(offset, this.gridOffsetX);
+	}
+
+	setGridOffsetY(offset: number): void {
+		this.gridOffsetY = normalizeGridOffset(offset, this.gridOffsetY);
+	}
+
+	gridSnapshot(): GridSettings {
+		return {
+			enabled: this.showGrid,
+			pixelEnabled: this.showPixelGrid,
+			mode: this.gridMode,
+			width: this.gridWidth,
+			height: this.gridHeight,
+			offsetX: this.gridOffsetX,
+			offsetY: this.gridOffsetY,
+			hexOrientation: this.gridHexOrientation,
+		};
+	}
+
+	persistGridSettings(): void {
+		saveGridSettings(this.gridSnapshot());
+	}
+
+	resetGridSettings(): void {
+		this.showGrid = DEFAULT_GRID_SETTINGS.enabled;
+		this.showPixelGrid = DEFAULT_GRID_SETTINGS.pixelEnabled;
+		this.gridMode = DEFAULT_GRID_SETTINGS.mode;
+		this.gridWidth = DEFAULT_GRID_SETTINGS.width;
+		this.gridHeight = DEFAULT_GRID_SETTINGS.height;
+		this.gridOffsetX = DEFAULT_GRID_SETTINGS.offsetX;
+		this.gridOffsetY = DEFAULT_GRID_SETTINGS.offsetY;
+		this.gridHexOrientation = DEFAULT_GRID_SETTINGS.hexOrientation;
 	}
 
 	setRotation(degrees: number): void {

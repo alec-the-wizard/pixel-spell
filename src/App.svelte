@@ -9,6 +9,7 @@
 	import DitherDialog from "$lib/components/editor/DitherDialog.svelte";
 	import GradientMapDialog from "$lib/components/editor/GradientMapDialog.svelte";
 	import GrayscaleDialog from "$lib/components/editor/GrayscaleDialog.svelte";
+	import GridSettingsDialog from "$lib/components/editor/GridSettingsDialog.svelte";
 	import HistoryDialog from "$lib/components/editor/HistoryDialog.svelte";
 	import LazyExportDialog from "$lib/components/editor/LazyExportDialog.svelte";
 	import LazyImportDialog from "$lib/components/editor/LazyImportDialog.svelte";
@@ -210,6 +211,20 @@
 	});
 
 	$effect(() => {
+		// Grid preferences are workspace state and persist locally. The effect
+		// also catches direct bindings from the View menu and the canvas pill.
+		editor.showGrid;
+		editor.showPixelGrid;
+		editor.gridMode;
+		editor.gridWidth;
+		editor.gridHeight;
+		editor.gridOffsetX;
+		editor.gridOffsetY;
+		editor.gridHexOrientation;
+		editor.persistGridSettings();
+	});
+
+	$effect(() => {
 		// Capture a recovery snapshot shortly after drawing pauses. The interval
 		// in onMount covers longer, continuous editing sessions.
 		editor.revision;
@@ -286,6 +301,7 @@
 		openExport: () => (exportDialogOpen = true),
 		openScaleCanvas: () => (scaleCanvasOpen = true),
 		openResizeCanvas: () => (resizeCanvasOpen = true),
+		openGridSettings: () => (editor.gridSettingsOpen = true),
 		openOutline: () => (editor.effectOutlineOpen = true),
 		openDropShadow: () => (editor.effectDropShadowOpen = true),
 		openColorReplace: () => (editor.effectColorReplaceOpen = true),
@@ -352,6 +368,7 @@
 			onAbout={() => (aboutOpen = true)}
 			onScaleCanvas={() => (scaleCanvasOpen = true)}
 			onResizeCanvas={() => (resizeCanvasOpen = true)}
+			onGridSettings={() => (editor.gridSettingsOpen = true)}
 			onOutline={() => (editor.effectOutlineOpen = true)}
 			onDropShadow={() => (editor.effectDropShadowOpen = true)}
 			onColorReplace={() => (editor.effectColorReplaceOpen = true)}
@@ -381,6 +398,7 @@
 	<LazyExportDialog bind:open={exportDialogOpen} />
 	<ScaleCanvasDialog bind:open={scaleCanvasOpen} />
 	<ResizeCanvasDialog bind:open={resizeCanvasOpen} />
+	<GridSettingsDialog bind:open={editor.gridSettingsOpen} />
 	<OutlineDialog bind:open={editor.effectOutlineOpen} />
 	<DropShadowDialog bind:open={editor.effectDropShadowOpen} />
 	<ColorReplaceDialog bind:open={editor.effectColorReplaceOpen} />

@@ -136,6 +136,7 @@
 	--checker-light: #f7f7f8;
 	--checker-dark: #e7e7ea;
 	--grid-line: rgb(0 0 0 / 0.16);
+	--pixel-grid-line: rgb(0 0 0 / 0.07);
 	--canvas-dot: rgb(0 0 0 / 0.13);
 	color-scheme: light;
 }
@@ -144,6 +145,7 @@
 	--checker-light: #1f1f22;
 	--checker-dark: #2c2c31;
 	--grid-line: rgb(255 255 255 / 0.13);
+	--pixel-grid-line: rgb(255 255 255 / 0.06);
 	--canvas-dot: rgb(255 255 255 / 0.1);
 	color-scheme: dark;
 }

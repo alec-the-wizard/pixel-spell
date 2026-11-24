@@ -35,6 +35,7 @@
 	import Scan from "@lucide/svelte/icons/scan";
 	import ScanEye from "@lucide/svelte/icons/scan-eye";
 	import Search from "@lucide/svelte/icons/search";
+	import Settings2 from "@lucide/svelte/icons/settings-2";
 	import SquareDashed from "@lucide/svelte/icons/square-dashed";
 	import Sun from "@lucide/svelte/icons/sun";
 	import Trash2 from "@lucide/svelte/icons/trash-2";
@@ -65,6 +66,7 @@
 		onAbout,
 		onScaleCanvas,
 		onResizeCanvas,
+		onGridSettings,
 		onOutline,
 		onDropShadow,
 		onColorReplace,
@@ -83,6 +85,7 @@
 		onAbout: () => void;
 		onScaleCanvas: () => void;
 		onResizeCanvas: () => void;
+		onGridSettings: () => void;
 		onOutline: () => void;
 		onDropShadow: () => void;
 		onColorReplace: () => void;
@@ -349,8 +352,16 @@
 				<DropdownMenu.Separator />
 				<DropdownMenu.CheckboxItem bind:checked={editor.showGrid}>
 					<Grid3x3 class="size-4" />
+					Show grid
+				</DropdownMenu.CheckboxItem>
+				<DropdownMenu.CheckboxItem bind:checked={editor.showPixelGrid}>
+					<Grid2x2 class="size-4" />
 					Show pixel grid
 				</DropdownMenu.CheckboxItem>
+				<DropdownMenu.Item onSelect={onGridSettings}>
+					<Settings2 class="size-4" />
+					Grid settings…
+				</DropdownMenu.Item>
 				<DropdownMenu.CheckboxItem bind:checked={editor.showPreview}>
 					<ScanEye class="size-4" />
 					Show preview

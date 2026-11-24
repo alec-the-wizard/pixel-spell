@@ -34,7 +34,7 @@ A focused pixel art editor that runs entirely in the browser. Draw sprites, buil
 - **Autosave and crash recovery** — unsaved projects are snapshotted to IndexedDB shortly after you pause drawing, and every few seconds during longer sessions. If the app is reloaded or crashes, the next launch offers the autosaved tabs with a live preview and **Restore** or **Discard** choices. Autosaves are recovery copies; saved `.pixelspell` files remain the source of truth.
 - **File import** — use **File → Import…** or drag and drop a file anywhere to open the import dialog. Common images (PNG, JPEG, GIF, WebP, BMP, AVIF, ICO, SVG) can become a new project, a normal layer, a new frame, a timeline reference layer, or a reference-board image. Project imports larger than 2048 × 2048 are cropped to the top-left corner; reference layers use the complete image fitted to the canvas, and board references retain their original full-resolution bytes. PNGs can also contribute a palette built from their unique colors, and JASC `.pal`, GIMP `.gpl`, and `.hex` palettes import directly. Palettes are capped at 256 colors and previewed before import. **File → Import from URL…** loads a direct image link into the same dialog, and pasting an image from the OS clipboard anywhere outside a text field opens the dialog with that image. Image URLs must allow cross-origin (CORS) requests; otherwise the dialog explains the failure and suggests downloading the file.
 - **Projects** — save and open portable `.pixelspell` files; opened files get their own tab. Reference layers and board images are stored inside the project file, so references travel with the artwork.
-- **Canvas controls** — fit-to-window or manual zoom, scroll-wheel zoom, middle-mouse panning that always keeps part of the sprite on stage, canvas rotation from −180° to +180° in 15° steps, preset grid sizes from 1×1 to 64×64, and a live cursor preview. The grid control sits at the bottom left of the canvas, while rotation and zoom controls sit at the bottom right. A compact menu-bar readout shows the canvas size, last cursor coordinate, current frame, and active layer.
+- **Canvas controls** — fit-to-window or manual zoom, scroll-wheel zoom, middle-mouse panning that always keeps part of the sprite on stage, canvas rotation from −180° to +180° in 15° steps, independent pixel and main grids, and a live cursor preview. The main grid supports square cells with separate width and height, isometric diamonds, and pointy- or flat-top hexagons, each with a configurable offset; the pixel grid can be toggled separately. The grid controls and settings dial live at the bottom left of the canvas, while rotation and zoom controls sit at the bottom right. A compact menu-bar readout shows the canvas size, last cursor coordinate, current frame, and active layer.
 - **Preview window** — a copy of the active frame floats in the upper-right of the canvas stage, with 1×–8× zoom and an 8-bit grayscale toggle at the bottom. Close it to leave a circular scan-eye button; toggle it from **View → Show preview**. The preview updates while the animation plays.
 - **Light and dark themes** with a sky-blue accent, persisted in `localStorage`.
 
@@ -97,7 +97,7 @@ Open the URL printed by Vite (usually `http://localhost:5173`).
 | Previous / next frame | `[` / `]` or `,` / `.`  |
 | Toggle onion skin   | `O`                      |
 | Move selected frames | `Alt+←` / `Alt+→`       |
-| Toggle grid         | `Shift+G`                |
+| Toggle pixel grid   | `Shift+G`                |
 | Select all          | `Ctrl+A`                 |
 | Copy selection      | `Ctrl+C`                 |
 | Paste selection     | `Ctrl+V`                 |
@@ -137,6 +137,7 @@ src/
         ├── layer-color.ts      # Layer identity tints, presets, and row shading
         ├── autosave.ts         # IndexedDB crash-recovery snapshots
         ├── canvas.ts           # Nearest-neighbor scale, resize, and crop helpers
+        ├── grid.ts             # Grid/pixel-grid settings and square/isometric/hex rendering
         ├── import.ts           # Image/palette import parsing and analysis
         ├── reference.ts        # Reference-layer fitting and board placement helpers
         ├── export.ts           # Image, sprite sheet, GIF, and metadata export

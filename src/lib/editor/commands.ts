@@ -22,6 +22,7 @@ export interface CommandHost {
 	openExport: () => void;
 	openScaleCanvas: () => void;
 	openResizeCanvas: () => void;
+	openGridSettings: () => void;
 	openOutline: () => void;
 	openDropShadow: () => void;
 	openColorReplace: () => void;
@@ -41,6 +42,7 @@ const NOOP_HOST: CommandHost = {
 	openExport: () => {},
 	openScaleCanvas: () => {},
 	openResizeCanvas: () => {},
+	openGridSettings: () => {},
 	openOutline: () => {},
 	openDropShadow: () => {},
 	openColorReplace: () => {},
@@ -243,10 +245,23 @@ const ACTION_COMMANDS: CommandDef[] = [
 	},
 	{
 		id: "view.toggle-grid",
+		label: "Toggle grid",
+		group: "View",
+		run: () => (editor.showGrid = !editor.showGrid),
+	},
+	{
+		id: "view.toggle-pixel-grid",
 		label: "Toggle pixel grid",
 		group: "View",
 		defaultKeys: ["shift+g"],
-		run: () => (editor.showGrid = !editor.showGrid),
+		run: () => (editor.showPixelGrid = !editor.showPixelGrid),
+	},
+	{
+		id: "view.grid-settings",
+		label: "Grid settings…",
+		group: "View",
+		keywords: "grid square isometric hexagonal offset cell width height pixel",
+		run: () => host.openGridSettings(),
 	},
 	{
 		id: "view.toggle-preview",

@@ -1,10 +1,12 @@
 <script lang="ts">
+	import Grid2x2 from "@lucide/svelte/icons/grid-2x2";
 	import Grid3x3 from "@lucide/svelte/icons/grid-3x3";
 	import Maximize2 from "@lucide/svelte/icons/maximize-2";
 	import Minus from "@lucide/svelte/icons/minus";
 	import Plus from "@lucide/svelte/icons/plus";
 	import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
 	import RotateCw from "@lucide/svelte/icons/rotate-cw";
+	import Settings2 from "@lucide/svelte/icons/settings-2";
 	import ZoomIn from "@lucide/svelte/icons/zoom-in";
 	import ZoomOut from "@lucide/svelte/icons/zoom-out";
 	import { Button } from "$lib/components/ui/button/index.js";
@@ -40,6 +42,7 @@
 	} from "$lib/editor/selection.js";
 	import { transformSelection } from "$lib/editor/transform.js";
 	import { drawPixels, drawScaled } from "$lib/editor/render.js";
+	import { drawGridOverlay, type GridSettings } from "$lib/editor/grid.js";
 	import { editor, type FloatingSelection } from "$lib/editor/editor.svelte.js";
 	import { isSelectionTool, TOOL_BY_ID, usesBrush } from "$lib/editor/tools.js";
 	import type {
@@ -66,18 +69,12 @@
 	const RIGHT_SLOT_COLOR = "#f97316";
 
 	function stepGridSize(direction: 1 | -1): void {
-		const current = GRID_SIZES.indexOf(editor.gridSize);
-		const index =
-			current >= 0
-				? current
-				: GRID_SIZES.findIndex((size) => size > editor.gridSize);
-		let nextIndex: number;
-		if (index < 0) {
-			nextIndex = GRID_SIZES.length - 1;
-		} else {
-			nextIndex = Math.max(0, Math.min(GRID_SIZES.length - 1, index + direction));
-		}
-		editor.setGridSize(GRID_SIZES[nextIndex]!);
+		const next =
+			direction > 0
+				? (GRID_SIZES.find((size) => size > editor.gridWidth) ?? GRID_MAX)
+				: ([...GRID_SIZES].reverse().find((size) => size < editor.gridWidth) ??
+					GRID_MIN);
+		editor.setGridSize(next);
 	}
 
 	let stage: HTMLDivElement | undefined;
@@ -85,6 +82,7 @@
 	let overlayCanvas: HTMLCanvasElement | undefined;
 	let onionCanvas: HTMLCanvasElement | undefined;
 	let onionFrameCanvas: HTMLCanvasElement | null = null;
+	let gridCanvas: HTMLCanvasElement | undefined;
 	let mirrorCanvas: HTMLCanvasElement | undefined;
 	let brushPreviewCanvas = $state<HTMLCanvasElement | undefined>();
 	let floatingCanvas: HTMLCanvasElement | null = null;
@@ -218,7 +216,11 @@
 	let zoom = $derived(editor.effectiveZoom);
 	let canvasWidth = $derived(editor.doc.width * zoom);
 	let canvasHeight = $derived(editor.doc.height * zoom);
-	let gridStep = $derived(zoom * editor.gridSize);
+	let gridPresetValue = $derived(
+		editor.gridWidth === editor.gridHeight && GRID_SIZES.includes(editor.gridWidth)
+			? String(editor.gridWidth)
+			: "custom",
+	);
 	let isDrawable = $derived(editor.activeLayerDrawable);
 
 	let brushPreviewMask = $derived(
@@ -477,6 +479,63 @@
 		canvasHeight;
 		if (!onionCanvas) return;
 		const id = requestAnimationFrame(drawOnionSkins);
+		return () => cancelAnimationFrame(id);
+	});
+
+	function drawGridLayer(
+		settings: GridSettings,
+		width: number,
+		height: number,
+		currentZoom: number,
+		theme: "light" | "dark",
+	): void {
+		if (!gridCanvas) return;
+		const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+		const bufferWidth = Math.max(1, Math.round(width * currentZoom * dpr));
+		const bufferHeight = Math.max(1, Math.round(height * currentZoom * dpr));
+		if (gridCanvas.width !== bufferWidth) gridCanvas.width = bufferWidth;
+		if (gridCanvas.height !== bufferHeight) gridCanvas.height = bufferHeight;
+
+		const context = gridCanvas.getContext("2d");
+		if (!context) return;
+		const styles = getComputedStyle(gridCanvas);
+		const gridFallback =
+			theme === "dark" ? "rgba(255, 255, 255, 0.13)" : "rgba(0, 0, 0, 0.16)";
+		const pixelFallback =
+			theme === "dark" ? "rgba(255, 255, 255, 0.06)" : "rgba(0, 0, 0, 0.07)";
+		drawGridOverlay(context, {
+			width,
+			height,
+			zoom: currentZoom,
+			devicePixelRatio: dpr,
+			settings,
+			gridColor:
+				styles.getPropertyValue("--grid-line").trim() || gridFallback,
+			pixelColor:
+				styles.getPropertyValue("--pixel-grid-line").trim() || pixelFallback,
+		});
+	}
+
+	$effect(() => {
+		// The grid is presentation-only and does not follow pixel revisions.
+		const settings: GridSettings = {
+			enabled: editor.showGrid,
+			pixelEnabled: editor.showPixelGrid,
+			mode: editor.gridMode,
+			width: editor.gridWidth,
+			height: editor.gridHeight,
+			offsetX: editor.gridOffsetX,
+			offsetY: editor.gridOffsetY,
+			hexOrientation: editor.gridHexOrientation,
+		};
+		const width = editor.doc.width;
+		const height = editor.doc.height;
+		const currentZoom = zoom;
+		const theme = editor.theme;
+		if (!gridCanvas) return;
+		const id = requestAnimationFrame(() =>
+			drawGridLayer(settings, width, height, currentZoom, theme),
+		);
 		return () => cancelAnimationFrame(id);
 	});
 
@@ -2959,12 +3018,13 @@
 				aria-hidden="true"
 			></canvas>
 
-			{#if editor.showGrid && gridStep >= 6}
-				<div
-					class="pointer-events-none absolute inset-0"
-					style={`background-image: linear-gradient(to right, var(--grid-line) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px); background-size: ${gridStep}px ${gridStep}px;`}
-				></div>
-			{/if}
+			<canvas
+				bind:this={gridCanvas}
+				class="pointer-events-none absolute inset-0 block"
+				style:width={`${canvasWidth}px`}
+				style:height={`${canvasHeight}px`}
+				aria-hidden="true"
+			></canvas>
 
 			{#if editor.cursor && isDrawable && showBrushCursor}
 				{#if areaToolRadius > 0}
@@ -3054,11 +3114,23 @@
 			<Grid3x3 class="size-3.5" />
 		</Button>
 		<Button
+			variant={editor.showPixelGrid ? "secondary" : "ghost"}
+			size="icon-xs"
+			class="rounded-full text-muted-foreground"
+			onclick={() => (editor.showPixelGrid = !editor.showPixelGrid)}
+			title="Toggle pixel grid"
+			aria-label="Toggle pixel grid"
+			aria-pressed={editor.showPixelGrid}
+		>
+			<Grid2x2 class="size-3.5" />
+		</Button>
+		<Separator orientation="vertical" class="mx-0.5 h-5 self-center" />
+		<Button
 			variant="ghost"
 			size="icon-xs"
 			class="rounded-full text-muted-foreground"
 			onclick={() => stepGridSize(-1)}
-			disabled={editor.gridSize <= GRID_MIN}
+			disabled={editor.gridWidth <= GRID_MIN}
 			title="Decrease grid size"
 			aria-label="Decrease grid size"
 		>
@@ -3066,26 +3138,42 @@
 		</Button>
 		<select
 			class="h-6 cursor-pointer rounded-full bg-transparent px-1.5 font-mono text-[11px] tabular-nums text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-			value={editor.gridSize}
-			onchange={(event) =>
-				editor.setGridSize(Number((event.currentTarget as HTMLSelectElement).value))}
-			title="Grid size in document pixels"
-			aria-label="Grid size"
+			value={gridPresetValue}
+			onchange={(event) => {
+				const value = (event.currentTarget as HTMLSelectElement).value;
+				if (value !== "custom") editor.setGridSize(Number(value));
+			}}
+			title="Grid cell size in document pixels"
+			aria-label="Grid cell size"
 		>
 			{#each GRID_SIZES as size (size)}
-				<option value={size}>{size}×{size}</option>
+				<option value={String(size)}>{size}×{size}</option>
 			{/each}
+			{#if gridPresetValue === "custom"}
+				<option value="custom">{editor.gridWidth}×{editor.gridHeight}</option>
+			{/if}
 		</select>
 		<Button
 			variant="ghost"
 			size="icon-xs"
 			class="rounded-full text-muted-foreground"
 			onclick={() => stepGridSize(1)}
-			disabled={editor.gridSize >= GRID_MAX}
+			disabled={editor.gridWidth >= GRID_MAX}
 			title="Increase grid size"
 			aria-label="Increase grid size"
 		>
 			<Plus class="size-3.5" />
+		</Button>
+		<Separator orientation="vertical" class="mx-0.5 h-5 self-center" />
+		<Button
+			variant="ghost"
+			size="icon-xs"
+			class="rounded-full text-muted-foreground"
+			onclick={() => (editor.gridSettingsOpen = true)}
+			title="Grid settings"
+			aria-label="Grid settings"
+		>
+			<Settings2 class="size-3.5" />
 		</Button>
 	</div>
 
