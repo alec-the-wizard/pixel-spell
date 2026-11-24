@@ -6,6 +6,7 @@
 	import Check from "@lucide/svelte/icons/check";
 	import ChevronDown from "@lucide/svelte/icons/chevron-down";
 	import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste";
+	import Contrast from "@lucide/svelte/icons/contrast";
 	import Copy from "@lucide/svelte/icons/copy";
 	import Crop from "@lucide/svelte/icons/crop";
 	import Eraser from "@lucide/svelte/icons/eraser";
@@ -69,6 +70,7 @@
 		onColorReplace,
 		onDither,
 		onGradientMap,
+		onGrayscale,
 		onHistory,
 	}: {
 		onNew: () => void;
@@ -86,6 +88,7 @@
 		onColorReplace: () => void;
 		onDither: () => void;
 		onGradientMap: () => void;
+		onGrayscale: () => void;
 		onHistory: () => void;
 	} = $props();
 
@@ -316,6 +319,10 @@
 				<DropdownMenu.Item onSelect={onGradientMap}>
 					<Blend class="size-4" />
 					Gradient map…
+				</DropdownMenu.Item>
+				<DropdownMenu.Item onSelect={onGrayscale}>
+					<Contrast class="size-4" />
+					Grayscale…
 				</DropdownMenu.Item>
 			</DropdownMenu.Content>
 		</DropdownMenu.Root>

@@ -22,6 +22,11 @@ import {
 	normalizeGradientSpace,
 	normalizeGradientStops,
 } from "./gradient-map.js";
+import {
+	grayscalePixels,
+	normalizeGrayscaleBits,
+	type GrayscaleBits,
+} from "./grayscale.js";
 import type {
 	GroupEffect,
 	GroupEffectKind,
@@ -34,6 +39,7 @@ export const GROUP_EFFECT_KINDS: { id: GroupEffectKind; label: string }[] = [
 	{ id: "color-replace", label: "Color replace" },
 	{ id: "dither", label: "Dither" },
 	{ id: "gradient-map", label: "Gradient map" },
+	{ id: "grayscale", label: "Grayscale" },
 ];
 
 export const GROUP_EFFECT_LABELS: Record<GroupEffectKind, string> = {
@@ -42,6 +48,7 @@ export const GROUP_EFFECT_LABELS: Record<GroupEffectKind, string> = {
 	"color-replace": "Color replace",
 	dither: "Dither",
 	"gradient-map": "Gradient map",
+	grayscale: "Grayscale",
 };
 
 export const MAX_GROUP_EFFECTS = 32;
@@ -127,6 +134,8 @@ export function defaultGroupEffectOptions(
 				gradientSource: "luminance",
 				gradientInvert: false,
 			};
+		case "grayscale":
+			return { bits: 8 };
 	}
 }
 
@@ -247,6 +256,8 @@ export function normalizeGroupEffectOptions(
 				gradientSource: normalizeGradientSource(raw.gradientSource),
 				gradientInvert: boolOr(raw.gradientInvert, false),
 			};
+		case "grayscale":
+			return { bits: normalizeGrayscaleBits(raw.bits) };
 	}
 }
 
@@ -352,6 +363,10 @@ export function applyGroupEffect(
 				source: normalizeGradientSource(options.gradientSource),
 				invert: options.gradientInvert === true,
 			});
+		case "grayscale":
+			return grayscalePixels(pixels, width, height, {
+				bits: normalizeGrayscaleBits(options.bits),
+			});
 	}
 }
 
@@ -389,6 +404,10 @@ export function groupEffectSummary(effect: GroupEffect): string {
 			const stops = normalizeGradientStops(options.gradient);
 			const space = normalizeGradientSpace(options.gradientSpace);
 			return `${stops.length} stops · ${space === "oklab" ? "OKLab" : "RGB"}`;
+		}
+		case "grayscale": {
+			const bits: GrayscaleBits = normalizeGrayscaleBits(options.bits);
+			return `${bits}-bit · ${1 << bits} levels`;
 		}
 	}
 }

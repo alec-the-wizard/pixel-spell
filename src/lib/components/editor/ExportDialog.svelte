@@ -27,6 +27,7 @@
 		downloadBlob,
 		exportBaseName,
 		exportFileName,
+		exportFormatSupportsGrayscale,
 		exportFrameImage,
 		exportSpriteSheet,
 		flattenPixels,
@@ -44,6 +45,7 @@
 		type VideoFormat,
 	} from "$lib/editor/export.js";
 	import { drawPixels, drawScaled } from "$lib/editor/render.js";
+	import { grayscalePixels } from "$lib/editor/grayscale.js";
 	import { cn } from "$lib/utils.js";
 
 	let { open = $bindable(false) } = $props();
@@ -77,6 +79,7 @@
 	let imageBackground = $state<ExportBackground>("transparent");
 	let imageQuality = $state(90);
 	let imageFileName = $state("");
+	let imageGrayscale = $state(false);
 
 	let sheetScale = $state(1);
 	let sheetLayout = $state<SheetLayout>("horizontal");
@@ -86,6 +89,7 @@
 	let sheetBackground = $state<ExportBackground>("transparent");
 	let sheetQuality = $state(90);
 	let sheetFileName = $state("");
+	let sheetGrayscale = $state(false);
 	let sheetMetadataFormat = $state<SheetMetadataChoice>("none");
 	let sheetPivotX = $state(50);
 	let sheetPivotY = $state(50);
@@ -160,14 +164,22 @@
 			EXPORT_FORMATS.find((entry) => entry.id === id)?.label ?? id.toUpperCase();
 
 		if (activeTab === "image") {
-			return `${format(imageFormat)} · ${imageBackground}`;
+			const grayscale =
+				imageGrayscale && exportFormatSupportsGrayscale(imageFormat)
+					? " · 8-bit grayscale"
+					: "";
+			return `${format(imageFormat)} · ${imageBackground}${grayscale}`;
 		}
 		if (activeTab === "spritesheet") {
 			const metadata =
 				SHEET_METADATA_FORMATS.find(
 					(entry) => entry.id === sheetMetadataFormat,
 				)?.summary ?? "";
-			return `${format(sheetFormat)} · ${sheetBackground}${metadata ? ` · ${metadata}` : ""}`;
+			const grayscale =
+				sheetGrayscale && exportFormatSupportsGrayscale(sheetFormat)
+					? " · 8-bit grayscale"
+					: "";
+			return `${format(sheetFormat)} · ${sheetBackground}${grayscale}${metadata ? ` · ${metadata}` : ""}`;
 		}
 		if (activeTab === "video") {
 			const selectedCount = editor.selectedFrameIndices.length;
@@ -196,6 +208,7 @@
 			imageBackground = "transparent";
 			imageQuality = 90;
 			imageFileName = `${exportBaseName(editor.name)}-frame-${editor.activeFrame + 1}.png`;
+			imageGrayscale = false;
 
 			sheetScale = 1;
 			sheetLayout = "horizontal";
@@ -214,6 +227,7 @@
 			sheetMetadataFormat = "none";
 			sheetPivotX = 50;
 			sheetPivotY = 50;
+			sheetGrayscale = false;
 
 			videoFormat = "gif";
 			videoScale = 1;
@@ -276,6 +290,7 @@
 		scale: number,
 		spacing: number,
 		background: ExportBackground,
+		grayscale: boolean,
 	): void {
 		const geometry = getSheetGeometry(
 			doc.width * scale,
@@ -310,9 +325,12 @@
 		const source = sheetSourceCanvas;
 
 		for (let frameIndex = 0; frameIndex < doc.frames.length; frameIndex++) {
+			const composited = compositeFrameCached(doc, frameIndex, editor.revision);
 			drawPixels(
 				source,
-				compositeFrameCached(doc, frameIndex, editor.revision),
+				grayscale
+					? grayscalePixels(composited, doc.width, doc.height, { bits: 8 })
+					: composited,
 				doc.width,
 				doc.height,
 			);
@@ -342,10 +360,12 @@
 
 		if (tab === "image") {
 			const frame = Math.max(0, Math.min(imageFrame, doc.frames.length - 1));
-			const pixels = flattenPixels(
-				compositeFrameCached(doc, frame, editor.revision),
-				imageBackground,
-			);
+			const composited = compositeFrameCached(doc, frame, editor.revision);
+			const flattened = flattenPixels(composited, imageBackground);
+			const pixels =
+				imageGrayscale && exportFormatSupportsGrayscale(imageFormat)
+					? grayscalePixels(flattened, doc.width, doc.height, { bits: 8 })
+					: flattened;
 			drawPixelPreview(canvas, pixels, doc.width, doc.height);
 			return;
 		}
@@ -359,6 +379,7 @@
 				sheetScale,
 				sheetSpacing,
 				sheetBackground,
+				sheetGrayscale && exportFormatSupportsGrayscale(sheetFormat),
 			);
 			return;
 		}
@@ -478,6 +499,7 @@
 					format: imageFormat,
 					background: imageBackground,
 					quality: imageQuality,
+					grayscale: imageGrayscale,
 				});
 				downloadBlob(exportFileName(imageFileName, FORMAT_EXTENSION[imageFormat]), blob);
 			} else if (activeTab === "spritesheet") {
@@ -489,6 +511,7 @@
 					format: sheetFormat,
 					background: sheetBackground,
 					quality: sheetQuality,
+					grayscale: sheetGrayscale,
 				};
 				const blob = await exportSpriteSheet(doc, sheetOptions);
 				const sheetName = exportFileName(
@@ -721,6 +744,21 @@
 					{/if}
 				</div>
 
+				{#if exportFormatSupportsGrayscale(imageFormat)}
+					<label
+						class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
+					>
+						<span class="grid gap-0.5">
+							<span class="text-xs font-medium">8-bit grayscale</span>
+							<span class="text-[10px] text-muted-foreground">
+								Write a single-channel PNG with perceptual luminance instead of
+								RGB color.
+							</span>
+						</span>
+						<Switch bind:checked={imageGrayscale} />
+					</label>
+				{/if}
+
 				{#if imageFormat !== "png"}
 					<div class="grid gap-2">
 						<div class="flex items-center justify-between">
@@ -833,6 +871,21 @@
 						</p>
 					{/if}
 				</div>
+
+				{#if exportFormatSupportsGrayscale(sheetFormat)}
+					<label
+						class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
+					>
+						<span class="grid gap-0.5">
+							<span class="text-xs font-medium">8-bit grayscale</span>
+							<span class="text-[10px] text-muted-foreground">
+								Write a single-channel PNG sheet. Frame rects and metadata are
+								unchanged.
+							</span>
+						</span>
+						<Switch bind:checked={sheetGrayscale} />
+					</label>
+				{/if}
 
 				{#if sheetFormat !== "png"}
 					<div class="grid gap-2">

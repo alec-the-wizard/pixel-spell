@@ -1,6 +1,8 @@
 import type { PixelBounds } from "./canvas.js";
+import { scalePixelsNearest } from "./canvas.js";
 import { cloneDoc, compositeFrame, frameDurationMs } from "./doc.js";
 import { fileBase } from "./file.js";
+import { encodeGrayscalePng } from "./grayscale-png.js";
 import { drawPixels } from "./render.js";
 import type { PixelDoc } from "./types.js";
 
@@ -32,6 +34,8 @@ export interface ImageExportOptions {
 	background: ExportBackground;
 	/** 0–100, used by WebP and JPEG. */
 	quality: number;
+	/** Encode a true 8-bit grayscale PNG instead of RGBA (PNG only). */
+	grayscale?: boolean;
 }
 
 export interface SheetExportOptions {
@@ -43,6 +47,8 @@ export interface SheetExportOptions {
 	format: ExportFormat;
 	background: ExportBackground;
 	quality: number;
+	/** Encode a true 8-bit grayscale PNG instead of RGBA (PNG only). */
+	grayscale?: boolean;
 }
 
 export interface GifExportOptions {
@@ -183,6 +189,11 @@ export const FORMAT_EXTENSION: Record<ExportFormat, string> = {
 	webp: "webp",
 	jpeg: "jpg",
 };
+
+/** Formats that can be written as a true 8-bit grayscale image. */
+export function exportFormatSupportsGrayscale(format: ExportFormat): boolean {
+	return format === "png";
+}
 
 const FORMAT_MIME: Record<ExportFormat, string> = {
 	png: "image/png",
@@ -343,6 +354,23 @@ function createSourceCanvas(doc: PixelDoc, frameIndex: number): HTMLCanvasElemen
 	return canvas;
 }
 
+/** Copies one pixel buffer into a larger buffer at an integer offset. */
+function blitPixels(
+	target: Uint32Array,
+	targetWidth: number,
+	source: Uint32Array,
+	width: number,
+	height: number,
+	x: number,
+	y: number,
+): void {
+	for (let row = 0; row < height; row++) {
+		const sourceRow = row * width;
+		const targetRow = (y + row) * targetWidth + x;
+		target.set(source.subarray(sourceRow, sourceRow + width), targetRow);
+	}
+}
+
 function fillBackground(
 	context: CanvasRenderingContext2D,
 	width: number,
@@ -397,6 +425,21 @@ export async function exportFrameImage(
 	const sizeError = validateExportSize(width, height);
 	if (sizeError) throw new Error(sizeError);
 
+	if (options.grayscale && exportFormatSupportsGrayscale(options.format)) {
+		const scaled = scalePixelsNearest(
+			compositeFrame(doc, frameIndex),
+			doc.width,
+			doc.height,
+			width,
+			height,
+		);
+		const pixels = flattenPixels(scaled, options.background);
+		const bytes = await encodeGrayscalePng(pixels, width, height, {
+			alpha: options.background === "transparent",
+		});
+		return new Blob([bytes], { type: "image/png" });
+	}
+
 	const canvas = document.createElement("canvas");
 	canvas.width = width;
 	canvas.height = height;
@@ -425,6 +468,46 @@ export async function exportSpriteSheet(
 	);
 	const sizeError = validateExportSize(geometry.width, geometry.height);
 	if (sizeError) throw new Error(sizeError);
+
+	if (options.grayscale && exportFormatSupportsGrayscale(options.format)) {
+		const transparent = options.background === "transparent";
+		const sheet = new Uint32Array(geometry.width * geometry.height);
+		if (!transparent) {
+			sheet.fill(
+				options.background === "white" ? 0xffffffff : 0xff000000,
+			);
+		}
+
+		for (let frameIndex = 0; frameIndex < doc.frames.length; frameIndex++) {
+			const scaled = scalePixelsNearest(
+				compositeFrame(doc, frameIndex),
+				doc.width,
+				doc.height,
+				geometry.frameWidth,
+				geometry.frameHeight,
+			);
+			const pixels = flattenPixels(scaled, options.background);
+			const column = frameIndex % geometry.columns;
+			const row = Math.floor(frameIndex / geometry.columns);
+			blitPixels(
+				sheet,
+				geometry.width,
+				pixels,
+				geometry.frameWidth,
+				geometry.frameHeight,
+				column * (geometry.frameWidth + geometry.spacing),
+				row * (geometry.frameHeight + geometry.spacing),
+			);
+		}
+
+		const bytes = await encodeGrayscalePng(
+			sheet,
+			geometry.width,
+			geometry.height,
+			{ alpha: transparent },
+		);
+		return new Blob([bytes], { type: "image/png" });
+	}
 
 	const canvas = document.createElement("canvas");
 	canvas.width = geometry.width;
@@ -621,7 +704,14 @@ function normalizedPivot(options: SheetMetadataOptions): {
 	};
 }
 
-function sheetColorFormat(format: ExportFormat): string {
+function sheetColorFormat(
+	format: ExportFormat,
+	grayscale = false,
+	transparent = false,
+): string {
+	if (grayscale && exportFormatSupportsGrayscale(format)) {
+		return transparent ? "LA8" : "L8";
+	}
 	return format === "jpeg" ? "RGB8888" : "RGBA8888";
 }
 
@@ -664,7 +754,11 @@ export function sheetMetadata(
 	const base = exportBaseName(
 		options.image.replace(/\.(png|jpe?g|webp|gif)$/i, ""),
 	);
-	const format = sheetColorFormat(sheet.format);
+	const format = sheetColorFormat(
+		sheet.format,
+		sheet.grayscale === true,
+		sheet.background === "transparent",
+	);
 	const size = { w: geometry.width, h: geometry.height };
 
 	let payload: unknown;

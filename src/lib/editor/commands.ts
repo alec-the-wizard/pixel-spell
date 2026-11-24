@@ -27,6 +27,7 @@ export interface CommandHost {
 	openColorReplace: () => void;
 	openDither: () => void;
 	openGradientMap: () => void;
+	openGrayscale: () => void;
 	openShortcuts: () => void;
 	openAbout: () => void;
 	openCommandPalette: () => void;
@@ -45,6 +46,7 @@ const NOOP_HOST: CommandHost = {
 	openColorReplace: () => {},
 	openDither: () => {},
 	openGradientMap: () => {},
+	openGrayscale: () => {},
 	openShortcuts: () => {},
 	openAbout: () => {},
 	openCommandPalette: () => {},
@@ -373,6 +375,13 @@ const ACTION_COMMANDS: CommandDef[] = [
 		group: "Effects",
 		keywords: "luminance gradient ramp recolor palette swap mood oklab",
 		run: () => host.openGradientMap(),
+	},
+	{
+		id: "effects.grayscale",
+		label: "Grayscale…",
+		group: "Effects",
+		keywords: "monochrome gray greyscale luminance 1-bit 2-bit 4-bit 8-bit bits",
+		run: () => host.openGrayscale(),
 	},
 	{
 		id: "brush.new-from-selection",

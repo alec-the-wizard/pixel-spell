@@ -129,6 +129,9 @@ const HISTORY_LIMIT = 80;
 const HISTORY_BYTE_LIMIT = 128 * 1024 * 1024;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 64;
+/** Zoom limits for the floating preview window. */
+export const PREVIEW_ZOOM_MIN = 1;
+export const PREVIEW_ZOOM_MAX = 8;
 
 /** Radial symmetry copies include the original stroke point. */
 export const RADIAL_SYMMETRY_MIN = 2;
@@ -345,6 +348,7 @@ export class EditorState {
 	effectColorReplaceOpen = $state(false);
 	effectDitherOpen = $state(false);
 	effectGradientMapOpen = $state(false);
+	effectGrayscaleOpen = $state(false);
 	/** Shared brush/pattern library dialog. */
 	maskLibraryOpen = $state(false);
 	maskLibraryTab = $state<"brush" | "pattern">("brush");
@@ -429,6 +433,10 @@ export class EditorState {
 	showGrid = $state(true);
 	gridSize = $state(1);
 	showPreview = $state(false);
+	/** Preview window converts its copy to 8-bit grayscale without touching cels. */
+	previewGrayscale = $state(false);
+	/** Integer zoom applied only to the floating preview window. */
+	previewZoom = $state(1);
 	showReferenceBoard = $state(false);
 	zoom = $state<number | null>(null);
 	/** Canvas center offset from the stage center, in screen pixels. */

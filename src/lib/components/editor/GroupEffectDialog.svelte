@@ -37,6 +37,11 @@
 		type GradientMapSource,
 		type GradientMapSpace,
 	} from "$lib/editor/gradient-map.js";
+	import {
+		GRAYSCALE_BIT_OPTIONS,
+		normalizeGrayscaleBits,
+		type GrayscaleBits,
+	} from "$lib/editor/grayscale.js";
 	import type {
 		GradientStop,
 		GroupEffect,
@@ -58,6 +63,11 @@
 		{ id: "outside", label: "Outside" },
 		{ id: "inside", label: "Inside" },
 	] as const;
+
+	const GRAYSCALE_SEGMENTS = GRAYSCALE_BIT_OPTIONS.map((option) => ({
+		id: String(option.id),
+		label: option.label,
+	}));
 
 	const clampInt = (value: string, min: number, max: number, fallback: number) => {
 		const number = Math.round(Number(value));
@@ -102,6 +112,8 @@
 	let gradientSpace = $state<GradientMapSpace>("rgb");
 	let gradientSource = $state<GradientMapSource>("luminance");
 	let gradientInvert = $state(false);
+
+	let grayscaleBits = $state<GrayscaleBits>(8);
 
 	let feedback = $state("");
 	let loadedKey = "";
@@ -205,6 +217,7 @@
 		gradientSpace = normalizeGradientSpace(options.gradientSpace);
 		gradientSource = normalizeGradientSource(options.gradientSource);
 		gradientInvert = options.gradientInvert === true;
+		grayscaleBits = normalizeGrayscaleBits(options.bits);
 		feedback = "";
 	}
 
@@ -252,6 +265,8 @@
 					gradientSource,
 					gradientInvert,
 				};
+			case "grayscale":
+				return { bits: grayscaleBits };
 		}
 	}
 
@@ -646,7 +661,7 @@
 							)}
 						</div>
 					{/if}
-				{:else}
+				{:else if kind === "gradient-map"}
 					<GradientMapEditor bind:stops={gradientStops} bind:space={gradientSpace} />
 
 					<div class="grid gap-1.5">
@@ -675,6 +690,32 @@
 						</span>
 						<Switch bind:checked={gradientInvert} />
 					</label>
+				{:else}
+					<div class="grid gap-1.5">
+						<Label>Bit depth</Label>
+						{@render segmented(
+							GRAYSCALE_SEGMENTS,
+							String(grayscaleBits),
+							(id) => (grayscaleBits = normalizeGrayscaleBits(id)),
+							"grid-cols-4",
+						)}
+						<span class="text-[10px] text-muted-foreground">
+							{1 << grayscaleBits} gray levels. Lower depths posterize the group
+							into a hard monochrome ramp.
+						</span>
+					</div>
+
+					<div
+						class="grid gap-1 rounded-lg border px-3 py-2.5 text-[10px] text-muted-foreground"
+					>
+						<span class="text-xs font-medium text-foreground">
+							Perceptual luminance
+						</span>
+						<span>
+							Each pixel becomes 0.2126·R + 0.7152·G + 0.0722·B, then snaps to
+							the nearest ramp value. Alpha and transparency are preserved.
+						</span>
+					</div>
 				{/if}
 			</div>
 

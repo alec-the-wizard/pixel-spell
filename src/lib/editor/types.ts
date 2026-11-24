@@ -69,7 +69,8 @@ export type GroupEffectKind =
 	| "drop-shadow"
 	| "color-replace"
 	| "dither"
-	| "gradient-map";
+	| "gradient-map"
+	| "grayscale";
 
 /** One color stop in a gradient map; position is 0..1. */
 export interface GradientStop {
@@ -112,6 +113,9 @@ export interface GroupEffectOptions {
 	gradientSpace?: "rgb" | "oklab";
 	gradientSource?: "luminance" | "average";
 	gradientInvert?: boolean;
+	// Grayscale
+	/** Bits per pixel color: 1, 2, 4, or 8. */
+	bits?: number;
 }
 
 /**

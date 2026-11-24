@@ -73,7 +73,7 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Tweening (position/scale/rotation/opacity, easing) | 8 | 6 | 1.33 | | Interpolate between frames with easing curves to generate in-betweens. One of the most-requested Aseprite features (v1.4 plan #96); a browser editor can ship it as a non-destructive “tween layer” or baked frames. |
 | Version snapshots / named checkpoints | 6 | 5 | 1.20 | | Save named project snapshots locally with thumbnails and restore/diff. Complements undo and autosave without a backend. |
 | Animated brushes | 6 | 5 | 1.20 | | Brushes that cycle through multiple cells as you stamp, producing an animated effect (sparkle, flame) in one gesture. Pro Motion's “AnimPainting”; a genuinely rare feature. |
-| Grayscale mode (1/2/4/8-bit, dithering) | 7 | 6 | 1.17 | | A document color mode with single-channel cels and a ramp palette, plus dithering and conversion to/from RGBA. Medium model change; valuable for Game Boy/1-bit and grayscale art. |
+| Grayscale mode (1/2/4/8-bit, dithering) | 7 | 6 | 1.17 | | A document color mode with single-channel cels and a ramp palette, plus dithering and conversion to/from RGBA. Medium model change; valuable for Game Boy/1-bit and grayscale art. Conversion, group effects, preview, and grayscale PNG export shipped; a true single-channel document mode remains future work. |
 | Non-destructive adjustments (hue/sat/levels/curves) | 7 | 6 | 1.17 | | Per-layer adjustment stacks with live preview and export. Requires a layer-effect model and compositing changes; can be destructive first, then non-destructive. |
 | Brush pressure / velocity and tablet support | 7 | 6 | 1.17 | | Pointer pressure API, pressure-to-size/opacity curves, and tablet-friendly UI. Requires a brush engine change and careful pixel snapping. |
 | AI palette, cleanup, and generation assist | 8 | 7 | 1.14 | ★ | Optional, explicit AI actions: generate a palette from a prompt, clean up stray pixels, suggest outlines/shadows, or generate a base sprite. Needs a provider abstraction, privacy controls, and a review step. |
@@ -129,7 +129,7 @@ These add the most day-to-day value per unit of risk. Onion skinning and referen
 2. Selection transform (scale/rotate/flip) — done
 3. Custom brushes and dithering patterns — done
 4. Outline/shadow/color-replace filters — done
-5. Grayscale mode
+5. Grayscale conversion & preview — done
 6. APNG/animated WebP export — done
 7. Undo history panel — done
 8. Palette ramps, lock, and color cycling — done
@@ -184,15 +184,14 @@ Difficulty is high because undo, floating selections, copy/paste, import/export,
 
 ### Grayscale mode
 
-Grayscale is a smaller model change than indexed color but still needs its own pixel path:
+Grayscale shipped as conversion and preview rather than a new document color mode, so cels stay packed RGBA:
 
-- Add `doc.colorMode: "grayscale"` and a bit depth (1, 2, 4, or 8 bits per pixel).
-- Store one value per pixel and resolve it through a grayscale ramp; support ordered/Bayer dithering when converting from RGBA.
-- Make drawing tools compare and write values instead of packed RGBA; keep the same selection/floating-selection semantics.
-- Convert to RGBA for PNG/WebP export and keep a dedicated grayscale export path for 1-bit/8-bit PNG.
-- Add a document conversion command that maps the current RGBA image to the nearest ramp value with optional dithering.
+- **Effects → Grayscale…** quantizes the active cel or every visible layer to a 1, 2, 4, or 8-bit ramp.
+- The same conversion is available as a non-destructive **Grayscale** block on layer groups, with the same bit-depth options.
+- The floating preview window can toggle an 8-bit grayscale view and zoom from 1× to 8×, without touching pixels.
+- PNG image and sprite-sheet exports can write a true single-channel 8-bit grayscale file.
 
-This is a good fit for Game Boy, 1-bit, and monochrome art. It is less invasive than indexed color because there is no palette table, but it still touches tools, compositing, undo, and the file format.
+Every conversion uses perceptual luminance (`0.2126·R + 0.7152·G + 0.0722·B`) instead of RGB averaging. A future document color mode would still need single-channel cels, a document ramp, dithering on conversion, and index-aware tools; that model change is separate from the shipped features.
 
 ### Advanced color cycling
 

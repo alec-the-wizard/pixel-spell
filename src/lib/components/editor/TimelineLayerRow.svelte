@@ -7,6 +7,7 @@
 	import Blend from "@lucide/svelte/icons/blend";
 	import ChevronDown from "@lucide/svelte/icons/chevron-down";
 	import ChevronRight from "@lucide/svelte/icons/chevron-right";
+	import Contrast from "@lucide/svelte/icons/contrast";
 	import Ellipsis from "@lucide/svelte/icons/ellipsis";
 	import Eye from "@lucide/svelte/icons/eye";
 	import EyeOff from "@lucide/svelte/icons/eye-off";
@@ -263,8 +264,10 @@
 		<Replace class={className} />
 	{:else if kind === "dither"}
 		<Grid2x2 class={className} />
-	{:else}
+	{:else if kind === "gradient-map"}
 		<Blend class={className} />
+	{:else}
+		<Contrast class={className} />
 	{/if}
 {/snippet}
 
