@@ -50,6 +50,13 @@ import {
 	scaleMaskToLongest,
 } from "../src/lib/editor/mask.js";
 import {
+	createPaletteMatcher,
+	snapDocToPalette,
+	snapHexToPalette,
+	snapPixelsToPalette,
+	snapRegionToPalette,
+} from "../src/lib/editor/indexed.js";
+import {
 	exportGif,
 	sheetAnimations,
 	sheetFrameInfos,
@@ -464,6 +471,12 @@ function assertProjectRoundtrip(doc: PixelDoc, label: string): void {
 		(doc.animationLoop !== false) !== (parsed.doc.animationLoop !== false)
 	) {
 		throw new Error(`${label}: animation settings changed`);
+	}
+	if (
+		(doc.colorMode === "indexed" ? "indexed" : "rgba") !==
+		(parsed.doc.colorMode === "indexed" ? "indexed" : "rgba")
+	) {
+		throw new Error(`${label}: color mode changed`);
 	}
 	for (let layerIndex = 0; layerIndex < doc.layers.length; layerIndex++) {
 		const originalLayer = doc.layers[layerIndex]!;
@@ -964,6 +977,88 @@ function assertPaletteAnalysis(): void {
 	const empty = analyzePaletteCoverage(createDoc(2, 2), palette);
 	if (empty.paintedPixels !== 0 || empty.coverage !== 0) {
 		throw new Error("palette analysis empty document changed");
+	}
+}
+
+function assertIndexedColor(): void {
+	const palette = ["#000000", "#ff0000", "#00ff00", "#ffffff"];
+	const redKey = packColor("#ff0000") & 0x00ffffff;
+	const nearRedKey = packColor("#f00020") & 0x00ffffff;
+
+	const matcher = createPaletteMatcher(palette);
+	if (matcher.empty) throw new Error("indexed palette matcher is empty");
+	if (!matcher.has(redKey)) {
+		throw new Error("indexed palette matcher missed an exact color");
+	}
+	if (matcher.nearestHex(nearRedKey) !== "#ff0000") {
+		throw new Error("indexed palette matching changed");
+	}
+	if (!createPaletteMatcher([]).empty) {
+		throw new Error("indexed palette matcher ignores empty palettes");
+	}
+
+	if (snapHexToPalette(palette, "#f00020") !== "#ff0000") {
+		throw new Error("indexed hex snapping changed");
+	}
+	if (snapHexToPalette(palette, "#FF0000") !== "#ff0000") {
+		throw new Error("indexed hex snapping does not normalize exact colors");
+	}
+	if (snapHexToPalette([], "#123456") !== "#123456") {
+		throw new Error("empty palette changed an indexed color");
+	}
+
+	// Alpha is preserved and transparency is never painted.
+	const pixels = new Uint32Array([
+		packColor("#f00020", 128),
+		0,
+		packColor("#000000"),
+	]);
+	const snapped = snapPixelsToPalette(pixels, palette);
+	if (snapped === pixels) {
+		throw new Error("indexed pixel snapping reported no change");
+	}
+	if (snapped[0] !== packColor("#ff0000", 128)) {
+		throw new Error("indexed pixel snapping changed alpha");
+	}
+	if (snapped[1] !== 0) {
+		throw new Error("indexed pixel snapping touched transparency");
+	}
+	if (snapped[2] !== packColor("#000000")) {
+		throw new Error("indexed pixel snapping changed an exact color");
+	}
+	if (pixels[0] !== packColor("#f00020", 128)) {
+		throw new Error("indexed pixel snapping mutated its source");
+	}
+
+	// Whole-document snapping skips reference layers and keeps buffers linked.
+	const doc = createDoc(2, 2, "transparent", "indexed");
+	const layer = doc.layers[0]!;
+	layer.cels[0]!.fill(packColor("#f00020"));
+	const reference = createLayer("Reference", 2, 2, 1, "reference");
+	reference.cels[0]!.fill(packColor("#123456"));
+	doc.layers.push(reference);
+	const changed = snapDocToPalette(doc, palette);
+	if (changed !== 4) {
+		throw new Error("indexed document snapping pixel count changed");
+	}
+	if (layer.cels[0]![0] !== packColor("#ff0000")) {
+		throw new Error("indexed document snapping missed artwork");
+	}
+	if (reference.cels[0]![0] !== packColor("#123456")) {
+		throw new Error("indexed document snapping touched a reference layer");
+	}
+	if (cloneDoc(doc).colorMode !== "indexed") {
+		throw new Error("cloneDoc lost the indexed color mode");
+	}
+
+	// Region snapping stays inside the requested disk.
+	const region = new Uint32Array(25).fill(packColor("#00f000"));
+	if (
+		!snapRegionToPalette(region, 5, 5, 2, 2, 1, palette) ||
+		region[12] !== packColor("#00ff00") ||
+		region[0] !== packColor("#00f000")
+	) {
+		throw new Error("indexed region snapping changed");
 	}
 }
 
@@ -1772,6 +1867,7 @@ assertPaletteReordering();
 assertPaletteRamps();
 assertPaletteCycling();
 assertPaletteAnalysis();
+assertIndexedColor();
 assertSheetMetadata();
 assertLayerGroups();
 assertSelectionTransform();
@@ -1783,8 +1879,11 @@ const opaqueDoc = makeDoc(64, 64, 1, 1, 42);
 for (const cel of opaqueDoc.layers[0]!.cels) cel.fill(0xff336699);
 assertProjectRoundtrip(opaqueDoc, "flat");
 
-const referenceDoc = makeDoc(64, 64, 2, 3, 43);
-referenceDoc.layers[0]!.role = "reference";
+const indexedDoc = makeDoc(16, 16, 1, 2, 45);
+indexedDoc.colorMode = "indexed";
+assertProjectRoundtrip(indexedDoc, "indexed color mode");
+
+const referenceDoc = makeDoc(64, 64, 2, 3, 43);referenceDoc.layers[0]!.role = "reference";
 referenceDoc.layers[0]!.locked = true;
 referenceDoc.layers[0]!.color = "#14b8a6";
 referenceDoc.layers[1]!.color = "#ef4444";

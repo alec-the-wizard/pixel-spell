@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Plus from "@lucide/svelte/icons/plus";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import * as Dialog from "$lib/components/ui/dialog/index.js";
 	import { Input } from "$lib/components/ui/input/index.js";
@@ -13,6 +14,10 @@
 		type Rgb,
 	} from "$lib/editor/color.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
+	import {
+		MAX_PALETTE_COLORS,
+		nearestPaletteColor,
+	} from "$lib/editor/palette.js";
 	import type { ColorSlot } from "$lib/editor/types.js";
 	import { cn } from "$lib/utils.js";
 
@@ -51,6 +56,26 @@
 	let palette = $derived(editor.activePalette);
 	let slotLabel = $derived(slot === "primary" ? "Primary" : "Secondary");
 	let mouseLabel = $derived(slot === "primary" ? "left mouse" : "right mouse");
+	let inPalette = $derived(palette.colors.includes(activeHex));
+	let nearestPaletteHex = $derived(
+		nearestPaletteColor(palette.colors, activeHex),
+	);
+	let canAddToPalette = $derived(
+		!editor.paletteLocked &&
+			palette.colors.length < MAX_PALETTE_COLORS &&
+			!inPalette,
+	);
+	let addToPaletteTitle = $derived(
+		editor.paletteLocked
+			? "Unlock the palette to add colors"
+			: palette.colors.length >= MAX_PALETTE_COLORS
+				? "Palette is full"
+				: inPalette
+					? "This color is already in the palette"
+					: palette.builtin
+						? "Add to an editable copy of the default palette"
+						: "Add this color to the palette",
+	);
 
 	let rgbRows = $derived([
 		{
@@ -230,6 +255,11 @@
 	function choosePaletteColor(color: string): void {
 		setActiveHex(color);
 		editor.setColorAlpha(slot, 255);
+	}
+
+	/** Appends the color currently shown by the dialog to the active palette. */
+	function addToPalette(): void {
+		editor.addPaletteColor(activeHex);
 	}
 </script>
 
@@ -445,15 +475,40 @@
 						</div>
 					{/if}
 				</div>
+				{#if editor.indexedMode}
+					<p class="text-[10px] text-muted-foreground">
+						{#if inPalette}
+							Indexed mode — this color is in the palette.
+						{:else if nearestPaletteHex}
+							Indexed mode — this color is not in the palette. Painting uses
+							<span class="font-mono uppercase text-foreground">{nearestPaletteHex}</span>;
+							add it to paint it exactly.
+						{:else}
+							Indexed mode — the palette is empty, so add a color first.
+						{/if}
+					</p>
+				{/if}
 			</div>
 		</div>
 
 		<Dialog.Footer>
-			{#if editor.paletteLocked}
-				<span class="mr-auto text-[10px] text-muted-foreground">
-					Palette lock snaps picks to the nearest swatch.
-				</span>
-			{/if}
+			<div class="mr-auto flex min-w-0 items-center gap-2">
+				<Button
+					variant="outline"
+					size="sm"
+					onclick={addToPalette}
+					disabled={!canAddToPalette}
+					title={addToPaletteTitle}
+				>
+					<Plus class="size-3.5" />
+					Add to palette
+				</Button>
+				{#if editor.paletteLocked}
+					<span class="min-w-0 truncate text-[10px] text-muted-foreground">
+						Palette lock snaps picks to the nearest swatch.
+					</span>
+				{/if}
+			</div>
 			<Button onclick={() => (open = false)}>Done</Button>
 		</Dialog.Footer>
 	</Dialog.Content>

@@ -29,6 +29,7 @@
 	import Lock from "@lucide/svelte/icons/lock";
 	import Maximize2 from "@lucide/svelte/icons/maximize-2";
 	import Moon from "@lucide/svelte/icons/moon";
+	import Palette from "@lucide/svelte/icons/palette";
 	import Redo2 from "@lucide/svelte/icons/redo-2";
 	import Replace from "@lucide/svelte/icons/replace";
 	import Save from "@lucide/svelte/icons/save";
@@ -55,6 +56,7 @@
 		RADIAL_SYMMETRY_MIN,
 	} from "$lib/editor/editor.svelte.js";
 	import { layerColorName } from "$lib/editor/layer-color.js";
+	import type { ColorMode } from "$lib/editor/types.js";
 
 	let {
 		onNew,
@@ -299,6 +301,29 @@
 					<Crop class="size-4" />
 					Crop to Selection
 				</DropdownMenu.Item>
+				<DropdownMenu.Separator />
+				<DropdownMenu.Sub>
+					<DropdownMenu.SubTrigger
+						title="Switch how the document stores and enforces color."
+					>
+						<Palette class="size-4" />
+						Color mode
+					</DropdownMenu.SubTrigger>
+					<DropdownMenu.SubContent class="w-44">
+						<DropdownMenu.RadioGroup
+							value={editor.colorMode}
+							onValueChange={(value) =>
+								editor.setColorMode(value as ColorMode)}
+						>
+							<DropdownMenu.RadioItem value="rgba" closeOnSelect>
+								RGBA
+							</DropdownMenu.RadioItem>
+							<DropdownMenu.RadioItem value="indexed" closeOnSelect>
+								Indexed
+							</DropdownMenu.RadioItem>
+						</DropdownMenu.RadioGroup>
+					</DropdownMenu.SubContent>
+				</DropdownMenu.Sub>
 			</DropdownMenu.Content>
 		</DropdownMenu.Root>
 

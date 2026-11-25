@@ -52,6 +52,7 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Gradient map layer | 7 | 4 | 1.75 | | Implemented as both an **Effects → Gradient map…** destructive filter and a non-destructive group effect block. Brightness (Rec. 709 luminance or channel average) selects a color from a 2–16 stop gradient, with RGB or OKLab blending, optional inversion, hard stops from duplicate positions, and preserved alpha. The destructive dialog previews the composited frame and applies to the active cel or all visible unlocked layers behind one undo step; the group block runs on the group's composite, can be reordered or disabled, is baked across every frame through the normal group-effect path, and serializes in the project metadata. |
 | Custom grid offsets and isometric/hex grid | 6 | 3 | 2.00 | | Implemented: the main **Grid** now supports square (independent horizontal and vertical cell sizes), isometric diamond, and hexagonal (pointy- or flat-top) modes, each with X/Y offsets; the **Pixel grid** is an independent every-pixel overlay. Both are toggled from the View menu and the bottom-left canvas pill, advanced options live in a **Grid settings** dialog opened from either place, and workspace preferences persist in `localStorage`. |
 | Timelapse / process replay | 8 | 4 | 2.00 | ★ | Implemented as **File → Export timelapse…**, a video-style dialog with format, scale, playback-speed, quality, loop, background, preview, and size warnings. Each frame is one retained undo state of the active animation frame, rebuilt by applying history entries backwards from the current document, so no separate recording system exists. The **Edit → History…** dialog gained a workspace-wide **Saved steps** slider (10–500) with a pixel-patch/full-snapshot memory estimate; the existing 128 MB history budget still applies. |
+| Indexed color mode | 9 | 8 | 1.13 | | Shipped as a palette-enforcement color mode rather than index-buffer cels: `doc.colorMode` stores RGBA or indexed per project, the New project dialog offers both, and **Project → Color mode** switches an open document in either direction as one undoable step. Entering indexed mode converts every off-palette canvas color to the perceptually nearest active-palette entry (OKLab); painted colors, gradients, filters, imports, pasted pixels, and blur output are snapped the same way; removing a used palette color or switching/importing a palette remaps the artwork to the nearest remaining entry. The color picker gained **Add to palette** (forking the read-only Default palette into an editable copy). Cels stay packed RGBA, so every tool, effect, export, autosave, and history path works unchanged; true 8-bit index storage and indexed PNG/GIF output remain future work. |
 
 ## Planned features
 
@@ -78,7 +79,6 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Brush pressure / velocity and tablet support | 7 | 6 | 1.17 | | Pointer pressure API, pressure-to-size/opacity curves, and tablet-friendly UI. Requires a brush engine change and careful pixel snapping. |
 | AI palette, cleanup, and generation assist | 8 | 7 | 1.14 | ★ | Optional, explicit AI actions: generate a palette from a prompt, clean up stray pixels, suggest outlines/shadows, or generate a base sprite. Needs a provider abstraction, privacy controls, and a review step. |
 | Desktop app (Tauri/Electron) | 8 | 7 | 1.14 | ★ | Native menus, file-system access, auto-save, drag-and-drop, and offline project library. Reuses the Svelte UI; the main work is packaging, file APIs, and updates. |
-| Indexed color mode | 9 | 8 | 1.13 | | Store palette indices instead of RGBA, enforce a document palette, support transparency index, palette swap, color cycling, and indexed PNG/GIF export. A major model/file-format change, but the classic pixel-art workflow and a strong differentiator. |
 | Aseprite `.aseprite` import/export | 9 | 8 | 1.13 | | Parse/write the Aseprite binary format (layers, frames, tags, palettes, cels). High interoperability value; requires careful binary parsing and test fixtures. |
 | MCP server | 8 | 8 | 1.00 | ★ | Expose Pixel Spell projects and operations to AI agents through MCP tools: inspect document/layers/frames/palette, draw/fill/select, add/remove frames and layers, export PNG/GIF/sheet, save project. A local Node bridge can talk to the browser app over WebSocket, or run the same TypeScript core headlessly. Security must be opt-in, localhost-only, and project-scoped. This is a genuinely uncommon selling point. |
 | Tilemap / tileset mode | 9 | 9 | 1.00 | ★ | Tile size, tile palette document, tile layers storing indices, tile picker, auto-tiling rules, isometric/hex grids, external tilesets, and tilemap JSON export. A large model change but extremely valuable for game artists and level design. |
@@ -143,7 +143,7 @@ This phase closes the biggest gaps versus Aseprite and Photoshop-style workflows
 
 ### Phase 3 — strategic differentiators (2–4 months)
 
-1. Indexed color mode with palette swap/cycling
+1. Indexed color mode with palette swap/cycling — done (palette-enforcement mode; RGBA cels, true index storage still future work)
 2. Tilemap/tileset mode
 3. MCP server for AI-agent workflows
 4. Aseprite `.aseprite` import/export
@@ -170,17 +170,14 @@ Indexed color and tilemaps deepen the pixel-art/game-art focus. The MCP server, 
 
 ### Indexed color mode
 
-This is more than a palette UI: it changes the pixel representation and every tool that reads or writes pixels. A practical design:
+Shipped as a per-project color mode that enforces the active workspace palette without changing cel storage:
 
-- Add `doc.colorMode: "rgba" | "indexed"` and `doc.palette: string[]`.
-- Store indexed cels as `Uint8Array` (or `Uint16Array` if more than 256 colors are allowed) and reserve index 0 or a configurable index for transparency.
-- Make `compositeFrame` resolve indices through the document palette; make drawing tools write indices and compare indices for fill/selection.
-- Add palette swap (replace palette entries without touching cels), color cycling (rotate a palette range over time), and indexed PNG/GIF export.
-- Extend the project file format to version 3 with a color mode and palette table.
-- Keep an “RGBA” escape hatch so users can convert a document without losing data.
-- Store the palette *with* the document (per-image), unlike the current workspace-level palettes, so an indexed sprite travels with its palette.
-
-Difficulty is high because undo, floating selections, copy/paste, import/export, and every tool need index-aware paths. The payoff is the classic pixel-art workflow and smaller cels.
+- `doc.colorMode` is `rgba` (default) or `indexed`, is saved in the `PXSP` project file (version 6), and is part of history snapshots. The New project dialog offers **RGBA (recommended)** and **Indexed color**, and **Project → Color mode** switches an open document either way as one undoable action.
+- Cels remain packed 32-bit RGBA. `indexed.ts` owns an OKLab palette matcher plus in-place snapping helpers, so every existing tool, effect, export, autosave, and history path keeps working and transparency/alpha are preserved.
+- Entering indexed mode converts all existing off-palette artwork to the nearest active-palette entry. Afterwards every pixel-writing path snaps to the palette: pencil/line/shape/fill/curve/spray/eyedropper colors, gradient interpolation, blur output, destructive effects, imported layers/frames, pasted pixels and frames, and baked group effects.
+- Palette edits keep the invariant: removing a swatch that the canvas uses remaps those pixels to the nearest remaining entry, and switching, importing, or deleting the active palette remaps the indexed artwork. Those palette operations are workspace-level and are therefore not separate undo entries.
+- The color picker's **Add to palette** button appends the current color. Adding to the read-only Default palette first forks it into an editable copy, so the workflow works from a fresh project.
+- Not yet covered: true 8-bit index buffers, a per-document palette embedded in the file, configurable transparency indices, indexed PNG/GIF encoders, and palette-swap-as-index-remap (current palette swaps remap pixels instead). Semi-transparent ink and live group-effect previews can still show intermediate colors until baked or committed.
 
 ### Grayscale mode
 

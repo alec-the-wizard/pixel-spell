@@ -19,7 +19,7 @@
 		type CanvasSizePreset,
 	} from "$lib/editor/canvas-presets.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
-	import type { BackgroundKind } from "$lib/editor/types.js";
+	import type { BackgroundKind, ColorMode } from "$lib/editor/types.js";
 	import { cn } from "$lib/utils.js";
 
 	let { open = $bindable(false) } = $props();
@@ -29,10 +29,25 @@
 		{ id: "white", label: "White", swatch: "bg-white" },
 		{ id: "black", label: "Black", swatch: "bg-black" },
 	];
+
+	const colorModes: { id: ColorMode; label: string; hint: string }[] = [
+		{
+			id: "rgba",
+			label: "RGBA (recommended)",
+			hint: "Full-color pixels. Pick any color you like.",
+		},
+		{
+			id: "indexed",
+			label: "Indexed color",
+			hint: "Limit the canvas to the active palette. New colors snap to the nearest entry.",
+		},
+	];
+
 	let name = $state("");
 	let width = $state(32);
 	let height = $state(32);
 	let background = $state<BackgroundKind>("transparent");
+	let colorMode = $state<ColorMode>("rgba");
 	let wasOpen = false;
 
 	let selectedPreset = $derived(
@@ -60,6 +75,7 @@
 		width = editor.doc.width;
 		height = editor.doc.height;
 		background = "transparent";
+		colorMode = "rgba";
 	});
 
 	function applyPreset(preset: CanvasSizePreset): void {
@@ -70,7 +86,7 @@
 	function create(): void {
 		const w = Number.isFinite(width) ? width : 32;
 		const h = Number.isFinite(height) ? height : 32;
-		editor.newProject(w, h, { name, background });
+		editor.newProject(w, h, { name, background, colorMode });
 		open = false;
 	}
 </script>
@@ -193,6 +209,25 @@
 						</Button>
 					{/each}
 				</div>
+			</div>
+
+			<div class="grid gap-2">
+				<span class="text-xs font-medium">Color mode</span>
+				<div class="grid grid-cols-2 gap-2" role="group" aria-label="Color mode">
+					{#each colorModes as option (option.id)}
+						<Button
+							variant={colorMode === option.id ? "default" : "outline"}
+							size="sm"
+							onclick={() => (colorMode = option.id)}
+							aria-pressed={colorMode === option.id}
+						>
+							{option.label}
+						</Button>
+					{/each}
+				</div>
+				<p class="text-[10px] text-muted-foreground">
+					{colorModes.find((option) => option.id === colorMode)?.hint}
+				</p>
 			</div>
 
 			<p class="text-xs text-muted-foreground">

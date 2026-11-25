@@ -1012,7 +1012,7 @@
 
 	function applyAreaTool(cel: Uint32Array, point: Point): boolean {
 		if (strokeTool === "blur") {
-			return blurPixels(
+			const changed = blurPixels(
 				cel,
 				editor.doc.width,
 				editor.doc.height,
@@ -1023,6 +1023,16 @@
 				editor.selection,
 				editor.lockAlpha,
 			);
+			// Blur mixes neighbors into new colors; indexed documents snap the
+			// softened area back onto the palette.
+			if (changed) {
+				editor.snapActiveCelRegionToPalette(
+					point.x,
+					point.y,
+					editor.blurRadius,
+				);
+			}
+			return changed;
 		}
 		if (strokeTool === "jumble") {
 			return jumblePixels(
@@ -1144,7 +1154,7 @@
 		cel.set(backup);
 
 		const tolerance = Math.round((editor.gradientTolerance / 100) * 255);
-		return gradientPixels(
+		const changed = gradientPixels(
 			cel,
 			editor.doc.width,
 			editor.doc.height,
@@ -1162,6 +1172,10 @@
 			editor.lockAlpha,
 			onFirstChange,
 		);
+		// A gradient interpolates between two colors; indexed documents snap
+		// every resulting step back onto the palette.
+		if (changed) editor.snapActiveCelToPalette();
+		return changed;
 	}
 
 	function drawCurvePreview(cel: Uint32Array): void {

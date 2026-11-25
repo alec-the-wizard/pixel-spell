@@ -56,16 +56,16 @@
 	let paletteEditable = $derived(editor.paletteEditable);
 	let paletteColorCount = $derived(activePalette.colors.length);
 	let canAddPaletteColor = $derived(
-		paletteEditable && paletteColorCount < MAX_PALETTE_COLORS,
+		!editor.paletteLocked && paletteColorCount < MAX_PALETTE_COLORS,
 	);
 	let addPaletteColorTitle = $derived(
-		!paletteEditable
-			? activePalette.builtin
-				? "The default palette cannot be modified"
-				: "Unlock the palette to edit colors"
+		editor.paletteLocked
+			? "Unlock the palette to edit colors"
 			: paletteColorCount >= MAX_PALETTE_COLORS
 				? "Palette is full"
-				: "Add primary color to palette",
+				: activePalette.builtin
+					? "Add primary color to an editable copy of the default palette"
+					: "Add primary color to palette",
 	);
 	let canRemovePaletteColor = $derived(paletteEditable && paletteColorCount > 0);
 	let removePaletteColorTitle = $derived(
@@ -262,6 +262,15 @@
 		<div class="flex items-center gap-2">
 			<PaletteIcon class="size-4 text-muted-foreground" />
 			<span class="text-xs font-medium">Color</span>
+			{#if editor.indexedMode}
+				<span
+					class="flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium text-primary"
+					title="Indexed color mode — canvas colors are limited to the active palette"
+				>
+					<PaletteIcon class="size-2.5" />
+					Indexed
+				</span>
+			{/if}
 		</div>
 		<span class="font-mono text-[10px] uppercase text-muted-foreground">
 			{editor.primaryColor} · {primaryAlphaPercent}%

@@ -367,6 +367,22 @@ const ACTION_COMMANDS: CommandDef[] = [
 		run: () => editor.cropToSelection(),
 	},
 	{
+		id: "project.color-mode-rgba",
+		label: "Color mode: RGBA",
+		group: "Project",
+		keywords: "full color palette non-indexed",
+		enabled: () => editor.colorMode !== "rgba",
+		run: () => editor.setColorMode("rgba"),
+	},
+	{
+		id: "project.color-mode-indexed",
+		label: "Color mode: Indexed",
+		group: "Project",
+		keywords: "palette limited snap closest indexed",
+		enabled: () => editor.colorMode !== "indexed",
+		run: () => editor.setColorMode("indexed"),
+	},
+	{
 		id: "effects.outline",
 		label: "Outline…",
 		group: "Effects",

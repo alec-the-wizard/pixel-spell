@@ -6,6 +6,7 @@ import type {
 	BackgroundKind,
 	BlendMode,
 	CelProps,
+	ColorMode,
 	Layer,
 	LayerRole,
 	PixelDoc,
@@ -167,6 +168,7 @@ export function createDoc(
 	width = 32,
 	height = 32,
 	background: BackgroundKind = "transparent",
+	colorMode: ColorMode = "rgba",
 ): PixelDoc {
 	const layer = createLayer(
 		background === "transparent" ? "Layer 1" : "Background",
@@ -190,6 +192,7 @@ export function createDoc(
 		references: [],
 		animationMode: "forward",
 		animationLoop: true,
+		...(colorMode === "indexed" ? { colorMode } : {}),
 	};
 }
 
@@ -292,6 +295,7 @@ export function cloneDoc(doc: PixelDoc): PixelDoc {
 		references: doc.references.map((reference) => ({ ...reference })),
 		animationMode: normalizeAnimationMode(doc.animationMode),
 		animationLoop: doc.animationLoop !== false,
+		...(doc.colorMode === "indexed" ? { colorMode: "indexed" as const } : {}),
 		...(doc.celProps
 			? {
 					celProps: Object.fromEntries(

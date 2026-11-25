@@ -61,6 +61,12 @@ import {
 	fitPixelsToCanvas,
 } from "./reference.js";
 import { selectionBounds } from "./selection.js";
+import {
+	snapDocToPalette,
+	snapHexToPalette,
+	snapPixelsToPalette,
+	snapRegionToPalette,
+} from "./indexed.js";
 import { buildTimelapseDoc, type TimelapseBuild } from "./timelapse.js";
 import {
 	activeBrushPreset,
@@ -114,6 +120,7 @@ import type {
 	BackgroundKind,
 	BlendMode,
 	CelProps,
+	ColorMode,
 	ColorSlot,
 	EffectScope,
 	Frame,
@@ -660,6 +667,16 @@ export class EditorState {
 		return !this.activePalette.builtin && !this.paletteLocked;
 	}
 
+	/** The active document's color workflow (`rgba` when unset). */
+	get colorMode(): ColorMode {
+		return this.doc.colorMode === "indexed" ? "indexed" : "rgba";
+	}
+
+	/** True when the active document enforces the active palette. */
+	get indexedMode(): boolean {
+		return this.colorMode === "indexed";
+	}
+
 	/** Active workspace brush. */
 	get activeBrush(): BrushPreset {
 		return activeBrushPreset();
@@ -718,6 +735,46 @@ export class EditorState {
 	setDitherOffset(x: number, y: number): void {
 		if (Number.isFinite(x)) this.ditherOffsetX = Math.round(x);
 		if (Number.isFinite(y)) this.ditherOffsetY = Math.round(y);
+	}
+
+	/**
+	 * In indexed mode, snaps the whole active cel to the active palette. Used by
+	 * tools that interpolate colors, such as the gradient tool.
+	 */
+	snapActiveCelToPalette(): boolean {
+		if (!this.indexedMode) return false;
+		const cel = this.activeLayer?.cels[this.activeFrame];
+		if (!cel) return false;
+		const next = snapPixelsToPalette(cel, this.activePalette.colors);
+		if (next === cel) return false;
+		cel.set(next);
+		this.touch();
+		return true;
+	}
+
+	/**
+	 * In indexed mode, snaps a disk of the active cel to the active palette.
+	 * Used by tools that synthesize colors, such as the blur tool.
+	 */
+	snapActiveCelRegionToPalette(
+		centerX: number,
+		centerY: number,
+		radius: number,
+	): boolean {
+		if (!this.indexedMode) return false;
+		const cel = this.activeLayer?.cels[this.activeFrame];
+		if (!cel) return false;
+		const changed = snapRegionToPalette(
+			cel,
+			this.doc.width,
+			this.doc.height,
+			centerX,
+			centerY,
+			radius,
+			this.activePalette.colors,
+		);
+		if (changed) this.touch();
+		return changed;
 	}
 
 	/** Selects a brush and optionally loads its saved size/opacity defaults. */
@@ -1108,11 +1165,26 @@ export class EditorState {
 	}
 
 	get currentColor(): number {
-		return packColor(this.primaryColor, this.alpha);
+		return packColor(this.#indexedHex(this.primaryColor), this.alpha);
 	}
 
 	get secondaryCurrentColor(): number {
-		return packColor(this.secondaryColor, this.secondaryAlpha);
+		return packColor(this.#indexedHex(this.secondaryColor), this.secondaryAlpha);
+	}
+
+	/**
+	 * Resolves a color slot to a paintable hex. Indexed documents snap to the
+	 * active palette so no tool can introduce an off-palette color.
+	 */
+	#indexedHex(hex: string): string {
+		if (!this.indexedMode) return hex;
+		return snapHexToPalette(this.activePalette.colors, hex);
+	}
+
+	/** In indexed mode, snaps a pixel buffer to the active palette. */
+	#indexedPixels(pixels: Uint32Array): Uint32Array {
+		if (!this.indexedMode) return pixels;
+		return snapPixelsToPalette(pixels, this.activePalette.colors);
 	}
 
 	get fitZoom(): number {
@@ -1403,6 +1475,9 @@ export class EditorState {
 
 		const width = this.doc.width;
 		const height = this.doc.height;
+		// Pasted/transformed content may carry off-palette colors into an
+		// indexed document; snap once so the destination stays palette-only.
+		const pixels = this.#indexedPixels(floating.pixels);
 		let changed = false;
 
 		for (let y = 0; y < floating.height && !changed; y++) {
@@ -1411,7 +1486,7 @@ export class EditorState {
 			for (let x = 0; x < floating.width; x++) {
 				const destX = floating.originX + x;
 				if (destX < 0 || destX >= width) continue;
-				const value = floating.pixels[y * floating.width + x]!;
+				const value = pixels[y * floating.width + x]!;
 				if (isTransparent(value)) continue;
 				if (cel[destY * width + destX] !== value) {
 					changed = true;
@@ -1434,7 +1509,7 @@ export class EditorState {
 				for (let x = 0; x < floating.width; x++) {
 					const destX = floating.originX + x;
 					if (destX < 0 || destX >= width) continue;
-					const value = floating.pixels[y * floating.width + x]!;
+					const value = pixels[y * floating.width + x]!;
 					if (isTransparent(value)) continue;
 					cel[destY * width + destX] = value;
 				}
@@ -1514,7 +1589,7 @@ export class EditorState {
 			originY: targetY,
 			width: clipboard.width,
 			height: clipboard.height,
-			pixels: new Uint32Array(clipboard.pixels),
+			pixels: this.#indexedPixels(new Uint32Array(clipboard.pixels)),
 			mask: new Uint8Array(clipboard.mask),
 			historyPushed: false,
 		};
@@ -1606,9 +1681,10 @@ export class EditorState {
 		const { r, g, b, a } = unpackColor(value);
 		if (a === 0) return;
 		const picked = rgbToHex(r, g, b);
-		const hex = this.paletteLocked
-			? (nearestPaletteColor(this.activePalette.colors, picked) ?? picked)
-			: picked;
+		const hex =
+			this.paletteLocked || this.indexedMode
+				? (nearestPaletteColor(this.activePalette.colors, picked) ?? picked)
+				: picked;
 		this.setColor(slot, hex);
 		this.setColorAlpha(slot, a);
 	}
@@ -1841,6 +1917,8 @@ export class EditorState {
 		if (this.activePaletteId === id) return;
 		this.activePaletteId = id;
 		this.#persistPalettes();
+		// Indexed documents must always resolve against the active palette.
+		this.#enforceIndexedPalette();
 	}
 
 	createPalette(): string {
@@ -1863,11 +1941,13 @@ export class EditorState {
 		const palette = this.palettes[index]!;
 		if (palette.builtin || this.paletteLocked) return;
 
+		const wasActive = this.activePaletteId === id;
 		this.palettes.splice(index, 1);
-		if (this.activePaletteId === id) {
+		if (wasActive) {
 			this.activePaletteId = DEFAULT_PALETTE_ID;
 		}
 		this.#persistPalettes();
+		if (wasActive) this.#enforceIndexedPalette();
 	}
 
 	renamePalette(id: string, name: string): void {
@@ -1879,16 +1959,55 @@ export class EditorState {
 		this.#persistPalettes();
 	}
 
-	addPaletteColor(): void {
-		const palette = this.activePalette;
-		if (!this.paletteEditable) return;
+	/**
+	 * Copies a read-only palette (the built-in default) into an editable
+	 * workspace palette with the same colors and makes it active. Adding a color
+	 * to a read-only palette forks it instead of failing, so the color dialog's
+	 * **Add to palette** button always has a sensible destination.
+	 */
+	#forkReadonlyPalette(source: Palette): Palette {
+		const baseName = `${source.name} copy`.slice(0, 40);
+		const usedNames = new Set(
+			this.palettes.map((palette) => palette.name.toLowerCase()),
+		);
+		let name = baseName;
+		let suffixIndex = 2;
+		while (usedNames.has(name.toLowerCase())) {
+			const suffix = ` (${suffixIndex})`;
+			name = `${baseName.slice(0, Math.max(1, 40 - suffix.length))}${suffix}`;
+			suffixIndex++;
+		}
 
-		const color = this.primaryColor;
-		if (palette.colors.length >= MAX_PALETTE_COLORS) return;
+		const palette: Palette = {
+			id: uid("palette"),
+			name,
+			colors: [...source.colors],
+			originalColors: [...(source.originalColors ?? source.colors)],
+			sortMode: source.sortMode ?? "original",
+		};
+		this.palettes.push(palette);
+		this.activePaletteId = palette.id;
+		return palette;
+	}
 
-		palette.colors.push(color);
+	/**
+	 * Appends a color to the active palette. Duplicates are allowed (the palette
+	 * tools can remove them). Read-only palettes are forked first. Returns false
+	 * when the palette is locked or full.
+	 */
+	addPaletteColor(color: string = this.primaryColor): boolean {
+		if (this.paletteLocked) return false;
+		const normalized = normalizeHex(color);
+		if (!normalized) return false;
+
+		const palette = this.activePalette.builtin
+			? this.#forkReadonlyPalette(this.activePalette)
+			: this.activePalette;
+		if (palette.colors.length >= MAX_PALETTE_COLORS) return false;
+
+		palette.colors.push(normalized);
 		if (palette.originalColors) {
-			palette.originalColors.push(color);
+			palette.originalColors.push(normalized);
 		} else {
 			palette.originalColors = [...palette.colors];
 		}
@@ -1899,6 +2018,7 @@ export class EditorState {
 			);
 		}
 		this.#persistPalettes();
+		return true;
 	}
 
 	removePaletteColor(index: number): void {
@@ -1947,6 +2067,8 @@ export class EditorState {
 			palette.colors = sortPaletteColors(originalColors, palette.sortMode);
 		}
 		this.#persistPalettes();
+		// The removed color may still be painted on the canvas in indexed mode.
+		this.#enforceIndexedPalette();
 	}
 
 	/** Sorts a custom palette without losing its original add/import order. */
@@ -2047,7 +2169,52 @@ export class EditorState {
 		this.palettes.push(palette);
 		this.activePaletteId = palette.id;
 		this.#persistPalettes();
+		this.#enforceIndexedPalette();
 		return palette.id;
+	}
+
+	/**
+	 * Switches the document between RGBA and indexed color. Both directions are
+	 * undoable. Converting to indexed records history first, then snaps every
+	 * normal-layer cel to the active palette; converting back keeps the pixels.
+	 */
+	setColorMode(mode: ColorMode): boolean {
+		if (mode !== "indexed" && mode !== "rgba") return false;
+		if (mode === this.colorMode) return false;
+
+		if (mode === "indexed") {
+			this.pushHistory("Switch to indexed color");
+			this.doc.colorMode = "indexed";
+			snapDocToPalette(this.doc, this.activePalette.colors);
+		} else {
+			this.pushHistory("Switch to RGBA color");
+			this.doc.colorMode = "rgba";
+		}
+
+		this.structureRevision++;
+		this.revision++;
+		this.dirty = true;
+		this.modified = true;
+		return true;
+	}
+
+	/**
+	 * Snaps existing artwork to the active palette when the document is indexed.
+	 * Used after palette edits that can orphan canvas colors (removing a swatch,
+	 * switching or importing a palette). Palette changes are workspace-level and
+	 * not undoable, so this pixel conversion is not a separate history entry.
+	 * Returns the number of changed pixels.
+	 */
+	#enforceIndexedPalette(): number {
+		if (!this.indexedMode) return 0;
+		const changed = snapDocToPalette(this.doc, this.activePalette.colors);
+		if (changed > 0) {
+			this.structureRevision++;
+			this.revision++;
+			this.dirty = true;
+			this.modified = true;
+		}
+		return changed;
 	}
 
 	toggleTheme(): void {
@@ -2659,11 +2826,21 @@ export class EditorState {
 	newProject(
 		width: number,
 		height: number,
-		options: { name?: string; background?: BackgroundKind } = {},
+		options: {
+			name?: string;
+			background?: BackgroundKind;
+			colorMode?: ColorMode;
+		} = {},
 	): void {
 		const w = clamp(Math.round(width) || 32, MIN_CANVAS_SIZE, MAX_CANVAS_SIZE);
 		const h = clamp(Math.round(height) || 32, MIN_CANVAS_SIZE, MAX_CANVAS_SIZE);
-		const doc = createDoc(w, h, options.background ?? "transparent");
+		const colorMode: ColorMode =
+			options.colorMode === "indexed" ? "indexed" : "rgba";
+		const doc = createDoc(w, h, options.background ?? "transparent", colorMode);
+		// A white or black starter fill must also obey an indexed document.
+		if (colorMode === "indexed") {
+			snapDocToPalette(doc, this.activePalette.colors);
+		}
 		const requestedName = options.name?.trim().slice(0, 60);
 		const name = requestedName || this.#nextUntitledName();
 
@@ -2813,12 +2990,14 @@ export class EditorState {
 		);
 		const cel = layer.cels[this.activeFrame]!;
 		cel.set(
-			cropPixelsToCanvas(
-				image.pixels,
-				imageWidth,
-				imageHeight,
-				this.doc.width,
-				this.doc.height,
+			this.#indexedPixels(
+				cropPixelsToCanvas(
+					image.pixels,
+					imageWidth,
+					imageHeight,
+					this.doc.width,
+					this.doc.height,
+				),
 			),
 		);
 		this.doc.layers.push(layer);
@@ -2889,12 +3068,14 @@ export class EditorState {
 
 		const cel = target.cels[index]!;
 		cel.set(
-			cropPixelsToCanvas(
-				image.pixels,
-				imageWidth,
-				imageHeight,
-				this.doc.width,
-				this.doc.height,
+			this.#indexedPixels(
+				cropPixelsToCanvas(
+					image.pixels,
+					imageWidth,
+					imageHeight,
+					this.doc.width,
+					this.doc.height,
+				),
 			),
 		);
 		this.activeFrame = index;
@@ -4295,11 +4476,13 @@ export class EditorState {
 			layer.cels = layer.cels.map((cel) => {
 				const cached = transformed.get(cel);
 				if (cached) return cached;
-				const next = applyGroupEffect(
-					cel,
-					this.doc.width,
-					this.doc.height,
-					bakeEffect,
+				const next = this.#indexedPixels(
+					applyGroupEffect(
+						cel,
+						this.doc.width,
+						this.doc.height,
+						bakeEffect,
+					),
 				);
 				const result = this.#sameCelPixels(cel, next) ? cel : next;
 				if (result !== cel) changed++;
@@ -4443,7 +4626,7 @@ export class EditorState {
 		for (const layer of this.effectTargetLayers(scope)) {
 			const cel = layer.cels[frame];
 			if (!cel) continue;
-			const next = transform(cel);
+			const next = this.#indexedPixels(transform(cel));
 			if (next === cel || this.#sameCelPixels(cel, next)) continue;
 			pending.push({ layer, cel, next });
 		}
@@ -4480,7 +4663,7 @@ export class EditorState {
 			return {
 				...layer,
 				cels: layer.cels.map((item, index) =>
-					index === frame ? transform(item) : item,
+					index === frame ? this.#indexedPixels(transform(item)) : item,
 				),
 			};
 		});
@@ -4849,13 +5032,11 @@ export class EditorState {
 			for (const layer of this.doc.layers) {
 				if (isGroupLayer(layer)) continue;
 				const sourceCel = source.cels.get(layer.id);
-				layer.cels.splice(
-					target,
-					0,
-					sourceCel
-						? new Uint32Array(sourceCel)
-						: new Uint32Array(width * height),
-				);
+				let pixels: Uint32Array = sourceCel
+					? new Uint32Array(sourceCel)
+					: new Uint32Array(width * height);
+				if (layer.role !== "reference") pixels = this.#indexedPixels(pixels);
+				layer.cels.splice(target, 0, pixels);
 			}
 		}
 

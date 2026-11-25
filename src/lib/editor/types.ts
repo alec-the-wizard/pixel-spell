@@ -212,6 +212,13 @@ export interface ReferenceImage {
 /** Order the animation is played in. */
 export type AnimationMode = "forward" | "backward" | "ping-pong";
 
+/**
+ * How a document treats color. Indexed mode keeps cels in RGBA form but
+ * enforces the active palette: painted colors, imports, filters, and palette
+ * edits are snapped to the nearest palette entry.
+ */
+export type ColorMode = "rgba" | "indexed";
+
 export interface PixelDoc {
 	width: number;
 	height: number;
@@ -225,6 +232,8 @@ export interface PixelDoc {
 	animationMode?: AnimationMode;
 	/** Whether playback repeats; missing means true. */
 	animationLoop?: boolean;
+	/** Color workflow; missing means RGBA. */
+	colorMode?: ColorMode;
 	/** Per-cel properties keyed by `${layerId}:${frameId}`. */
 	celProps?: Record<string, CelProps>;
 }

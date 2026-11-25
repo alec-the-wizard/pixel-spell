@@ -28,7 +28,7 @@ export interface LoadedProject {
 
 const MAGIC = [0x50, 0x58, 0x53, 0x50]; // "PXSP"
 /** Only the current format is accepted; this app has no released legacy files. */
-const FORMAT_VERSION = 5;
+const FORMAT_VERSION = 6;
 const METHOD_RAW = 0;
 const METHOD_RLE = 1;
 const HEADER_SIZE = 4 + 1 + 1 + 2 + 2 + 1 + 2 + 2 + 4;
@@ -46,6 +46,8 @@ interface ProjectMeta {
 	frames?: { duration?: number; tag?: string }[];
 	animationMode?: "forward" | "backward" | "ping-pong";
 	animationLoop?: boolean;
+	/** Color workflow; missing means RGBA. */
+	colorMode?: "rgba" | "indexed";
 	layers: {
 		id: string;
 		name: string;
@@ -254,6 +256,7 @@ export function serializeProject(
 		})),
 		animationMode: normalizeAnimationMode(doc.animationMode),
 		animationLoop: doc.animationLoop !== false,
+		...(doc.colorMode === "indexed" ? { colorMode: "indexed" as const } : {}),
 		layers: doc.layers.map((layer) => ({
 			id: layer.id,
 			name: layer.name,
@@ -688,6 +691,7 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 	const animationMode = normalizeAnimationMode(meta.animationMode);
 	const animationLoop =
 		typeof meta.animationLoop === "boolean" ? meta.animationLoop : true;
+	const colorMode = meta.colorMode === "indexed" ? "indexed" : "rgba";
 
 	// Reconstruct per-cel properties and links from frame-index metadata (frame
 	// ids are regenerated on load, so links store indices in the file).
@@ -758,6 +762,7 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 			references,
 			animationMode,
 			animationLoop,
+			...(colorMode === "indexed" ? { colorMode } : {}),
 			...(celProps ? { celProps } : {}),
 		},
 		palette: normalizePalette(meta.palette),
