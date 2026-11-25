@@ -56,6 +56,7 @@ import {
 	snapPixelsToPalette,
 	snapRegionToPalette,
 } from "../src/lib/editor/indexed.js";
+import { buildIndexedImage, encodeIndexedPng } from "../src/lib/editor/indexed-png.js";
 import {
 	exportGif,
 	sheetAnimations,
@@ -1062,6 +1063,132 @@ function assertIndexedColor(): void {
 	}
 }
 
+function assertIndexedPng(): void {
+	const palette = ["#ff0000", "#00ff00", "#0000ff"];
+	const pixels = new Uint32Array([
+		packColor("#ff0000"),
+		0,
+		packColor("#e00020"),
+		packColor("#00ff00", 64),
+		packColor("#00ff00", 200),
+		packColor("#00ff10"),
+	]);
+	const image = buildIndexedImage(pixels, 3, 2, palette, 128);
+	if (!image) throw new Error("indexed PNG image build failed");
+	if (image.colors !== 4 || image.transparentIndex !== 3) {
+		throw new Error("indexed PNG transparent slot changed");
+	}
+	if (image.indices.join() !== [0, 3, 0, 3, 1, 1].join()) {
+		throw new Error("indexed PNG index mapping changed");
+	}
+	if (
+		image.palette.join() !==
+		[255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0].join()
+	) {
+		throw new Error("indexed PNG palette bytes changed");
+	}
+	if (buildIndexedImage(pixels, 3, 2, []) !== null) {
+		throw new Error("indexed PNG encoder accepted an empty palette");
+	}
+
+	// A full palette is compacted to the used entries to make room for the
+	// transparent slot.
+	const full = Array.from(
+		{ length: 256 },
+		(_, index) => `#${index.toString(16).padStart(6, "0")}`,
+	);
+	const compact = buildIndexedImage(
+		new Uint32Array([packColor(full[0]!), packColor(full[255]!), 0]),
+		3,
+		1,
+		full,
+		128,
+	);
+	if (!compact || compact.colors !== 3 || compact.transparentIndex !== 2) {
+		throw new Error("indexed PNG palette compaction changed");
+	}
+	if (compact.indices.join() !== [0, 1, 2].join()) {
+		throw new Error("indexed PNG compacted indices changed");
+	}
+
+	// Without transparency a full 256-color palette is kept intact, even when
+	// only a couple of entries are used.
+	const opaqueFull = buildIndexedImage(
+		new Uint32Array([packColor(full[0]!), packColor(full[255]!)]),
+		2,
+		1,
+		full,
+		128,
+	);
+	if (!opaqueFull || opaqueFull.colors !== 256 || opaqueFull.transparentIndex !== null) {
+		throw new Error("indexed PNG full opaque palette changed");
+	}
+
+	// 256 used colors plus transparency cannot fit in a palette PNG.
+	const overflow = new Uint32Array(257);
+	for (let index = 0; index < 256; index++) {
+		overflow[index] = packColor(full[index]!);
+	}
+	overflow[256] = 0;
+	if (buildIndexedImage(overflow, 257, 1, full, 128) !== null) {
+		throw new Error("indexed PNG encoder overflowed its palette");
+	}
+}
+
+async function assertIndexedPngBytes(): Promise<void> {
+	const palette = ["#ff0000", "#00ff00", "#0000ff"];
+	const bytes = await encodeIndexedPng(
+		new Uint32Array([packColor("#ff0000"), 0]),
+		2,
+		1,
+		{ palette },
+	);
+	if (!bytes) throw new Error("indexed PNG encoding failed");
+
+	const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+	if (signature.some((value, index) => bytes[index] !== value)) {
+		throw new Error("indexed PNG signature changed");
+	}
+	const typeAt = (offset: number): string =>
+		String.fromCharCode(
+			bytes[offset]!,
+			bytes[offset + 1]!,
+			bytes[offset + 2]!,
+			bytes[offset + 3]!,
+		);
+	const chunkLength = (offset: number): number =>
+		((bytes[offset]! << 24) |
+			(bytes[offset + 1]! << 16) |
+			(bytes[offset + 2]! << 8) |
+			bytes[offset + 3]!) >>>
+		0;
+
+	if (typeAt(12) !== "IHDR" || chunkLength(8) !== 13) {
+		throw new Error("indexed PNG IHDR changed");
+	}
+	if (bytes[24] !== 8 || bytes[25] !== 3) {
+		throw new Error("indexed PNG color type or bit depth changed");
+	}
+
+	let offset = 8;
+	const chunks = new Map<string, number>();
+	while (offset < bytes.length) {
+		const length = chunkLength(offset);
+		const type = typeAt(offset + 4);
+		chunks.set(type, length);
+		offset += 12 + length;
+	}
+	if (chunks.get("PLTE") !== 12) {
+		throw new Error("indexed PNG palette length changed");
+	}
+	if (chunks.get("tRNS") !== 4) {
+		throw new Error("indexed PNG transparency chunk changed");
+	}
+	if (!chunks.has("IDAT") || !chunks.has("IEND") || offset !== bytes.length) {
+		throw new Error("indexed PNG chunk layout changed");
+	}
+}
+
 function assertSheetMetadata(): void {
 	const doc = createDoc(4, 4);
 	doc.frames = [
@@ -1868,6 +1995,8 @@ assertPaletteRamps();
 assertPaletteCycling();
 assertPaletteAnalysis();
 assertIndexedColor();
+assertIndexedPng();
+await assertIndexedPngBytes();
 assertSheetMetadata();
 assertLayerGroups();
 assertSelectionTransform();

@@ -3,6 +3,7 @@ import { scalePixelsNearest } from "./canvas.js";
 import { cloneDoc, compositeFrame, frameDurationMs } from "./doc.js";
 import { fileBase } from "./file.js";
 import { encodeGrayscalePng } from "./grayscale-png.js";
+import { encodeIndexedPng } from "./indexed-png.js";
 import { drawPixels } from "./render.js";
 import type { PixelDoc } from "./types.js";
 
@@ -36,6 +37,10 @@ export interface ImageExportOptions {
 	quality: number;
 	/** Encode a true 8-bit grayscale PNG instead of RGBA (PNG only). */
 	grayscale?: boolean;
+	/** Encode a palette PNG (indexed color type 3) instead of RGBA (PNG only). */
+	indexed?: boolean;
+	/** Palette used by indexed PNG export, in index order. */
+	palette?: readonly string[];
 }
 
 export interface SheetExportOptions {
@@ -49,6 +54,10 @@ export interface SheetExportOptions {
 	quality: number;
 	/** Encode a true 8-bit grayscale PNG instead of RGBA (PNG only). */
 	grayscale?: boolean;
+	/** Encode a palette PNG (indexed color type 3) instead of RGBA (PNG only). */
+	indexed?: boolean;
+	/** Palette used by indexed PNG export, in index order. */
+	palette?: readonly string[];
 }
 
 export interface GifExportOptions {
@@ -192,6 +201,11 @@ export const FORMAT_EXTENSION: Record<ExportFormat, string> = {
 
 /** Formats that can be written as a true 8-bit grayscale image. */
 export function exportFormatSupportsGrayscale(format: ExportFormat): boolean {
+	return format === "png";
+}
+
+/** Formats that can be written as an indexed (palette) image. */
+export function exportFormatSupportsIndexed(format: ExportFormat): boolean {
 	return format === "png";
 }
 
@@ -425,6 +439,27 @@ export async function exportFrameImage(
 	const sizeError = validateExportSize(width, height);
 	if (sizeError) throw new Error(sizeError);
 
+	if (
+		options.indexed &&
+		exportFormatSupportsIndexed(options.format) &&
+		options.palette?.length
+	) {
+		const scaled = scalePixelsNearest(
+			compositeFrame(doc, frameIndex),
+			doc.width,
+			doc.height,
+			width,
+			height,
+		);
+		const pixels = flattenPixels(scaled, options.background);
+		const bytes = await encodeIndexedPng(pixels, width, height, {
+			palette: options.palette,
+		});
+		// A full 256-color palette plus transparency cannot be indexed; fall
+		// through to the normal RGBA PNG so the export always succeeds.
+		if (bytes) return new Blob([bytes], { type: "image/png" });
+	}
+
 	if (options.grayscale && exportFormatSupportsGrayscale(options.format)) {
 		const scaled = scalePixelsNearest(
 			compositeFrame(doc, frameIndex),
@@ -468,6 +503,50 @@ export async function exportSpriteSheet(
 	);
 	const sizeError = validateExportSize(geometry.width, geometry.height);
 	if (sizeError) throw new Error(sizeError);
+
+	if (
+		options.indexed &&
+		exportFormatSupportsIndexed(options.format) &&
+		options.palette?.length
+	) {
+		const transparent = options.background === "transparent";
+		const sheet = new Uint32Array(geometry.width * geometry.height);
+		if (!transparent) {
+			sheet.fill(
+				options.background === "white" ? 0xffffffff : 0xff000000,
+			);
+		}
+
+		for (let frameIndex = 0; frameIndex < doc.frames.length; frameIndex++) {
+			const scaled = scalePixelsNearest(
+				compositeFrame(doc, frameIndex),
+				doc.width,
+				doc.height,
+				geometry.frameWidth,
+				geometry.frameHeight,
+			);
+			const pixels = flattenPixels(scaled, options.background);
+			const column = frameIndex % geometry.columns;
+			const row = Math.floor(frameIndex / geometry.columns);
+			blitPixels(
+				sheet,
+				geometry.width,
+				pixels,
+				geometry.frameWidth,
+				geometry.frameHeight,
+				column * (geometry.frameWidth + geometry.spacing),
+				row * (geometry.frameHeight + geometry.spacing),
+			);
+		}
+
+		const bytes = await encodeIndexedPng(
+			sheet,
+			geometry.width,
+			geometry.height,
+			{ palette: options.palette },
+		);
+		if (bytes) return new Blob([bytes], { type: "image/png" });
+	}
 
 	if (options.grayscale && exportFormatSupportsGrayscale(options.format)) {
 		const transparent = options.background === "transparent";
@@ -708,7 +787,9 @@ function sheetColorFormat(
 	format: ExportFormat,
 	grayscale = false,
 	transparent = false,
+	indexed = false,
 ): string {
+	if (indexed && exportFormatSupportsIndexed(format)) return "I8";
 	if (grayscale && exportFormatSupportsGrayscale(format)) {
 		return transparent ? "LA8" : "L8";
 	}
@@ -758,6 +839,7 @@ export function sheetMetadata(
 		sheet.format,
 		sheet.grayscale === true,
 		sheet.background === "transparent",
+		sheet.indexed === true,
 	);
 	const size = { w: geometry.width, h: geometry.height };
 

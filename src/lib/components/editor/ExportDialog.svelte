@@ -28,6 +28,7 @@
 		exportBaseName,
 		exportFileName,
 		exportFormatSupportsGrayscale,
+		exportFormatSupportsIndexed,
 		exportFrameImage,
 		exportSpriteSheet,
 		flattenPixels,
@@ -46,6 +47,8 @@
 	} from "$lib/editor/export.js";
 	import { drawPixels, drawScaled } from "$lib/editor/render.js";
 	import { grayscalePixels } from "$lib/editor/grayscale.js";
+	import { snapHexToPalette } from "$lib/editor/indexed.js";
+	import { indexedPreviewPixels } from "$lib/editor/indexed-png.js";
 	import { cn } from "$lib/utils.js";
 
 	let { open = $bindable(false) } = $props();
@@ -80,6 +83,7 @@
 	let imageQuality = $state(90);
 	let imageFileName = $state("");
 	let imageGrayscale = $state(false);
+	let imageIndexed = $state(false);
 
 	let sheetScale = $state(1);
 	let sheetLayout = $state<SheetLayout>("horizontal");
@@ -90,6 +94,7 @@
 	let sheetQuality = $state(90);
 	let sheetFileName = $state("");
 	let sheetGrayscale = $state(false);
+	let sheetIndexed = $state(false);
 	let sheetMetadataFormat = $state<SheetMetadataChoice>("none");
 	let sheetPivotX = $state(50);
 	let sheetPivotY = $state(50);
@@ -127,6 +132,10 @@
 
 	let videoInfo = $derived(videoFormatInfo(videoFormat));
 	let iconInfo = $derived(iconFormatInfo(iconFormat));
+
+	let paletteColors = $derived(editor.activePalette.colors);
+	let paletteEmpty = $derived(paletteColors.length === 0);
+	let paletteName = $derived(editor.activePalette.name);
 
 	let videoWidth = $derived(editor.doc.width * videoScale);
 	let videoHeight = $derived(editor.doc.height * videoScale);
@@ -168,7 +177,11 @@
 				imageGrayscale && exportFormatSupportsGrayscale(imageFormat)
 					? " · 8-bit grayscale"
 					: "";
-			return `${format(imageFormat)} · ${imageBackground}${grayscale}`;
+			const indexed =
+				imageIndexed && exportFormatSupportsIndexed(imageFormat)
+					? ` · indexed (${paletteName})`
+					: "";
+			return `${format(imageFormat)} · ${imageBackground}${indexed}${grayscale}`;
 		}
 		if (activeTab === "spritesheet") {
 			const metadata =
@@ -179,7 +192,11 @@
 				sheetGrayscale && exportFormatSupportsGrayscale(sheetFormat)
 					? " · 8-bit grayscale"
 					: "";
-			return `${format(sheetFormat)} · ${sheetBackground}${grayscale}${metadata ? ` · ${metadata}` : ""}`;
+			const indexed =
+				sheetIndexed && exportFormatSupportsIndexed(sheetFormat)
+					? ` · indexed (${paletteName})`
+					: "";
+			return `${format(sheetFormat)} · ${sheetBackground}${indexed}${grayscale}${metadata ? ` · ${metadata}` : ""}`;
 		}
 		if (activeTab === "video") {
 			const selectedCount = editor.selectedFrameIndices.length;
@@ -209,6 +226,7 @@
 			imageQuality = 90;
 			imageFileName = `${exportBaseName(editor.name)}-frame-${editor.activeFrame + 1}.png`;
 			imageGrayscale = false;
+			imageIndexed = editor.indexedMode;
 
 			sheetScale = 1;
 			sheetLayout = "horizontal";
@@ -228,6 +246,7 @@
 			sheetPivotX = 50;
 			sheetPivotY = 50;
 			sheetGrayscale = false;
+			sheetIndexed = editor.indexedMode;
 
 			videoFormat = "gif";
 			videoScale = 1;
@@ -291,6 +310,8 @@
 		spacing: number,
 		background: ExportBackground,
 		grayscale: boolean,
+		indexed: boolean,
+		palette: readonly string[],
 	): void {
 		const geometry = getSheetGeometry(
 			doc.width * scale,
@@ -315,7 +336,11 @@
 		context.setTransform(1, 0, 0, 1, 0, 0);
 		context.clearRect(0, 0, backingWidth, backingHeight);
 		if (background !== "transparent") {
-			context.fillStyle = background === "white" ? "#ffffff" : "#000000";
+			const solid = background === "white" ? "#ffffff" : "#000000";
+			context.fillStyle =
+				indexed && palette.length > 0
+					? snapHexToPalette(palette, solid)
+					: solid;
 			context.fillRect(0, 0, backingWidth, backingHeight);
 		}
 		context.scale(backingWidth / geometry.width, backingHeight / geometry.height);
@@ -326,14 +351,13 @@
 
 		for (let frameIndex = 0; frameIndex < doc.frames.length; frameIndex++) {
 			const composited = compositeFrameCached(doc, frameIndex, editor.revision);
-			drawPixels(
-				source,
-				grayscale
-					? grayscalePixels(composited, doc.width, doc.height, { bits: 8 })
-					: composited,
-				doc.width,
-				doc.height,
-			);
+			const pixels =
+				indexed && palette.length > 0
+					? indexedPreviewPixels(composited, palette)
+					: grayscale
+						? grayscalePixels(composited, doc.width, doc.height, { bits: 8 })
+						: composited;
+			drawPixels(source, pixels, doc.width, doc.height);
 			const column = frameIndex % geometry.columns;
 			const row = Math.floor(frameIndex / geometry.columns);
 			context.drawImage(
@@ -362,8 +386,13 @@
 			const frame = Math.max(0, Math.min(imageFrame, doc.frames.length - 1));
 			const composited = compositeFrameCached(doc, frame, editor.revision);
 			const flattened = flattenPixels(composited, imageBackground);
-			const pixels =
-				imageGrayscale && exportFormatSupportsGrayscale(imageFormat)
+			const indexed =
+				imageIndexed &&
+				exportFormatSupportsIndexed(imageFormat) &&
+				paletteColors.length > 0;
+			const pixels = indexed
+				? indexedPreviewPixels(flattened, paletteColors)
+				: imageGrayscale && exportFormatSupportsGrayscale(imageFormat)
 					? grayscalePixels(flattened, doc.width, doc.height, { bits: 8 })
 					: flattened;
 			drawPixelPreview(canvas, pixels, doc.width, doc.height);
@@ -380,6 +409,8 @@
 				sheetSpacing,
 				sheetBackground,
 				sheetGrayscale && exportFormatSupportsGrayscale(sheetFormat),
+				sheetIndexed && exportFormatSupportsIndexed(sheetFormat),
+				paletteColors,
 			);
 			return;
 		}
@@ -500,6 +531,8 @@
 					background: imageBackground,
 					quality: imageQuality,
 					grayscale: imageGrayscale,
+					indexed: imageIndexed,
+					palette: paletteColors,
 				});
 				downloadBlob(exportFileName(imageFileName, FORMAT_EXTENSION[imageFormat]), blob);
 			} else if (activeTab === "spritesheet") {
@@ -512,6 +545,8 @@
 					background: sheetBackground,
 					quality: sheetQuality,
 					grayscale: sheetGrayscale,
+					indexed: sheetIndexed,
+					palette: paletteColors,
 				};
 				const blob = await exportSpriteSheet(doc, sheetOptions);
 				const sheetName = exportFileName(
@@ -744,6 +779,35 @@
 					{/if}
 				</div>
 
+				{#if exportFormatSupportsIndexed(imageFormat)}
+					<label
+						class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
+						class:opacity-60={paletteEmpty}
+					>
+						<span class="grid gap-0.5">
+							<span class="text-xs font-medium">Indexed palette</span>
+							<span class="text-[10px] text-muted-foreground">
+								{#if paletteEmpty}
+									The active palette is empty. Add colors before exporting an
+									indexed PNG.
+								{:else}
+									Write a palette PNG (color type 3) using “{paletteName}”.
+									Colors snap to the palette and alpha below 50% becomes
+									transparent.
+								{/if}
+							</span>
+						</span>
+						<Switch
+							checked={imageIndexed}
+							disabled={paletteEmpty}
+							onCheckedChange={(checked) => {
+								imageIndexed = checked;
+								if (checked) imageGrayscale = false;
+							}}
+						/>
+					</label>
+				{/if}
+
 				{#if exportFormatSupportsGrayscale(imageFormat)}
 					<label
 						class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
@@ -755,7 +819,13 @@
 								RGB color.
 							</span>
 						</span>
-						<Switch bind:checked={imageGrayscale} />
+						<Switch
+							checked={imageGrayscale}
+							onCheckedChange={(checked) => {
+								imageGrayscale = checked;
+								if (checked) imageIndexed = false;
+							}}
+						/>
 					</label>
 				{/if}
 
@@ -872,6 +942,34 @@
 					{/if}
 				</div>
 
+				{#if exportFormatSupportsIndexed(sheetFormat)}
+					<label
+						class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
+						class:opacity-60={paletteEmpty}
+					>
+						<span class="grid gap-0.5">
+							<span class="text-xs font-medium">Indexed palette</span>
+							<span class="text-[10px] text-muted-foreground">
+								{#if paletteEmpty}
+									The active palette is empty. Add colors before exporting an
+									indexed PNG.
+								{:else}
+									Write a palette PNG (color type 3) using “{paletteName}”.
+									Frame rects and metadata are unchanged.
+								{/if}
+							</span>
+						</span>
+						<Switch
+							checked={sheetIndexed}
+							disabled={paletteEmpty}
+							onCheckedChange={(checked) => {
+								sheetIndexed = checked;
+								if (checked) sheetGrayscale = false;
+							}}
+						/>
+					</label>
+				{/if}
+
 				{#if exportFormatSupportsGrayscale(sheetFormat)}
 					<label
 						class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
@@ -883,7 +981,13 @@
 								unchanged.
 							</span>
 						</span>
-						<Switch bind:checked={sheetGrayscale} />
+						<Switch
+							checked={sheetGrayscale}
+							onCheckedChange={(checked) => {
+								sheetGrayscale = checked;
+								if (checked) sheetIndexed = false;
+							}}
+						/>
 					</label>
 				{/if}
 
