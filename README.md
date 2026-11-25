@@ -1,6 +1,6 @@
 # Pixel Spell
 
-A focused pixel art editor that runs entirely in the browser. Draw sprites, build layered artwork, and animate frame by frame with a clean, modern interface.
+A focused pixel art editor that runs locally in the browser or as a desktop app. Draw sprites, build layered artwork, and animate frame by frame with a clean, modern interface.
 
 ![Pixel Spell screenshot](docs/screenshot.jpg)
 
@@ -34,6 +34,7 @@ A focused pixel art editor that runs entirely in the browser. Draw sprites, buil
 - **Export** — one dialog for image, sprite sheet, video, and icon output. Export the current or chosen frame as PNG, WebP, or JPEG; build horizontal, vertical, or grid sprite sheets with configurable spacing; render an animation as GIF, APNG, animated WebP, or a video file (WebM, MP4, MOV, AVI, or MKV); or package a multi-size `.ico` or `.icns` app icon. Every mode supports 1×–10× scaling and background choices, with live previews and size warnings. PNG image and sprite-sheet exports can also be written as true single-channel 8-bit grayscale files or as indexed palette PNGs (color type 3) using the active palette, with a transparent palette slot and a 50% alpha cut-off. Sprite sheets can also download a JSON sidecar in Aseprite, TexturePacker, or Godot format with frame rects, trimmed content bounds, a configurable pivot, per-frame durations, and tag-based animations; indexed sheets report `I8` as their color format.
 - **Multiple projects** — open several projects in tabs above the canvas. New projects can be named, started with a transparent, white, or black background, and use RGBA or indexed color. The canvas-size preset list covers every power-of-two square from 8 × 8 to 1024 × 1024 plus a deduplicated catalog of retro hardware resolutions. Double-click a tab name to rename it. Each tab keeps its own document, color mode, history, zoom, pan, rotation, and unsaved state. Closing a dirty project asks for confirmation; closing the last project starts a new untitled one.
 - **Autosave and crash recovery** — unsaved projects are snapshotted to IndexedDB shortly after you pause drawing, and every few seconds during longer sessions. If the app is reloaded or crashes, the next launch offers the autosaved tabs with a live preview and **Restore** or **Discard** choices. Autosaves are recovery copies; saved `.pixelspell` files remain the source of truth.
+- **Desktop app** — an Electron build wraps the same Svelte UI with native menus, real file paths, **Save**/**Save As** (including saving in place), **Open Recent**, an optional in-place desktop autosave, OS file associations for `.pixelspell`, project drag-and-drop, and remembered window size. Double-click a project file or pass it on the command line to open it. The desktop runtime pins Chromium, so canvas and future WebGL behavior stay consistent across machines; the browser build keeps its download-based save flow.
 - **File import** — use **File → Import…** or drag and drop a file anywhere to open the import dialog. Common images (PNG, JPEG, GIF, WebP, BMP, AVIF, ICO, SVG) can become a new project, a normal layer, a new frame, a timeline reference layer, or a reference-board image. Project imports larger than 2048 × 2048 are cropped to the top-left corner; reference layers use the complete image fitted to the canvas, and board references retain their original full-resolution bytes. PNGs can also contribute a palette built from their unique colors, and JASC `.pal`, GIMP `.gpl`, and `.hex` palettes import directly. Palettes are capped at 256 colors and previewed before import. **File → Import from URL…** loads a direct image link into the same dialog, and pasting an image from the OS clipboard anywhere outside a text field opens the dialog with that image. Image URLs must allow cross-origin (CORS) requests; otherwise the dialog explains the failure and suggests downloading the file.
 - **Projects** — save and open portable `.pixelspell` files; opened files get their own tab. Reference layers and board images are stored inside the project file, so references travel with the artwork.
 - **Canvas controls** — fit-to-window or manual zoom, scroll-wheel zoom, middle-mouse panning that always keeps part of the sprite on stage, canvas rotation from −180° to +180° in 15° steps, independent pixel and main grids, and a live cursor preview. The main grid supports square cells with separate width and height, isometric diamonds, and pointy- or flat-top hexagons, each with a configurable offset; the pixel grid can be toggled separately. The grid controls and settings dial live at the bottom left of the canvas, while rotation and zoom controls sit at the bottom right. A compact menu-bar readout shows the canvas size, last cursor coordinate, current frame, and active layer.
@@ -47,6 +48,7 @@ A focused pixel art editor that runs entirely in the browser. Draw sprites, buil
 - [Tailwind CSS 4](https://tailwindcss.com/)
 - [shadcn-svelte](https://shadcn-svelte.com/) (Nova preset) and [bits-ui](https://bits-ui.com/)
 - [Lucide](https://lucide.dev/) icons
+- [Electron](https://www.electronjs.org/) + [electron-builder](https://www.electron.build/) for the optional desktop build
 
 ## Getting started
 
@@ -59,15 +61,33 @@ npm run dev
 
 Open the URL printed by Vite (usually `http://localhost:5173`).
 
+For the desktop app, Electron is downloaded on demand rather than during every
+web-only install:
+
+```bash
+npm run desktop:dev      # Vite + Electron with hot reload
+npm run desktop:start    # production bundle, no installer
+npm run desktop:package  # NSIS installer + portable EXE (or DMG/AppImage)
+```
+
+`desktop:package` writes installers to `release/`. The first desktop command
+downloads the pinned Electron runtime into `node_modules`; the browser-only
+workflow never needs it. Packaging is cross-platform, but build each target on
+its own OS for signed/notarized artifacts.
+
 ### Scripts
 
-| Command           | Description                                  |
-| ----------------- | -------------------------------------------- |
-| `npm run dev`     | Start the Vite dev server                    |
-| `npm run build`   | Build for production                          |
-| `npm run preview` | Preview the production build locally         |
-| `npm run check`   | Run `svelte-check` and TypeScript validation |
-| `npm run bench`   | Run the deterministic core performance benchmarks |
+| Command                   | Description                                  |
+| ------------------------- | -------------------------------------------- |
+| `npm run dev`             | Start the Vite dev server                    |
+| `npm run build`           | Build for production                          |
+| `npm run preview`         | Preview the production build locally         |
+| `npm run check`           | Run `svelte-check` and TypeScript validation |
+| `npm run bench`           | Run the deterministic core performance benchmarks |
+| `npm run desktop:dev`     | Run the Electron shell against the Vite dev server |
+| `npm run desktop:start`   | Build and launch the production desktop app |
+| `npm run desktop:package` | Build installers with electron-builder       |
+| `npm run desktop:icon`    | Regenerate `build/icon.png`                  |
 
 ## Keyboard shortcuts
 
@@ -93,7 +113,9 @@ Open the URL printed by Vite (usually `http://localhost:5173`).
 | Command palette     | `Ctrl+K`                 |
 | Undo / redo         | `Ctrl+Z` / `Ctrl+Shift+Z` or `Ctrl+Y` |
 | New project         | `Ctrl+N`                 |
+| Open project        | `Ctrl+O`                 |
 | Save project        | `Ctrl+S`                 |
+| Save project as     | `Ctrl+Shift+S`           |
 | New brush from selection | `Ctrl+Shift+B`      |
 | Play / pause        | `Space`                  |
 | Previous / next frame | `[` / `]` or `,` / `.`  |
@@ -119,6 +141,8 @@ src/
     ├── components/
     │   ├── editor/             # Menu bar, tool strip, tool/color panels, canvas, timeline, dialogs
     │   └── ui/                 # shadcn-svelte components
+    ├── desktop/
+    │   └── desktop.ts          # Renderer bridge to the optional Electron shell
     └── editor/
         ├── editor.svelte.ts    # Reactive editor state (Svelte 5 runes)
         ├── types.ts            # Document, layer, frame, and tool types
@@ -159,6 +183,7 @@ src/
         ├── commands.ts         # Command catalog for the palette and shortcuts
         ├── keybindings.svelte.ts # Rebinding state, conflict checks, persistence
         └── tools.ts            # Tool metadata and shortcuts
+electron/                       # Main process, native menu, preload, packaging helpers
 bench/                          # Deterministic core benchmarks (npm run bench)
 docs/                           # Screenshot, performance notes, planned features
 ```
@@ -215,6 +240,8 @@ Each open project is a separate `PixelDoc` session with its own active layer/fra
 - **Brushes and dither patterns are workspace preferences**, like palettes and keybindings. They are stored in `localStorage`, never written to `.pixelspell` files, and never mark a project dirty. Built-ins are recreated on load; only custom masks are saved. The active brush supplies its saved default size and opacity when selected.
 - Custom brushes are monochrome, so the current primary/secondary color is applied when stamping. Brush strokes and fills respect symmetry, selections, alpha lock, and ink opacity. The eraser uses the same mask and opacity, reducing destination alpha instead of always clearing.
 - Selection transforms scale, flip, and skew with nearest-neighbor sampling, and rotate with the RotSprite algorithm (Scale2x upscaling plus nearest-neighbor rotation), so transformed pixel art keeps hard edges and never introduces new colors.
+- In the desktop app, a tab remembers the `.pixelspell` file it came from, so `Ctrl+S` writes in place and **Save As** writes a new file and renames the tab to the chosen filename. **Autosave to project file** is opt-in and writes through the same path after an edit pause; IndexedDB recovery snapshots still run and now remember the desktop path, so restored tabs keep saving to their original file. Without a path, Save opens the native dialog exactly like Save As.
+- The desktop app is a thin Electron shell around the same renderer. It never enables Node integration in the page, exposes only a narrow preload API, and blocks page navigation to remote origins. Native menu items dispatch the same command catalog as the in-app menu, so rebinding a shortcut still controls the app. Exports still use the browser download path and show the native save dialog. On Windows and Linux the native menu bar is hidden by default so it does not duplicate the app's own menu bar; press `Alt` to reach native actions such as Open Recent and Exit. macOS uses its system menu bar.
 - Projects are limited to 1024 layers and 1000 frames.
 - The editor autosaves dirty tabs to IndexedDB for crash recovery. Autosaves are offered on the next launch and do not replace **File → Save project**, which is still required to keep a `.pixelspell` file. Saving or discarding a dirty project clears its recovery snapshot.
 - The default canvas is 32 × 32; new projects can be 1–2048 px in each dimension.

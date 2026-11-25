@@ -32,9 +32,14 @@
 		loadRecoveryProjects,
 		type RecoveredProject,
 	} from "$lib/editor/autosave.js";
+	import {
+		desktopApi,
+		pathStem,
+		type PixelSpellDesktopApi,
+	} from "$lib/desktop/desktop.js";
 	import { COMMAND_BY_ID, setCommandHost } from "$lib/editor/commands.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
-	import { readProjectFile } from "$lib/editor/file.js";
+	import { parseProject, readProjectFile } from "$lib/editor/file.js";
 	import { IMPORT_ACCEPT } from "$lib/editor/import.js";
 	import { comboFromEvent, keybindings } from "$lib/editor/keybindings.svelte.js";
 
@@ -73,6 +78,26 @@
 		window.addEventListener("pagehide", flushAutosave);
 		document.addEventListener("visibilitychange", flushWhenHidden);
 
+		const desktopCleanups: (() => void)[] = [];
+		const api = desktopApi();
+		if (api) {
+			void api.ready();
+			desktopCleanups.push(
+				api.onMenuCommand((commandId) => {
+					const command = COMMAND_BY_ID[commandId];
+					if (!command) return;
+					if (command.enabled && !command.enabled()) return;
+					command.run();
+				}),
+				api.onOpenPath((filePath) => {
+					void editor.openProjectFromPath(filePath);
+				}),
+				api.onBeforeClose(() => {
+					void closeDesktopWindow(api);
+				}),
+			);
+		}
+
 		void loadRecoveryProjects().then((projects) => {
 			if (disposed || projects.length === 0) return;
 			recoveredProjects = projects;
@@ -84,8 +109,27 @@
 			window.clearInterval(autosaveTimer);
 			window.removeEventListener("pagehide", flushAutosave);
 			document.removeEventListener("visibilitychange", flushWhenHidden);
+			for (const cleanup of desktopCleanups) cleanup();
 		};
 	});
+
+	async function closeDesktopWindow(api: PixelSpellDesktopApi): Promise<void> {
+		// Flush the crash-recovery snapshot before showing the native prompt.
+		editor.autosaveNow();
+		const dirtyNames = editor.projects
+			.filter((project) => editor.isProjectDirty(project.id))
+			.map((project) => editor.projectName(project.id));
+		if (dirtyNames.length === 0) {
+			api.closeWindow(true);
+			return;
+		}
+		try {
+			const allowed = await api.confirmClose(dirtyNames);
+			api.closeWindow(allowed);
+		} catch {
+			api.closeWindow(false);
+		}
+	}
 
 	async function restoreRecoveredProjects(): Promise<void> {
 		const recovered = recoveredProjects;
@@ -99,7 +143,10 @@
 		let preferredId: string | null = null;
 
 		for (const entry of recovered) {
-			const id = editor.openProject(entry.project, { dirty: true });
+			const id = editor.openProject(entry.project, {
+				dirty: true,
+				...(entry.record.filePath ? { filePath: entry.record.filePath } : {}),
+			});
 			if (entry === preferred) preferredId = id;
 		}
 
@@ -141,7 +188,58 @@
 	}
 
 	function openProjectPicker(): void {
+		const api = desktopApi();
+		if (api) {
+			void openDesktopProjectDialog(api);
+			return;
+		}
 		projectInput?.click();
+	}
+
+	async function openDesktopProjectDialog(
+		api: PixelSpellDesktopApi,
+	): Promise<void> {
+		const result = await api.openProjectDialog();
+		if (result.canceled) return;
+		if (result.error || !result.data) {
+			window.alert(result.error ?? "That project could not be opened.");
+			return;
+		}
+		const project = parseProject(result.data);
+		if (!project) {
+			window.alert("That file could not be opened as a Pixel Spell project.");
+			return;
+		}
+		if (/^Untitled( \d+)?$/.test(project.name) && result.name) {
+			project.name = result.name;
+		}
+		editor.openProject(project, { filePath: result.path });
+	}
+
+	function isProjectFile(file: File): boolean {
+		return file.name.toLowerCase().endsWith(".pixelspell");
+	}
+
+	async function openDroppedProject(file: File): Promise<void> {
+		const api = desktopApi();
+		const filePath = api?.getPathForFile(file);
+		if (filePath) {
+			await editor.openProjectFromPath(filePath);
+			return;
+		}
+		try {
+			const project = await readProjectFile(file);
+			if (!project) {
+				window.alert("That file could not be opened as a Pixel Spell project.");
+				return;
+			}
+			if (/^Untitled( \d+)?$/.test(project.name)) {
+				project.name = pathStem(file.name);
+			}
+			editor.openProject(project);
+		} catch {
+			window.alert("That file could not be read. It may be corrupted or too large.");
+		}
 	}
 
 	async function onProjectInput(event: Event): Promise<void> {
@@ -199,7 +297,13 @@
 		event.preventDefault();
 		dragDepth = 0;
 		draggingFile = false;
-		const file = event.dataTransfer?.files?.[0];
+		const files = Array.from(event.dataTransfer?.files ?? []);
+		const projects = files.filter(isProjectFile);
+		if (projects.length > 0) {
+			for (const file of projects) void openDroppedProject(file);
+			return;
+		}
+		const file = files[0];
 		if (file) showImport(file);
 	}
 
@@ -234,6 +338,33 @@
 		if (!editor.dirty) return;
 		const timer = window.setTimeout(() => editor.autosaveNow(), 1200);
 		return () => window.clearTimeout(timer);
+	});
+
+	$effect(() => {
+		// The Electron window follows the document title, so the dirty dot and
+		// active project name stay visible in the taskbar.
+		document.title = `${editor.dirty ? "• " : ""}${editor.name} — Pixel Spell`;
+	});
+
+	$effect(() => {
+		const api = desktopApi();
+		if (!api) return;
+		api.setMenuState({
+			canUndo: editor.canUndo,
+			canRedo: editor.canRedo,
+			hasSelection: editor.hasSelection,
+			hasClipboard: editor.hasClipboard,
+			colorMode: editor.colorMode,
+			showGrid: editor.showGrid,
+			showPixelGrid: editor.showPixelGrid,
+			showPreview: editor.showPreview,
+			showBrushPreview: editor.showBrushPreview,
+			showReferenceBoard: editor.showReferenceBoard,
+			doubleTool: editor.doubleToolEnabled,
+			playing: editor.playing,
+			desktopAutosave: editor.desktopAutosave,
+			hasFile: !!editor.activeFilePath,
+		});
 	});
 
 	const NON_TEXT_INPUT_TYPES = new Set([
@@ -428,7 +559,7 @@
 				<FileUp class="size-6 text-primary" />
 				<p class="text-sm font-medium">Drop to import</p>
 				<p class="max-w-xs text-xs text-muted-foreground">
-					Images and GIMP, JASC, or HEX palettes
+					Pixel Spell projects, images, and GIMP, JASC, or HEX palettes
 				</p>
 			</div>
 		</div>

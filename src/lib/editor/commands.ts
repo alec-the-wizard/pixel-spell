@@ -1,3 +1,4 @@
+import { desktopApi, isDesktop } from "../desktop/desktop.js";
 import { editor } from "./editor.svelte.js";
 import { TOOLS, usesDither } from "./tools.js";
 
@@ -70,6 +71,8 @@ export interface CommandDef {
 	description?: string;
 	/** Extra search terms for the command palette. */
 	keywords?: string;
+	/** Hide the command entirely when the Electron bridge is unavailable. */
+	desktopOnly?: boolean;
 	defaultKeys?: string[];
 	/** Keep the shortcut from firing repeatedly while the key is held. */
 	ignoreRepeat?: boolean;
@@ -103,7 +106,7 @@ const ACTION_COMMANDS: CommandDef[] = [
 		id: "file.open",
 		label: "Open project…",
 		group: "File",
-		defaultKeys: [],
+		defaultKeys: ["mod+o"],
 		run: () => host.openProject(),
 	},
 	{
@@ -127,7 +130,39 @@ const ACTION_COMMANDS: CommandDef[] = [
 		label: "Save project",
 		group: "File",
 		defaultKeys: ["mod+s"],
-		run: () => editor.saveToFile(),
+		run: () => void editor.saveToFile(),
+	},
+	{
+		id: "file.save-as",
+		label: "Save project as…",
+		group: "File",
+		keywords: "copy filename export project file",
+		defaultKeys: ["mod+shift+s"],
+		run: () => void editor.saveToFile({ saveAs: true }),
+	},
+	{
+		id: "file.show-in-folder",
+		label: "Show project in folder",
+		group: "File",
+		keywords: "reveal explorer finder file location",
+		desktopOnly: true,
+		enabled: () => !!desktopApi() && !!editor.activeFilePath,
+		run: () => {
+			const api = desktopApi();
+			if (api && editor.activeFilePath) {
+				void api.showItemInFolder(editor.activeFilePath);
+			}
+		},
+	},
+	{
+		id: "file.toggle-autosave",
+		label: "Autosave to project file",
+		group: "File",
+		description: "Write edits back to the current project file after pauses.",
+		keywords: "desktop automatic backup save",
+		desktopOnly: true,
+		enabled: () => !!desktopApi(),
+		run: () => editor.toggleDesktopAutosave(),
 	},
 	{
 		id: "file.export",
@@ -678,10 +713,14 @@ const TOOL_COMMANDS: CommandDef[] = TOOLS.map((tool) => ({
 	run: () => editor.setTool(tool.id),
 }));
 
+const availableCommands = ACTION_COMMANDS.filter(
+	(command) => !command.desktopOnly || isDesktop(),
+);
+
 export const COMMANDS: CommandDef[] = [
-	...ACTION_COMMANDS.filter((command) => command.group !== "Help"),
+	...availableCommands.filter((command) => command.group !== "Help"),
 	...TOOL_COMMANDS,
-	...ACTION_COMMANDS.filter((command) => command.group === "Help"),
+	...availableCommands.filter((command) => command.group === "Help"),
 ];
 
 export const COMMAND_BY_ID: Record<string, CommandDef> = Object.fromEntries(

@@ -22,6 +22,8 @@ export interface AutosaveRecord {
 	/** Tab order at the time of the snapshot, used to restore the same order. */
 	position: number;
 	savedAt: number;
+	/** Desktop project path, so a restored tab can keep saving in place. */
+	filePath?: string;
 }
 
 /** A parsed autosave ready to preview and restore. */
@@ -82,7 +84,8 @@ function isAutosaveRecord(value: unknown): value is AutosaveRecord {
 		record.bytes.length > 0 &&
 		(record.position === undefined || typeof record.position === "number") &&
 		typeof record.savedAt === "number" &&
-		Number.isFinite(record.savedAt)
+		Number.isFinite(record.savedAt) &&
+		(record.filePath === undefined || typeof record.filePath === "string")
 	);
 }
 

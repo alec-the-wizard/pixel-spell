@@ -2,8 +2,10 @@
 	import WandSparkles from "@lucide/svelte/icons/wand-sparkles";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import * as Dialog from "$lib/components/ui/dialog/index.js";
+	import { desktopApi, desktopPlatformName } from "$lib/desktop/desktop.js";
 
 	let { open = $bindable(false) } = $props();
+	const desktop = desktopApi();
 </script>
 
 <Dialog.Root bind:open>
@@ -25,10 +27,15 @@
 		<div class="grid gap-4 py-2 text-sm text-muted-foreground">
 			<p>
 				Draw sprites, build layered artwork and animate frame by frame. Everything runs
-				in the browser and projects can be saved as portable Pixel Spell files.
+				locally in the browser or as the desktop app, and projects can be saved as
+				portable Pixel Spell files.
 			</p>
 			<p>Made by Alec, the Wizard🧙‍♂️✨</p>
-			<p class="font-mono text-[10px] text-muted-foreground/80">Version 0.1.0</p>
+			<p class="font-mono text-[10px] text-muted-foreground/80">
+				Version 0.1.0{desktop
+					? ` · Desktop (${desktopPlatformName(desktop.platform)})`
+					: ""}
+			</p>
 		</div>
 
 		<Dialog.Footer>

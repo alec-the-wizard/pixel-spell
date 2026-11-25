@@ -5,19 +5,15 @@
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<meta
+			http-equiv="Content-Security-Policy"
+			content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self' data:; media-src 'self' blob: data:; connect-src 'self' data: blob: http: https: ws: wss:; worker-src 'self' blob:; child-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-src 'none'"
+		/>
+		<meta
 			name="description"
 			content="Pixel Spell — a focused pixel art editor with layers and frame-by-frame animation."
 		/>
 		<title>Pixel Spell</title>
-		<script>
-			try {
-				if (localStorage.getItem("pixel-spell-theme") === "dark") {
-					document.documentElement.classList.add("dark");
-				}
-			} catch {
-				// Ignore storage restrictions.
-			}
-		</script>
+		<script src="/theme-bootstrap.js"></script>
 	</head>
 	<body>
 		<div id="app"></div>

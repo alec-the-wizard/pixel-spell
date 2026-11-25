@@ -39,10 +39,12 @@ import {
 import {
 	MAX_PROJECT_FRAMES,
 	MAX_PROJECT_LAYERS,
+	parseProject,
 	saveProjectFile,
 	serializeProject,
 	type LoadedProject,
 } from "./file.js";
+import { desktopApi } from "../desktop/desktop.js";
 import {
 	DEFAULT_GRID_SETTINGS,
 	loadGridSettings,
@@ -250,6 +252,15 @@ function readStoredTheme(): "light" | "dark" {
 		return localStorage.getItem("pixel-spell-theme") === "dark" ? "dark" : "light";
 	} catch {
 		return "light";
+	}
+}
+
+/** Desktop-only preference: mirror saved projects after edit pauses. */
+function readDesktopAutosave(): boolean {
+	try {
+		return localStorage.getItem("pixel-spell-desktop-autosave") === "true";
+	} catch {
+		return false;
 	}
 }
 
@@ -516,6 +527,10 @@ export class EditorState {
 	dirty = $state(false);
 	modified = $state(false);
 	name = $state("Untitled");
+	/** Absolute path of the active desktop project; null for unsaved tabs. */
+	activeFilePath = $state<string | null>(null);
+	/** Desktop-only preference, persisted in localStorage. */
+	desktopAutosave = $state(readDesktopAutosave());
 
 	projects = $state<ProjectTab[]>([]);
 	activeProjectId = $state("");
@@ -2319,6 +2334,7 @@ export class EditorState {
 		activeLayerId: string,
 		active: boolean,
 		position: number,
+		filePath?: string | null,
 	): AutosaveRecord | null {
 		try {
 			return {
@@ -2334,6 +2350,7 @@ export class EditorState {
 				active,
 				position,
 				savedAt: Date.now(),
+				...(filePath ? { filePath } : {}),
 			};
 		} catch {
 			// Documents that are too large for the project format remain fully
@@ -2342,8 +2359,8 @@ export class EditorState {
 		}
 	}
 
-	#autosaveActiveProject(active: boolean): void {
-		if (!this.dirty) return;
+	#autosaveActiveProject(active: boolean): AutosaveRecord | null {
+		if (!this.dirty) return null;
 		const record = this.#autosaveRecord(
 			this.activeProjectId,
 			this.doc,
@@ -2357,8 +2374,44 @@ export class EditorState {
 					(project) => project.id === this.activeProjectId,
 				),
 			),
+			this.activeFilePath,
 		);
 		if (record) void writeAutosave(record);
+		return record;
+	}
+
+	/**
+	 * Mirrors a recovery snapshot into the project file when the desktop app is
+	 * running with autosave enabled. The browser never writes project files on
+	 * its own, so this stays opt-in and desktop-only.
+	 */
+	#writeDesktopAutosave(record: AutosaveRecord | null): void {
+		const api = desktopApi();
+		const filePath = this.activeFilePath;
+		if (!record || !api || !filePath || !this.desktopAutosave) return;
+		const projectId = this.activeProjectId;
+		const projectName = this.name;
+		const revision = this.revision;
+		const structureRevision = this.structureRevision;
+		void api
+			.writeProjectFile(filePath, record.bytes, this.name, false)
+			.then((result) => {
+				if (!result.ok) return;
+				if (this.activeProjectId !== projectId) return;
+				if (
+					this.revision !== revision ||
+					this.structureRevision !== structureRevision ||
+					this.name !== projectName ||
+					this.activeFilePath !== filePath ||
+					!this.dirty
+				) {
+					return;
+				}
+				this.markSaved();
+			})
+			.catch(() => {
+				// Disk autosave is best-effort; explicit Save reports its errors.
+			});
 	}
 
 	/**
@@ -2366,7 +2419,8 @@ export class EditorState {
 	 * IndexedDB so unsaved tabs survive a crash or reload.
 	 */
 	autosaveNow(): void {
-		this.#autosaveActiveProject(true);
+		const record = this.#autosaveActiveProject(true);
+		this.#writeDesktopAutosave(record);
 	}
 
 	/**
@@ -2374,7 +2428,8 @@ export class EditorState {
 	 * restoring a workspace so a second crash cannot drop the other tabs.
 	 */
 	autosaveAll(): void {
-		this.#autosaveActiveProject(true);
+		const record = this.#autosaveActiveProject(true);
+		this.#writeDesktopAutosave(record);
 		for (const project of this.projects) {
 			if (project.id === this.activeProjectId) continue;
 			const snapshot = this.#states.get(project.id);
@@ -2390,6 +2445,7 @@ export class EditorState {
 					0,
 					this.projects.findIndex((item) => item.id === project.id),
 				),
+				project.filePath,
 			);
 			if (record) void writeAutosave(record);
 		}
@@ -2692,6 +2748,7 @@ export class EditorState {
 		tab.name = this.name;
 		tab.dirty = this.dirty;
 		tab.modified = this.modified;
+		tab.filePath = this.activeFilePath ?? undefined;
 		snapshot.doc = this.doc;
 		snapshot.activeLayerId = this.activeLayerId;
 		snapshot.activeFrame = this.activeFrame;
@@ -2733,6 +2790,7 @@ export class EditorState {
 		this.name = tab.name;
 		this.dirty = tab.dirty;
 		this.modified = tab.modified;
+		this.activeFilePath = tab.filePath ?? null;
 		this.#undo = snapshot.undo;
 		this.#redo = snapshot.redo;
 		this.#undoBytes = snapshot.undoBytes;
@@ -2770,6 +2828,34 @@ export class EditorState {
 	projectName(id: string): string {
 		if (id === this.activeProjectId) return this.name;
 		return this.projects.find((project) => project.id === id)?.name ?? "Untitled";
+	}
+
+	/** Desktop project path for a tab, or null when it has never been saved. */
+	projectFilePath(id: string): string | null {
+		if (id === this.activeProjectId) return this.activeFilePath;
+		return this.projects.find((project) => project.id === id)?.filePath ?? null;
+	}
+
+	/** Associates the active tab with a desktop file path. */
+	setActiveFilePath(filePath: string | null): void {
+		this.activeFilePath = filePath;
+		const tab = this.projects.find(
+			(project) => project.id === this.activeProjectId,
+		);
+		if (tab) tab.filePath = filePath ?? undefined;
+	}
+
+	setDesktopAutosave(enabled: boolean): void {
+		this.desktopAutosave = enabled;
+		try {
+			localStorage.setItem("pixel-spell-desktop-autosave", String(enabled));
+		} catch {
+			// Preferences are best-effort in restricted storage contexts.
+		}
+	}
+
+	toggleDesktopAutosave(): void {
+		this.setDesktopAutosave(!this.desktopAutosave);
 	}
 
 	/** Renames the active project tab and marks the project as unsaved. */
@@ -2871,7 +2957,7 @@ export class EditorState {
 
 	openProject(
 		project: LoadedProject,
-		options: { dirty?: boolean } = {},
+		options: { dirty?: boolean; filePath?: string } = {},
 	): string {
 		const doc = project.doc;
 		const activeLayerId = doc.layers.some((layer) => layer.id === project.activeLayerId)
@@ -2906,6 +2992,7 @@ export class EditorState {
 			name,
 			dirty: options.dirty === true,
 			modified: true,
+			...(options.filePath ? { filePath: options.filePath } : {}),
 		});
 		this.#activateProject(id);
 		return id;
@@ -3318,24 +3405,119 @@ export class EditorState {
 		this.#syncActiveProject();
 	}
 
-	saveToFile(): void {
+	#serializeActiveProject(): Uint8Array<ArrayBuffer> {
+		return serializeProject(
+			this.doc,
+			this.activePalette.colors,
+			this.name,
+			this.activeFrame,
+			this.activeLayerId,
+		);
+	}
+
+	#reportSaveError(error: unknown): void {
+		window.alert(
+			error instanceof Error
+				? error.message
+				: "The project could not be saved.",
+		);
+	}
+
+	/**
+	 * Saves the active project. The browser downloads a file; the desktop app
+	 * writes in place when the tab already has a path and otherwise opens the
+	 * native Save dialog.
+	 */
+	async saveToFile(options: { saveAs?: boolean } = {}): Promise<void> {
 		if (this.floating) this.commitFloatingSelection();
+
+		const api = desktopApi();
+		if (!api) {
+			try {
+				saveProjectFile(
+					this.doc,
+					this.activePalette.colors,
+					this.name,
+					this.activeFrame,
+					this.activeLayerId,
+				);
+				this.markSaved();
+			} catch (error) {
+				this.#reportSaveError(error);
+			}
+			return;
+		}
+
 		try {
-			saveProjectFile(
-				this.doc,
-				this.activePalette.colors,
-				this.name,
-				this.activeFrame,
-				this.activeLayerId,
-			);
+			const bytes = this.#serializeActiveProject();
+			if (!options.saveAs && this.activeFilePath) {
+				const result = await api.writeProjectFile(
+					this.activeFilePath,
+					bytes,
+					this.name,
+					true,
+				);
+				if (!result.ok) {
+					throw new Error(result.error ?? "The project could not be saved.");
+				}
+				this.setActiveFilePath(result.path ?? this.activeFilePath);
+			} else {
+				const result = await api.saveProjectDialog(
+					bytes,
+					this.name,
+					this.activeFilePath,
+				);
+				if (result.canceled) return;
+				if (!result.ok || !result.path) {
+					throw new Error(result.error ?? "The project could not be saved.");
+				}
+				const savedPath = result.path;
+				this.setActiveFilePath(savedPath);
+				if (result.name && result.name !== this.name) {
+					this.name = result.name.slice(0, 60);
+					const tab = this.projects.find(
+						(project) => project.id === this.activeProjectId,
+					);
+					if (tab) tab.name = this.name;
+					// The dialog wrote the old metadata name; rewrite so reopening the
+					// file matches the renamed tab.
+					const renamed = await api.writeProjectFile(
+						savedPath,
+						this.#serializeActiveProject(),
+						this.name,
+						true,
+					);
+					if (!renamed.ok) {
+						throw new Error(
+							renamed.error ?? "The project could not be saved.",
+						);
+					}
+				}
+			}
 			this.markSaved();
 		} catch (error) {
-			window.alert(
-				error instanceof Error
-					? error.message
-					: "The project could not be saved.",
-			);
+			this.#reportSaveError(error);
 		}
+	}
+
+	/** Opens a project from a desktop path, returning the new tab id. */
+	async openProjectFromPath(filePath: string): Promise<string | null> {
+		const api = desktopApi();
+		if (!api) return null;
+		const read = await api.readProjectFile(filePath);
+		if (!read.ok || !read.data) {
+			window.alert(read.error ?? "That project could not be opened.");
+			return null;
+		}
+		const project = parseProject(read.data);
+		if (!project) {
+			window.alert("That file could not be opened as a Pixel Spell project.");
+			return null;
+		}
+		if (/^Untitled( \d+)?$/.test(project.name) && read.name) {
+			project.name = read.name;
+		}
+		return this.openProject(project, { filePath: read.path ?? filePath });
 	}
 
 	selectLayer(id: string, options: { preserveSelection?: boolean } = {}): void {

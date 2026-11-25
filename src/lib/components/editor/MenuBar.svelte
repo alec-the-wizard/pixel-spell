@@ -49,6 +49,7 @@
 	import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
 	import { Separator } from "$lib/components/ui/separator/index.js";
 	import * as Tooltip from "$lib/components/ui/tooltip/index.js";
+	import { desktopApi, isDesktop } from "$lib/desktop/desktop.js";
 	import { keybindings } from "$lib/editor/keybindings.svelte.js";
 	import {
 		editor,
@@ -191,13 +192,44 @@
 					<Link2 class="size-4" />
 					Import from URL…
 				</DropdownMenu.Item>
-				<DropdownMenu.Item onSelect={() => editor.saveToFile()}>
+				<DropdownMenu.Item onSelect={() => void editor.saveToFile()}>
 					<Save class="size-4" />
 					Save project
 					{#if shortcutLabel("file.save")}
 						<DropdownMenu.Shortcut>{shortcutLabel("file.save")}</DropdownMenu.Shortcut>
 					{/if}
 				</DropdownMenu.Item>
+				{#if isDesktop()}
+					<DropdownMenu.Item
+						onSelect={() => void editor.saveToFile({ saveAs: true })}
+					>
+						<Save class="size-4" />
+						Save project as…
+						{#if shortcutLabel("file.save-as")}
+							<DropdownMenu.Shortcut>{shortcutLabel("file.save-as")}</DropdownMenu.Shortcut>
+						{/if}
+					</DropdownMenu.Item>
+					{#if editor.activeFilePath}
+						<DropdownMenu.Item
+							onSelect={() => {
+								const api = desktopApi();
+								if (api && editor.activeFilePath) {
+									void api.showItemInFolder(editor.activeFilePath);
+								}
+							}}
+						>
+							<FolderOpen class="size-4" />
+							Show project in folder
+						</DropdownMenu.Item>
+					{/if}
+					<DropdownMenu.CheckboxItem
+						checked={editor.desktopAutosave}
+						onCheckedChange={(checked) => editor.setDesktopAutosave(checked)}
+					>
+						<Save class="size-4" />
+						Autosave to project file
+					</DropdownMenu.CheckboxItem>
+				{/if}
 				<DropdownMenu.Separator />
 				<DropdownMenu.Item onSelect={onExport}>
 					<FileDown class="size-4" />

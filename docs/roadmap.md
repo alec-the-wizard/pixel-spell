@@ -53,6 +53,7 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Custom grid offsets and isometric/hex grid | 6 | 3 | 2.00 | | Implemented: the main **Grid** now supports square (independent horizontal and vertical cell sizes), isometric diamond, and hexagonal (pointy- or flat-top) modes, each with X/Y offsets; the **Pixel grid** is an independent every-pixel overlay. Both are toggled from the View menu and the bottom-left canvas pill, advanced options live in a **Grid settings** dialog opened from either place, and workspace preferences persist in `localStorage`. |
 | Timelapse / process replay | 8 | 4 | 2.00 | ★ | Implemented as **File → Export timelapse…**, a video-style dialog with format, scale, playback-speed, quality, loop, background, preview, and size warnings. Each frame is one retained undo state of the active animation frame, rebuilt by applying history entries backwards from the current document, so no separate recording system exists. The **Edit → History…** dialog gained a workspace-wide **Saved steps** slider (10–500) with a pixel-patch/full-snapshot memory estimate; the existing 128 MB history budget still applies. |
 | Indexed color mode | 9 | 8 | 1.13 | | Shipped as a palette-enforcement color mode rather than index-buffer cels: `doc.colorMode` stores RGBA or indexed per project, the New project dialog offers both, and **Project → Color mode** switches an open document in either direction as one undoable step. Entering indexed mode converts every off-palette canvas color to the perceptually nearest active-palette entry (OKLab); painted colors, gradients, filters, imports, pasted pixels, and blur output are snapped the same way; removing a used palette color or switching/importing a palette remaps the artwork to the nearest remaining entry. The color picker gained **Add to palette** (forking the read-only Default palette into an editable copy). PNG image and sprite-sheet export can write true indexed palette files (color type 3 with PLTE and a tRNS transparent slot) using the active palette, with a live quantized preview and an `I8` metadata format for sheets. Cels stay packed RGBA, so every tool, effect, autosave, and history path works unchanged. True 8-bit index buffers, per-document palettes, and index-remap palette swapping are explicitly not planned. |
+| Desktop app (Electron) | 8 | 7 | 1.14 | ★ | Implemented as an optional Electron shell around the same Svelte renderer, deliberately Electron rather than Tauri for a pinned Chromium runtime and consistent canvas/WebGL behavior. Adds native menus, native Open/Save/Save As dialogs, in-place `Ctrl+S`, Open Recent, `.pixelspell` file associations, project drag-and-drop, window-state restore, an opt-in in-place autosave, and an unsaved-close prompt. Browser tabs keep their download-based save flow; electron-builder packages NSIS/portable, DMG/zip, and AppImage/deb artifacts. |
 
 ## Planned features
 
@@ -78,7 +79,6 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Non-destructive adjustments (hue/sat/levels/curves) | 7 | 6 | 1.17 | | Per-layer adjustment stacks with live preview and export. Requires a layer-effect model and compositing changes; can be destructive first, then non-destructive. |
 | Brush pressure / velocity and tablet support | 7 | 6 | 1.17 | | Pointer pressure API, pressure-to-size/opacity curves, and tablet-friendly UI. Requires a brush engine change and careful pixel snapping. |
 | AI palette, cleanup, and generation assist | 8 | 7 | 1.14 | ★ | Optional, explicit AI actions: generate a palette from a prompt, clean up stray pixels, suggest outlines/shadows, or generate a base sprite. Needs a provider abstraction, privacy controls, and a review step. |
-| Desktop app (Tauri/Electron) | 8 | 7 | 1.14 | ★ | Native menus, file-system access, auto-save, drag-and-drop, and offline project library. Reuses the Svelte UI; the main work is packaging, file APIs, and updates. |
 | Aseprite `.aseprite` import/export | 9 | 8 | 1.13 | | Parse/write the Aseprite binary format (layers, frames, tags, palettes, cels). High interoperability value; requires careful binary parsing and test fixtures. |
 | MCP server | 8 | 8 | 1.00 | ★ | Expose Pixel Spell projects and operations to AI agents through MCP tools: inspect document/layers/frames/palette, draw/fill/select, add/remove frames and layers, export PNG/GIF/sheet, save project. A local Node bridge can talk to the browser app over WebSocket, or run the same TypeScript core headlessly. Security must be opt-in, localhost-only, and project-scoped. This is a genuinely uncommon selling point. |
 | Tilemap / tileset mode | 9 | 9 | 1.00 | ★ | Tile size, tile palette document, tile layers storing indices, tile picker, auto-tiling rules, isometric/hex grids, external tilesets, and tilemap JSON export. A large model change but extremely valuable for game artists and level design. |
@@ -150,7 +150,7 @@ This phase closes the biggest gaps versus Aseprite and Photoshop-style workflows
 2. Tilemap/tileset mode
 3. MCP server for AI-agent workflows
 4. Aseprite `.aseprite` import/export
-5. Desktop app (Tauri) with native file access and autosave
+5. Desktop app (Electron) with native file access and autosave — done
 6. WebGL shader filters
 7. Timelapse / process replay — done
 8. Shareable live preview links
@@ -203,6 +203,17 @@ Implemented as authoring tools inside the **Color cycles…** dialog, opened fro
 - **Generate cycle animation** inserts one full pass after the active frame. Every inserted frame is an ordinary frame with a rotated copy of every layer, a custom duration from the cycle speed, and an optional tag. The generated frames become the current selection, which also makes them the animation range. GIF and sprite-sheet export therefore animate the cycle through the existing paths.
 - Cycling ranges, speed, and direction are workspace preferences and are deliberately **not** stored in project files. Only the generated frames (or baked pixels) are document data.
 - Indexed color mode is still the long-term place for palette metadata cycling; this implementation is the RGBA authoring equivalent and does not change the file format.
+
+### Desktop app (Electron)
+
+The desktop build is a thin, secure shell around the existing renderer rather than a second product:
+
+- **Why Electron instead of Tauri:** the app pins its own Chromium, so canvas readback, image decoding, and future WebGL shader previews behave the same on every machine. The renderer, editor core, and project format are unchanged, and the browser build remains the default zero-install path.
+- **Native integration:** the main process owns native Open/Save/Save As dialogs, Open Recent, window-bounds persistence, `.pixelspell` file associations, single-instance forwarding, OS “Open with” paths, and a native unsaved-changes prompt. Native menu items dispatch the same command ids as the in-app menu, so the shortcut editor stays authoritative.
+- **Real file paths:** each project tab can remember its `.pixelspell` path. `Ctrl+S` writes in place, Save As adopts the filename (and rewrites the embedded metadata), and the tab tooltip shows the full path. Desktop recovery snapshots keep the path so restored tabs still save in place.
+- **Autosave:** IndexedDB recovery always runs. **File → Autosave to Project File** additionally mirrors snapshots into the active project file after edit pauses, but only clears the dirty flag when no newer edit landed during the write.
+- **Security:** `contextIsolation`, `sandbox`, no Node integration in the page, a narrow preload bridge, absolute-path/extension checks, `PXSP` magic validation, a 512 MB file cap, and a CSP that blocks inline and remote scripts. Writes are atomic and serialized.
+- **Packaging:** `electron-builder` produces NSIS and portable Windows builds, DMG/zip on macOS, and AppImage/deb on Linux. The desktop bundle is built with a relative Vite base so it loads from `app.asar`; the Electron runtime is downloaded on demand so web-only installs and deploys stay lightweight. Code signing/notarization and an update feed remain release-engineering follow-ups.
 
 ### MCP server
 

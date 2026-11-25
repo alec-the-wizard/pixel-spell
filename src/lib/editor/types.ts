@@ -243,6 +243,8 @@ export interface ProjectTab {
 	name: string;
 	dirty: boolean;
 	modified: boolean;
+	/** Absolute project path in the desktop app; missing for browser tabs. */
+	filePath?: string;
 }
 
 export interface Point {

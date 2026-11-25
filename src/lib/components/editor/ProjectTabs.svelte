@@ -80,6 +80,7 @@
 			{@const active = project.id === editor.activeProjectId}
 			{@const name = editor.projectName(project.id)}
 			{@const dirty = editor.isProjectDirty(project.id)}
+			{@const filePath = editor.projectFilePath(project.id)}
 			{@const closeDisabled =
 				editor.projects.length === 1 && !editor.isProjectModified(project.id)}
 
@@ -123,7 +124,7 @@
 							event.stopPropagation();
 							startRename(project.id);
 						}}
-						title={`${name} — double-click to rename`}
+						title={`${name} — double-click to rename${filePath ? `\n${filePath}` : ""}`}
 					>
 						<span class="max-w-36 truncate">{name}</span>
 						{#if dirty}
