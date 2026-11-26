@@ -324,7 +324,7 @@
 				<DropdownMenu.Item
 					onSelect={() => editor.cropToContent()}
 					disabled={!cropContentEnabled}
-					title="Trim transparent borders around all visible artwork. Reference layers and board images are ignored."
+					title="Trim transparent borders around all visible artwork. Board images are ignored."
 				>
 					<Scan class="size-4" />
 					Crop to Content

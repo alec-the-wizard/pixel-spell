@@ -58,6 +58,7 @@ import {
 } from "../src/lib/editor/indexed.js";
 import { buildIndexedImage, encodeIndexedPng } from "../src/lib/editor/indexed-png.js";
 import {
+	exportDocForLayers,
 	exportGif,
 	sheetAnimations,
 	sheetFrameInfos,
@@ -227,33 +228,14 @@ measure("compositeFrame 512x512x8 (per frame)", 12, 3, () => {
 		compositeFrame(incrementalDoc, frame);
 	}
 });
-compositeFrameCachedIncremental(incrementalDoc, 0, false, 0, 0, "layer-0");
+compositeFrameCachedIncremental(incrementalDoc, 0, 0, 0, "layer-0");
 measure("compositeFrameIncremental 512x512x8 (edit top layer)", 12, 3, () => {
-	compositeFrameCachedIncremental(incrementalDoc, 0, false, 0, 0, "layer-7");
+	compositeFrameCachedIncremental(incrementalDoc, 0, 0, 0, "layer-7");
 });
 
 measure("cloneDoc 512x512x4x6", 8, 2, () => {
 	cloneDoc(compositeDoc);
 });
-
-// Reference layers must be opt-in for viewport compositing and excluded by default.
-{
-	const referenceDoc = createDoc(2, 1);
-	referenceDoc.layers[0]!.cels[0]!.fill(packColor("#ff0000"));
-	const reference = createLayer("Reference", 2, 1, 1, "reference");
-	reference.cels[0]!.fill(packColor("#0000ff"));
-	referenceDoc.layers.push(reference);
-
-	const exported = compositeFrame(referenceDoc, 0);
-	const viewport = compositeFrame(referenceDoc, 0, true);
-	if (exported[0] !== packColor("#ff0000")) {
-		throw new Error("reference layer leaked into the default composite");
-	}
-	if (viewport[0] !== packColor("#0000ff")) {
-		throw new Error("reference layer missing from the viewport composite");
-	}
-}
-
 
 
 // --- Drawing --------------------------------------------------------------
@@ -482,9 +464,6 @@ function assertProjectRoundtrip(doc: PixelDoc, label: string): void {
 	for (let layerIndex = 0; layerIndex < doc.layers.length; layerIndex++) {
 		const originalLayer = doc.layers[layerIndex]!;
 		const restoredLayer = parsed.doc.layers[layerIndex]!;
-		if (originalLayer.role !== restoredLayer.role) {
-			throw new Error(`${label}: layer role changed`);
-		}
 		if (originalLayer.color !== restoredLayer.color) {
 			throw new Error(`${label}: layer color changed`);
 		}
@@ -927,11 +906,6 @@ function assertPaletteAnalysis(): void {
 	]);
 	layer.cels[1]!.set([packColor("#ff0000"), packColor("#ff0000", 64)]);
 
-	// Reference layers are not part of the palette usage analysis.
-	const reference = createLayer("Reference", 4, 4, 2, "reference");
-	reference.cels[1]!.fill(packColor("#0000ff"));
-	doc.layers.push(reference);
-
 	const palette = ["#ff0000", "#00ff00", "#0000ff", "#ffffff"];
 	const unused = unusedPaletteColors(doc, palette);
 	if (unused.join() !== ["#0000ff", "#ffffff"].join()) {
@@ -1031,22 +1005,16 @@ function assertIndexedColor(): void {
 		throw new Error("indexed pixel snapping mutated its source");
 	}
 
-	// Whole-document snapping skips reference layers and keeps buffers linked.
+	// Whole-document snapping keeps buffers linked.
 	const doc = createDoc(2, 2, "transparent", "indexed");
 	const layer = doc.layers[0]!;
 	layer.cels[0]!.fill(packColor("#f00020"));
-	const reference = createLayer("Reference", 2, 2, 1, "reference");
-	reference.cels[0]!.fill(packColor("#123456"));
-	doc.layers.push(reference);
 	const changed = snapDocToPalette(doc, palette);
 	if (changed !== 4) {
 		throw new Error("indexed document snapping pixel count changed");
 	}
 	if (layer.cels[0]![0] !== packColor("#ff0000")) {
 		throw new Error("indexed document snapping missed artwork");
-	}
-	if (reference.cels[0]![0] !== packColor("#123456")) {
-		throw new Error("indexed document snapping touched a reference layer");
 	}
 	if (cloneDoc(doc).colorMode !== "indexed") {
 		throw new Error("cloneDoc lost the indexed color mode");
@@ -1189,6 +1157,32 @@ async function assertIndexedPngBytes(): Promise<void> {
 	}
 }
 
+function assertExportLayerScope(): void {
+	const doc = createDoc(2, 2);
+	const base = doc.layers[0]!;
+	const group = createGroup("G");
+	const child = createLayer("Child", 2, 2, 1);
+	child.parentId = group.id;
+	const other = createLayer("Other", 2, 2, 1);
+	doc.layers.push(group, child, other);
+
+	if (exportDocForLayers(doc, [child.id]).layers.map((layer) => layer.id).join() !== [group.id, child.id].join()) {
+		throw new Error("export layer scope did not keep the ancestor group");
+	}
+	if (exportDocForLayers(doc, [group.id]).layers.map((layer) => layer.id).join() !== [group.id, child.id].join()) {
+		throw new Error("export layer scope did not expand a selected group");
+	}
+	if (exportDocForLayers(doc, [other.id]).layers.map((layer) => layer.id).join() !== other.id) {
+		throw new Error("export layer scope included unselected layers");
+	}
+	if (exportDocForLayers(doc, [base.id, group.id, child.id, other.id]) !== doc) {
+		throw new Error("export layer scope rebuilt an all-layer document");
+	}
+	if (exportDocForLayers(doc, null) !== doc || exportDocForLayers(doc, []) !== doc) {
+		throw new Error("export layer scope changed the empty-selection fallback");
+	}
+}
+
 function assertSheetMetadata(): void {
 	const doc = createDoc(4, 4);
 	doc.frames = [
@@ -1205,11 +1199,6 @@ function assertSheetMetadata(): void {
 		0, packColor("#ff0000"), packColor("#ff0000"), 0,
 		0, 0, 0, 0,
 	]);
-	// Reference layers must never affect trim bounds.
-	const reference = createLayer("Reference", 4, 4, 4, "reference");
-	reference.cels[1]!.fill(packColor("#0000ff"));
-	doc.layers.push(reference);
-
 	const sheet = {
 		scale: 2,
 		layout: "horizontal" as const,
@@ -1997,6 +1986,7 @@ assertPaletteAnalysis();
 assertIndexedColor();
 assertIndexedPng();
 await assertIndexedPngBytes();
+assertExportLayerScope();
 assertSheetMetadata();
 assertLayerGroups();
 assertSelectionTransform();
@@ -2012,7 +2002,7 @@ const indexedDoc = makeDoc(16, 16, 1, 2, 45);
 indexedDoc.colorMode = "indexed";
 assertProjectRoundtrip(indexedDoc, "indexed color mode");
 
-const referenceDoc = makeDoc(64, 64, 2, 3, 43);referenceDoc.layers[0]!.role = "reference";
+const referenceDoc = makeDoc(64, 64, 2, 3, 43);
 referenceDoc.layers[0]!.locked = true;
 referenceDoc.layers[0]!.color = "#14b8a6";
 referenceDoc.layers[1]!.color = "#ef4444";

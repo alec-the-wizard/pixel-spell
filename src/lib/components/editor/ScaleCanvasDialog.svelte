@@ -50,7 +50,6 @@
 			doc,
 			editor.activeFrame,
 			editor.revision,
-			true,
 		);
 		return scalePixelsNearest(source, doc.width, doc.height, width, height);
 	});

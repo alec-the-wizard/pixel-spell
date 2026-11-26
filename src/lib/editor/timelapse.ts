@@ -45,9 +45,8 @@ function applyHistoryState(doc: PixelDoc, entry: TimelapseEntry): PixelDoc {
  * History stores the state before each action, so we walk the undo stack
  * backwards from the current document: composite the current state, apply the
  * newest entry to reach the previous state, and repeat. The resulting frames
- * run oldest to newest. Reference layers are excluded by `compositeFrame`, and
- * the active animation frame is used for every state (clamped when an earlier
- * state has fewer frames).
+ * run oldest to newest. The active animation frame is used for every state
+ * (clamped when an earlier state has fewer frames).
  */
 export function buildTimelapseDoc(
 	current: PixelDoc,

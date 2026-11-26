@@ -8,7 +8,6 @@ import type {
 	CelProps,
 	ColorMode,
 	Layer,
-	LayerRole,
 	PixelDoc,
 } from "./types.js";
 
@@ -24,22 +23,15 @@ export function createLayer(
 	width: number,
 	height: number,
 	frameCount: number,
-	role?: LayerRole,
 ): Layer {
 	return {
 		id: uid("layer"),
 		name,
 		visible: true,
-		locked: role === "reference",
+		locked: false,
 		opacity: 1,
 		cels: Array.from({ length: frameCount }, () => new Uint32Array(width * height)),
-		...(role ? { role } : {}),
 	};
-}
-
-/** True for timeline reference layers, which cannot be drawn on. */
-export function isReferenceLayer(layer: Layer): boolean {
-	return layer.role === "reference";
 }
 
 /** True for group container nodes, which hold no pixels of their own. */
@@ -268,7 +260,6 @@ export function cloneDoc(doc: PixelDoc): PixelDoc {
 				}
 				return clone;
 			}),
-			...(layer.role ? { role: layer.role } : {}),
 			...(layer.color ? { color: layer.color } : {}),
 			...(layer.isGroup ? { isGroup: true } : {}),
 			...(layer.parentId ? { parentId: layer.parentId } : {}),
@@ -358,19 +349,15 @@ interface CompositeLayer {
 /**
  * Resolves the ordered list of visible, flat layers that participate in a
  * composite. Only used by the incremental fast path, which is limited to
- * documents without groups, blend modes, or clipping. Reference layers are
- * excluded by default so every export path is safe; pass `includeReferences`
- * for viewport rendering only.
+ * documents without groups, blend modes, or clipping.
  */
 function compositeLayers(
 	doc: PixelDoc,
 	frameIndex: number,
-	includeReferences: boolean,
 ): CompositeLayer[] {
 	const layers: CompositeLayer[] = [];
 	for (const layer of frameOrderedLayers(doc, frameIndex)) {
 		if (isGroupLayer(layer)) continue;
-		if (!includeReferences && layer.role === "reference") continue;
 		if (!layer.visible || layer.opacity <= 0) continue;
 		const cel = layer.cels[frameIndex];
 		if (!cel) continue;
@@ -488,7 +475,6 @@ function compositeNodeInto(
 	node: LayerNode,
 	doc: PixelDoc,
 	frameIndex: number,
-	includeReferences: boolean,
 	output: Uint32Array,
 	count: number,
 ): void {
@@ -498,14 +484,7 @@ function compositeNodeInto(
 		if (!layer.visible || layer.opacity <= 0) return;
 		const groupBuffer = new Uint32Array(count);
 		for (const child of node.children) {
-			compositeNodeInto(
-				child,
-				doc,
-				frameIndex,
-				includeReferences,
-				groupBuffer,
-				count,
-			);
+			compositeNodeInto(child, doc, frameIndex, groupBuffer, count);
 		}
 		// Effects run on the group's composited contents, so nested groups have
 		// already applied their own stacks before this one runs.
@@ -526,7 +505,6 @@ function compositeNodeInto(
 		return;
 	}
 
-	if (!includeReferences && layer.role === "reference") return;
 	if (!layer.visible || layer.opacity <= 0) return;
 	const cel = layer.cels[frameIndex];
 	if (!cel) return;
@@ -543,21 +521,17 @@ function compositeNodeInto(
 /**
  * Flattens every visible layer of a frame into a single RGBA pixel buffer.
  * The buffer uses the same packed little-endian format as layer cels.
- *
- * Reference layers are excluded by default so every export path is safe.
- * Pass `includeReferences` for viewport rendering only.
  */
 export function compositeFrame(
 	doc: PixelDoc,
 	frameIndex: number,
-	includeReferences = false,
 ): Uint32Array {
 	const count = doc.width * doc.height;
 	const output = new Uint32Array(count);
 
 	const { roots } = buildLayerTree(frameOrderedLayers(doc, frameIndex));
 	for (const root of roots) {
-		compositeNodeInto(root, doc, frameIndex, includeReferences, output, count);
+		compositeNodeInto(root, doc, frameIndex, output, count);
 	}
 
 	return output;
@@ -636,7 +610,7 @@ export function compositePixel(
 	// Pixel-at-a-time compositing cannot run neighborhood filters, so fall back
 	// to a full composite when a group effect is active.
 	if (hasEnabledGroupEffects(doc)) {
-		return compositeFrame(doc, frameIndex, true)[index] ?? 0;
+		return compositeFrame(doc, frameIndex)[index] ?? 0;
 	}
 
 	const { roots } = buildLayerTree(frameOrderedLayers(doc, frameIndex));
@@ -664,7 +638,6 @@ export function compositeFrameCached(
 	doc: PixelDoc,
 	frameIndex: number,
 	revision: number,
-	includeReferences = false,
 ): Uint32Array {
 	let cache = compositeCaches.get(doc);
 	if (!cache || cache.revision !== revision) {
@@ -672,11 +645,11 @@ export function compositeFrameCached(
 		compositeCaches.set(doc, cache);
 	}
 
-	const key = `${frameIndex}:${includeReferences ? 1 : 0}`;
+	const key = String(frameIndex);
 	const existing = cache.frames.get(key);
 	if (existing) return existing;
 
-	const pixels = compositeFrame(doc, frameIndex, includeReferences);
+	const pixels = compositeFrame(doc, frameIndex);
 	cache.frames.set(key, pixels);
 	if (cache.frames.size > COMPOSITE_CACHE_LIMIT) {
 		const oldest = cache.frames.keys().next().value;
@@ -698,7 +671,6 @@ interface FramePrefixes {
 interface IncrementalCompositeState {
 	structureRevision: number;
 	appearanceRevision: number;
-	includeReferences: boolean;
 	frames: Map<string, FramePrefixes>;
 }
 
@@ -716,10 +688,9 @@ const incrementalCompositeStates = new WeakMap<
 function buildFramePrefixes(
 	doc: PixelDoc,
 	frameIndex: number,
-	includeReferences: boolean,
 ): FramePrefixes {
 	const count = doc.width * doc.height;
-	const layers = compositeLayers(doc, frameIndex, includeReferences);
+	const layers = compositeLayers(doc, frameIndex);
 	const prefixes = new Array<Uint32Array>(layers.length);
 	const layerIds = new Array<string>(layers.length);
 	const output = new Uint32Array(count);
@@ -767,7 +738,6 @@ function recomputePrefixesFrom(
 export function compositeFrameCachedIncremental(
 	doc: PixelDoc,
 	frameIndex: number,
-	includeReferences: boolean,
 	structureRevision: number,
 	appearanceRevision: number,
 	editedLayerId: string | null,
@@ -775,29 +745,27 @@ export function compositeFrameCachedIncremental(
 	// The flat prefix path is only correct without groups, blend modes, and
 	// clipping; fall back to a full composite when any of those are present.
 	if (hasCompositeFeatures(doc)) {
-		return compositeFrame(doc, frameIndex, includeReferences);
+		return compositeFrame(doc, frameIndex);
 	}
 
 	const count = doc.width * doc.height;
-	const layers = compositeLayers(doc, frameIndex, includeReferences);
+	const layers = compositeLayers(doc, frameIndex);
 
 	// Prefix caching costs `layers.length` buffers per frame; for very large
 	// documents a single full composite is cheaper to recompute than to store.
 	if (layers.length * count > INCREMENTAL_PREFIX_MAX_PIXELS) {
-		return compositeFrame(doc, frameIndex, includeReferences);
+		return compositeFrame(doc, frameIndex);
 	}
 
 	let state = incrementalCompositeStates.get(doc);
 	if (
 		!state ||
 		state.structureRevision !== structureRevision ||
-		state.appearanceRevision !== appearanceRevision ||
-		state.includeReferences !== includeReferences
+		state.appearanceRevision !== appearanceRevision
 	) {
 		state = {
 			structureRevision,
 			appearanceRevision,
-			includeReferences,
 			frames: new Map(),
 		};
 		incrementalCompositeStates.set(doc, state);
@@ -806,7 +774,7 @@ export function compositeFrameCachedIncremental(
 	const key = String(frameIndex);
 	let entry = state.frames.get(key);
 	if (!entry) {
-		entry = buildFramePrefixes(doc, frameIndex, includeReferences);
+		entry = buildFramePrefixes(doc, frameIndex);
 		state.frames.set(key, entry);
 		if (state.frames.size > COMPOSITE_CACHE_LIMIT) {
 			const oldest = state.frames.keys().next().value;
@@ -818,7 +786,7 @@ export function compositeFrameCachedIncremental(
 		editedLayerId !== null ? entry.layerIds.indexOf(editedLayerId) : -1;
 	if (editedIndex < 0) {
 		// Unknown layer or no hint: the safe path is a full recomposite.
-		entry = buildFramePrefixes(doc, frameIndex, includeReferences);
+		entry = buildFramePrefixes(doc, frameIndex);
 		state.frames.set(key, entry);
 	} else {
 		recomputePrefixesFrom(entry, layers, editedIndex, count);

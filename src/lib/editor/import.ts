@@ -53,7 +53,6 @@ export type ImportTabId =
 	| "project"
 	| "layer"
 	| "frames"
-	| "reference-layer"
 	| "reference-board"
 	| "palette";
 
@@ -78,7 +77,7 @@ export interface ImportPaletteData {
 	source: "png" | "pal" | "gpl" | "hex";
 }
 
-/** The original image bytes and a canvas-ready buffer for reference features. */
+/** The original image bytes and a canvas-ready buffer for reference images. */
 export interface ImportReferenceData {
 	name: string;
 	bytes: Uint8Array;
@@ -88,7 +87,7 @@ export interface ImportReferenceData {
 	height: number;
 	/**
 	 * The complete image fitted inside MAX_IMPORT_DIMENSION without cropping.
-	 * Reference layers use this so large images are not reduced to a corner.
+	 * Used when creating brushes or dither patterns from the source image.
 	 */
 	pixels: Uint32Array;
 	pixelWidth: number;
@@ -312,8 +311,8 @@ function readProjectPixels(
 
 /**
  * Reads the whole image, scaled down to fit within `maxDimension`. Unlike
- * `readProjectPixels` this never crops the image, which makes it suitable for
- * reference layers that are fitted to the canvas later.
+ * `readProjectPixels` this never crops the image, so the full source is
+ * available when creating brushes, dither patterns, or board references.
  */
 function readFittedPixels(
 	source: CanvasImageSource,

@@ -46,8 +46,7 @@
 		<Dialog.Header>
 			<Dialog.Title>Palette coverage</Dialog.Title>
 			<Dialog.Description>
-				Usage of “{palette.name}” across every frame and normal layer. Reference layers
-				are ignored.
+				Usage of “{palette.name}” across every frame and layer.
 			</Dialog.Description>
 		</Dialog.Header>
 
@@ -105,7 +104,7 @@
 						<p
 							class="rounded-lg border border-dashed px-3 py-6 text-center text-[10px] text-muted-foreground"
 						>
-							Nothing is painted yet. Draw on a normal layer to see how the palette
+							Nothing is painted yet. Draw on a layer to see how the palette
 							is used.
 						</p>
 					{:else}
@@ -277,7 +276,7 @@
 				{:else if analysis.unusedColors > 0}
 					{analysis.unusedColors} palette
 					{analysis.unusedColors === 1 ? "color is" : "colors are"} not used by any
-					frame or normal layer.
+					frame or layer.
 				{:else if analysis.paletteSize > 0}
 					Every palette color is used.
 				{/if}
@@ -288,7 +287,7 @@
 					onclick={removeUnused}
 					disabled={!canPrune}
 					title={canPrune
-						? "Remove palette colors that no frame or normal layer uses"
+						? "Remove palette colors that no frame or layer uses"
 						: readOnlyNotice || "No unused colors to remove"}
 				>
 					Remove unused

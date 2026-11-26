@@ -26,7 +26,6 @@
 	import Palette from "@lucide/svelte/icons/palette";
 	import Pencil from "@lucide/svelte/icons/pencil";
 	import Replace from "@lucide/svelte/icons/replace";
-	import ScanEye from "@lucide/svelte/icons/scan-eye";
 	import Scissors from "@lucide/svelte/icons/scissors";
 	import Sparkles from "@lucide/svelte/icons/sparkles";
 	import SquareDashed from "@lucide/svelte/icons/square-dashed";
@@ -100,7 +99,6 @@
 	} = $props();
 
 	let isGroup = $derived(isGroupLayer(layer));
-	let isReference = $derived(layer.role === "reference");
 	let activeRow = $derived(layer.id === editor.activeLayerId);
 
 	const effectSections = GROUP_EFFECT_CATEGORIES.map((category) => ({
@@ -188,7 +186,6 @@
 		if (mode !== "normal") parts.push(BLEND_MODE_LABELS[mode]);
 		if (layer.clipping) parts.push("Clipped");
 		if (isGroup) parts.push("Group");
-		else if (isReference) parts.push("Reference");
 		return parts.join(" · ");
 	}
 
@@ -580,18 +577,11 @@
 						"size-7 shrink-0",
 						layer.locked ? "text-foreground" : "text-muted-foreground",
 					)}
-					title={isReference
-						? "Reference layers are always locked"
-						: layer.locked
-							? `Unlock ${layer.name}`
-							: `Lock ${layer.name}`}
-					aria-label={isReference
-						? "Reference layers are always locked"
-						: layer.locked
-							? `Unlock ${layer.name}`
-							: `Lock ${layer.name}`}
+					title={layer.locked ? `Unlock ${layer.name}` : `Lock ${layer.name}`}
+					aria-label={layer.locked
+						? `Unlock ${layer.name}`
+						: `Lock ${layer.name}`}
 					aria-pressed={layer.locked}
-					disabled={isReference}
 					data-layer-control
 					onclick={() => editor.toggleLayerLock(layer.id)}
 				>
@@ -602,7 +592,7 @@
 					{/if}
 				</Button>
 
-				{#if !isGroup && !isReference}
+				{#if !isGroup}
 					<Button
 						variant="ghost"
 						size="icon-xs"
@@ -637,9 +627,6 @@
 
 				<div class="min-w-0 flex-1">
 					<span class="flex min-w-0 items-center gap-1">
-						{#if isReference}
-							<ScanEye class="size-3 shrink-0 text-primary" />
-						{/if}
 						<span class="truncate text-xs font-medium">{layer.name}</span>
 					</span>
 					<span class="block truncate text-[10px] text-muted-foreground">

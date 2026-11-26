@@ -18,7 +18,7 @@
 		const { doc, activeFrame } = project;
 		drawThumbnail(
 			canvas,
-			compositeFrame(doc, activeFrame, true),
+			compositeFrame(doc, activeFrame),
 			doc.width,
 			doc.height,
 			size,

@@ -22,7 +22,6 @@
 	import Plus from "@lucide/svelte/icons/plus";
 	import Repeat from "@lucide/svelte/icons/repeat";
 	import RepeatOff from "@lucide/svelte/icons/repeat-off";
-	import ScanEye from "@lucide/svelte/icons/scan-eye";
 	import Settings2 from "@lucide/svelte/icons/settings-2";
 	import SkipBack from "@lucide/svelte/icons/skip-back";
 	import SkipForward from "@lucide/svelte/icons/skip-forward";
@@ -628,17 +627,6 @@
 				{editor.selectedLayerCount} layers
 			</Badge>
 		{/if}
-		{#if editor.referenceLayerCount > 0}
-			<Badge
-				variant="outline"
-				class="h-5 gap-1 px-1.5 text-[10px] text-muted-foreground"
-				title={`${editor.referenceLayerCount} reference layers`}
-			>
-				<ScanEye class="size-3" />
-				{editor.referenceLayerCount}
-			</Badge>
-		{/if}
-
 		<Separator orientation="vertical" class="mx-1.5 h-5" />
 		<Button
 			variant="ghost"

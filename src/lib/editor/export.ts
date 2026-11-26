@@ -5,9 +5,11 @@ import { fileBase } from "./file.js";
 import { encodeGrayscalePng } from "./grayscale-png.js";
 import { encodeIndexedPng } from "./indexed-png.js";
 import { drawPixels } from "./render.js";
-import type { PixelDoc } from "./types.js";
+import type { Layer, PixelDoc } from "./types.js";
 
 export type ExportTabId = "image" | "spritesheet" | "video" | "icon";
+/** Which layers participate in an export. */
+export type ExportLayerScope = "all" | "selected";
 export type ExportFormat = "png" | "webp" | "jpeg";
 export type ExportBackground = "transparent" | "white" | "black";
 export type SheetLayout = "horizontal" | "vertical" | "grid";
@@ -283,6 +285,57 @@ export function getSheetGeometry(
 		spacing: gap,
 		width: cols * width + Math.max(0, cols - 1) * gap,
 		height: rows * height + Math.max(0, rows - 1) * gap,
+	};
+}
+
+/**
+ * Returns a document containing only the requested layers. A selected group
+ * includes its whole subtree, and groups that contain a selected layer are
+ * kept as containers so blend modes and group effects still apply. `null` or an
+ * empty selection returns the original document.
+ */
+export function exportDocForLayers(
+	doc: PixelDoc,
+	layerIds: readonly string[] | null | undefined,
+): PixelDoc {
+	if (!layerIds || layerIds.length === 0) return doc;
+	const byId = new Map(doc.layers.map((layer) => [layer.id, layer]));
+	const children = new Map<string, Layer[]>();
+	for (const layer of doc.layers) {
+		if (!layer.parentId) continue;
+		const siblings = children.get(layer.parentId);
+		if (siblings) siblings.push(layer);
+		else children.set(layer.parentId, [layer]);
+	}
+
+	const included = new Set<string>();
+	const addSubtree = (layer: Layer): void => {
+		if (included.has(layer.id)) return;
+		included.add(layer.id);
+		if (!layer.isGroup) return;
+		for (const child of children.get(layer.id) ?? []) addSubtree(child);
+	};
+
+	for (const id of layerIds) {
+		const layer = byId.get(id);
+		if (layer) addSubtree(layer);
+	}
+	if (included.size === 0) return doc;
+
+	// Keep ancestor groups so nested layer trees stay valid and their effects
+	// still run over the selected content.
+	for (const id of [...included]) {
+		let parentId = byId.get(id)?.parentId;
+		while (parentId && !included.has(parentId)) {
+			included.add(parentId);
+			parentId = byId.get(parentId)?.parentId;
+		}
+	}
+
+	if (included.size >= doc.layers.length) return doc;
+	return {
+		...doc,
+		layers: doc.layers.filter((layer) => included.has(layer.id)),
 	};
 }
 

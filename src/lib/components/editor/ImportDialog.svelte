@@ -7,7 +7,6 @@
 	import Link2 from "@lucide/svelte/icons/link-2";
 	import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 	import PaletteIcon from "@lucide/svelte/icons/palette";
-	import ScanEye from "@lucide/svelte/icons/scan-eye";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import * as Dialog from "$lib/components/ui/dialog/index.js";
 	import { Input } from "$lib/components/ui/input/index.js";
@@ -32,7 +31,6 @@
 	let paletteName = $state("");
 	let layerName = $state("");
 	let referenceName = $state("");
-	let referenceAllFrames = $state(true);
 	let urlInput = $state("");
 	let loadToken = 0;
 
@@ -40,7 +38,6 @@
 		project: "Project",
 		layer: "Layer",
 		frames: "Frames",
-		"reference-layer": "Reference Layer",
 		"reference-board": "Reference Board",
 		palette: "Palette",
 	};
@@ -49,7 +46,6 @@
 		project: "Import Project",
 		layer: "Add Layer",
 		frames: "Add Frame",
-		"reference-layer": "Add Reference Layer",
 		"reference-board": "Add to Reference Board",
 		palette: "Import Palette",
 	};
@@ -65,7 +61,7 @@
 		if (tab === "project" || tab === "layer" || tab === "frames") {
 			return Boolean(analysis?.project);
 		}
-		if (tab === "reference-layer" || tab === "reference-board") {
+		if (tab === "reference-board") {
 			return Boolean(analysis?.reference);
 		}
 		return Boolean(analysis?.palette);
@@ -74,7 +70,7 @@
 	let availableTabs = $derived.by((): ImportTabId[] => {
 		const tabs: ImportTabId[] = [];
 		if (analysis?.project) tabs.push("project", "layer", "frames");
-		if (analysis?.reference) tabs.push("reference-layer", "reference-board");
+		if (analysis?.reference) tabs.push("reference-board");
 		if (analysis?.palette) tabs.push("palette");
 		return tabs;
 	});
@@ -90,7 +86,6 @@
 		paletteName = "";
 		layerName = "";
 		referenceName = "";
-		referenceAllFrames = true;
 	}
 
 	function startAnalysis(task: Promise<ImportAnalysis>, label: string): void {
@@ -187,16 +182,6 @@
 				height: analysis.project.height,
 				pixels: analysis.project.pixels,
 			});
-		} else if (activeTab === "reference-layer" && analysis.reference) {
-			editor.importReferenceLayer(
-				{
-					name: layerName,
-					width: analysis.reference.pixelWidth,
-					height: analysis.reference.pixelHeight,
-					pixels: analysis.reference.pixels,
-				},
-				{ allFrames: referenceAllFrames },
-			);
 		} else if (activeTab === "reference-board" && analysis.reference) {
 			editor.addReferenceImage({
 				name: referenceName,
@@ -308,8 +293,6 @@
 								<Layers class="size-3.5 shrink-0" />
 							{:else if tab === "frames"}
 								<Film class="size-3.5 shrink-0" />
-							{:else if tab === "reference-layer"}
-								<ScanEye class="size-3.5 shrink-0" />
 							{:else if tab === "reference-board"}
 								<Images class="size-3.5 shrink-0" />
 							{:else}
@@ -448,54 +431,6 @@
 							</span>
 							<span>
 								{editor.frameCount} {editor.frameCount === 1 ? "frame" : "frames"} now
-							</span>
-						</div>
-					</div>
-				{:else if activeTab === "reference-layer" && analysis.project && analysis.reference}
-					{@const project = analysis.project}
-					{@const reference = analysis.reference}
-					<div role="tabpanel" aria-label="Reference layer import" class="grid gap-4">
-						<div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
-							<div class="grid content-start gap-1.5">
-								<Label for="import-reference-layer-name">Reference name</Label>
-								<Input
-									id="import-reference-layer-name"
-									bind:value={layerName}
-									maxlength={60}
-									placeholder="Reference"
-									autocomplete="off"
-								/>
-								<p class="text-xs text-muted-foreground">
-									Adds a locked reference layer to the timeline. The image is fitted to
-									the canvas, cannot be drawn on, and is never exported.
-								</p>
-								<label class="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-									<input
-										type="checkbox"
-										bind:checked={referenceAllFrames}
-										class="size-3.5 rounded border-input accent-primary"
-									/>
-									Apply to all frames
-								</label>
-							</div>
-							<div
-								class="checkerboard relative flex h-24 items-center justify-center overflow-hidden rounded-lg ring-1 ring-border"
-							>
-								<img
-									src={project.previewUrl}
-									alt="Preview of the file"
-									class="h-full w-full object-contain [image-rendering:pixelated]"
-								/>
-							</div>
-						</div>
-						<div
-							class="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground"
-						>
-							<span class="font-mono tabular-nums">
-								{reference.width} × {reference.height} px source
-							</span>
-							<span class="font-mono tabular-nums">
-								fits {editor.doc.width} × {editor.doc.height} px canvas
 							</span>
 						</div>
 					</div>

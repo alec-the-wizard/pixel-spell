@@ -47,7 +47,7 @@
 	$effect(() => {
 		if (!open || !previewCanvas || !selected) return;
 		const doc = selected.project.doc;
-		const pixels = compositeFrame(doc, selected.project.activeFrame, true);
+		const pixels = compositeFrame(doc, selected.project.activeFrame);
 		const scale = Math.min(
 			PREVIEW_MAX_WIDTH / doc.width,
 			PREVIEW_MAX_HEIGHT / doc.height,

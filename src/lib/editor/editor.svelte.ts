@@ -60,7 +60,6 @@ import {
 	MAX_REFERENCE_COUNT,
 	cropPixelsToCanvas,
 	defaultReferencePlacement,
-	fitPixelsToCanvas,
 } from "./reference.js";
 import { selectionBounds } from "./selection.js";
 import {
@@ -613,13 +612,7 @@ export class EditorState {
 
 	get activeLayerDrawable(): boolean {
 		const layer = this.activeLayer;
-		return (
-			!!layer &&
-			!isGroupLayer(layer) &&
-			layer.role !== "reference" &&
-			!layer.locked &&
-			layer.visible
-		);
+		return !!layer && !isGroupLayer(layer) && !layer.locked && layer.visible;
 	}
 
 	/** The timeline's flattened, top-to-bottom layer list (groups expanded). */
@@ -645,29 +638,20 @@ export class EditorState {
 		});
 	}
 
-	get referenceLayerCount(): number {
-		return this.doc.layers.filter((layer) => layer.role === "reference").length;
-	}
-
-	/** True when at least one layer (including groups and references) is visible. */
+	/** True when at least one layer (including groups) is visible. */
 	get anyLayerVisible(): boolean {
 		return this.doc.layers.some((layer) => layer.visible);
 	}
 
 	/** True when at least one layer or group is not locked. */
 	get anyLayerUnlocked(): boolean {
-		return this.doc.layers.some(
-			(layer) => layer.role !== "reference" && !layer.locked,
-		);
+		return this.doc.layers.some((layer) => !layer.locked);
 	}
 
 	/** True when at least one drawable layer links its newly added cels. */
 	get anyLayerContinuous(): boolean {
 		return this.doc.layers.some(
-			(layer) =>
-				!isGroupLayer(layer) &&
-				layer.role !== "reference" &&
-				layer.continuous === true,
+			(layer) => !isGroupLayer(layer) && layer.continuous === true,
 		);
 	}
 
@@ -1768,10 +1752,7 @@ export class EditorState {
 		this.paletteCycleDirection = direction;
 	}
 
-	/**
-	 * Writes one cycle phase into the visible normal layers of the active frame.
-	 * Reference layers are left untouched. Returns the frame count.
-	 */
+	/** Writes one cycle phase into the visible layers of the active frame. */
 	bakePaletteCycle(
 		shift: number,
 		frames: readonly number[] = [this.activeFrame],
@@ -1791,7 +1772,7 @@ export class EditorState {
 			(index) => index >= 0 && index < this.doc.frames.length,
 		);
 		const layers = this.doc.layers.filter(
-			(layer) => !isGroupLayer(layer) && layer.role !== "reference" && layer.visible,
+			(layer) => !isGroupLayer(layer) && layer.visible,
 		);
 		if (targets.length === 0 || layers.length === 0) return 0;
 
@@ -1874,7 +1855,7 @@ export class EditorState {
 				let pixels: Uint32Array;
 				if (!source) {
 					pixels = new Uint32Array(width * height);
-				} else if (layer.role === "reference" || !map) {
+				} else if (!map) {
 					pixels = new Uint32Array(source);
 				} else {
 					pixels = remapPalettePixels(source, map);
@@ -2122,18 +2103,14 @@ export class EditorState {
 		this.#persistPalettes();
 	}
 
-	/**
-	 * Measures palette usage against every normal layer of the active document.
-	 * Reference layers are ignored.
-	 */
+	/** Measures palette usage against every layer of the active document. */
 	analyzePaletteCoverage(colors: readonly string[] = this.activePalette.colors) {
 		return analyzePaletteCoverage(this.doc, colors);
 	}
 
 	/**
-	 * Removes palette entries that no normal layer uses in any frame. Reference
-	 * layers are ignored, and the built-in or locked palettes are never touched.
-	 * Returns the number of removed colors.
+	 * Removes palette entries that no layer uses in any frame. The built-in or
+	 * locked palettes are never touched. Returns the number of removed colors.
 	 */
 	removeUnusedPaletteColors(): number {
 		const palette = this.activePalette;
@@ -3108,12 +3085,11 @@ export class EditorState {
 		if (image.pixels.length === 0) return;
 
 		const active = this.activeLayer;
-		let target =
-			active && active.role !== "reference" && !active.locked ? active : null;
+		let target = active && !active.locked ? active : null;
 		if (!target) {
 			for (let index = this.doc.layers.length - 1; index >= 0; index--) {
 				const layer = this.doc.layers[index]!;
-				if (layer.role !== "reference" && !layer.locked && layer.visible) {
+				if (!layer.locked && layer.visible) {
 					target = layer;
 					break;
 				}
@@ -3143,14 +3119,10 @@ export class EditorState {
 		this.doc.frames.splice(index, 0, frame);
 		for (const layer of this.doc.layers) {
 			if (isGroupLayer(layer)) continue;
-			const source =
-				layer.role === "reference" ? layer.cels[this.activeFrame] : undefined;
 			layer.cels.splice(
 				index,
 				0,
-				source
-					? new Uint32Array(source)
-					: new Uint32Array(this.doc.width * this.doc.height),
+				new Uint32Array(this.doc.width * this.doc.height),
 			);
 		}
 
@@ -3173,81 +3145,6 @@ export class EditorState {
 		this.activeReferenceId = null;
 		this.structureRevision++;
 		this.revision++;
-	}
-
-	/** Adds a locked, non-exported reference layer to the timeline. */
-	importReferenceLayer(
-		image: {
-			name: string;
-			width: number;
-			height: number;
-			pixels: Uint32Array;
-		},
-		options: { allFrames?: boolean } = {},
-	): void {
-		if (this.doc.layers.length >= MAX_PROJECT_LAYERS) return;
-		const imageWidth = Math.max(1, Math.round(image.width));
-		const imageHeight = Math.max(1, Math.round(image.height));
-		if (image.pixels.length === 0) return;
-
-		this.pushHistory("Import reference layer");
-		const layer = createLayer(
-			image.name.trim().slice(0, 60) || "Reference",
-			this.doc.width,
-			this.doc.height,
-			this.doc.frames.length,
-			"reference",
-		);
-		const fitted = fitPixelsToCanvas(
-			image.pixels,
-			imageWidth,
-			imageHeight,
-			this.doc.width,
-			this.doc.height,
-		);
-		const allFrames = options.allFrames ?? true;
-		if (allFrames) {
-			for (const cel of layer.cels) cel.set(fitted);
-		} else {
-			layer.cels[this.activeFrame]?.set(fitted);
-		}
-
-		this.doc.layers.push(layer);
-		this.#setActiveLayer(layer.id);
-		this.activeReferenceId = null;
-		this.structureRevision++;
-		this.revision++;
-	}
-
-	/**
-	 * Replaces the active reference layer's cel on the current frame. Returns
-	 * false when the active layer is not a reference layer.
-	 */
-	setReferenceLayerImage(image: {
-		width: number;
-		height: number;
-		pixels: Uint32Array;
-	}): boolean {
-		const layer = this.activeLayer;
-		if (!layer || layer.role !== "reference") return false;
-		const cel = layer.cels[this.activeFrame];
-		if (!cel) return false;
-		const imageWidth = Math.max(1, Math.round(image.width));
-		const imageHeight = Math.max(1, Math.round(image.height));
-		if (image.pixels.length === 0) return false;
-
-		this.pushHistoryCel(layer.id, this.activeFrame, "Replace reference");
-		cel.set(
-			fitPixelsToCanvas(
-				image.pixels,
-				imageWidth,
-				imageHeight,
-				this.doc.width,
-				this.doc.height,
-			),
-		);
-		this.revision++;
-		return true;
 	}
 
 	/** Adds an image to the project-level reference board. */
@@ -3670,17 +3567,16 @@ export class EditorState {
 
 	toggleLayerLock(id: string): void {
 		const layer = this.doc.layers.find((item) => item.id === id);
-		if (!layer || layer.role === "reference") return;
+		if (!layer) return;
 		const locked = !layer.locked;
 		// Groups lock and unlock their whole subtree, like the timeline-header
-		// bulk toggle. Reference layers stay locked either way.
+		// bulk toggle.
 		const subtree = isGroupLayer(layer)
 			? this.layerSubtreeIds(layer.id)
 			: null;
 		let changed = false;
 		for (const item of this.doc.layers) {
 			if (subtree ? !subtree.has(item.id) : item !== layer) continue;
-			if (item.role === "reference") continue;
 			if (item.locked === locked) continue;
 			item.locked = locked;
 			changed = true;
@@ -3705,14 +3601,10 @@ export class EditorState {
 		this.layerAppearanceRevision++;
 	}
 
-	/**
-	 * Locks or unlocks every layer and group. Reference layers are always
-	 * locked, so they are skipped.
-	 */
+	/** Locks or unlocks every layer and group. */
 	setAllLayersLocked(locked: boolean): void {
 		let changed = false;
 		for (const layer of this.doc.layers) {
-			if (layer.role === "reference") continue;
 			if (layer.locked === locked) continue;
 			layer.locked = locked;
 			changed = true;
@@ -3722,14 +3614,11 @@ export class EditorState {
 		this.modified = true;
 	}
 
-	/**
-	 * Links or unlinks newly added cels on every layer. Groups have no cels and
-	 * reference layers cannot be edited, so both are skipped.
-	 */
+	/** Links or unlinks newly added cels on every layer; groups are skipped. */
 	setAllLayersContinuous(continuous: boolean): void {
 		let changed = false;
 		for (const layer of this.doc.layers) {
-			if (isGroupLayer(layer) || layer.role === "reference") continue;
+			if (isGroupLayer(layer)) continue;
 			if ((layer.continuous === true) === continuous) continue;
 			if (continuous) layer.continuous = true;
 			else delete layer.continuous;
@@ -3785,7 +3674,7 @@ export class EditorState {
 	 */
 	toggleLayerContinuous(id: string): void {
 		const layer = this.doc.layers.find((item) => item.id === id);
-		if (!layer || isGroupLayer(layer) || layer.role === "reference") return;
+		if (!layer || isGroupLayer(layer)) return;
 		if (layer.continuous) delete layer.continuous;
 		else layer.continuous = true;
 		this.dirty = true;
@@ -4606,7 +4495,7 @@ export class EditorState {
 			}
 			return { ...layer, effects };
 		});
-		return compositeFrame({ ...this.doc, layers }, this.activeFrame, true);
+		return compositeFrame({ ...this.doc, layers }, this.activeFrame);
 	}
 
 	/**
@@ -4632,10 +4521,7 @@ export class EditorState {
 			.slice(start + 1, end)
 			.filter(
 				(layer) =>
-					!isGroupLayer(layer) &&
-					layer.role !== "reference" &&
-					layer.visible &&
-					layer.opacity > 0,
+					!isGroupLayer(layer) && layer.visible && layer.opacity > 0,
 			);
 		if (targets.length === 0) return 0;
 
@@ -4719,7 +4605,7 @@ export class EditorState {
 
 	clearLayer(): void {
 		const layer = this.activeLayer;
-		if (!layer || isGroupLayer(layer) || layer.role === "reference") return;
+		if (!layer || isGroupLayer(layer)) return;
 		this.pushHistoryCel(layer.id, this.activeFrame, "Clear layer");
 		const cel = layer.cels[this.activeFrame];
 		if (cel) this.#clearCel(cel);
@@ -4729,7 +4615,7 @@ export class EditorState {
 	clearFrame(): void {
 		const frame = this.activeFrame;
 		const editableLayers = this.doc.layers.filter(
-			(layer) => !isGroupLayer(layer) && layer.role !== "reference",
+			(layer) => !isGroupLayer(layer),
 		);
 		this.pushHistoryCels(
 			editableLayers.map((layer) => ({ layerId: layer.id, frame })),
@@ -4757,29 +4643,19 @@ export class EditorState {
 	/**
 	 * Cels an effect may rewrite in the active frame. The active-cel scope
 	 * requires a visible, unlocked paint layer; the visible-layers scope skips
-	 * groups, reference layers, hidden layers, and locked layers.
+	 * groups, hidden layers, and locked layers.
 	 */
 	effectTargetLayers(scope: EffectScope): Layer[] {
 		if (scope === "active-cel") {
 			const layer = this.activeLayer;
-			if (
-				!layer ||
-				isGroupLayer(layer) ||
-				layer.role === "reference" ||
-				layer.locked ||
-				!layer.visible
-			) {
+			if (!layer || isGroupLayer(layer) || layer.locked || !layer.visible) {
 				return [];
 			}
 			return [layer];
 		}
 
 		return this.doc.layers.filter(
-			(layer) =>
-				!isGroupLayer(layer) &&
-				layer.role !== "reference" &&
-				layer.visible &&
-				!layer.locked,
+			(layer) => !isGroupLayer(layer) && layer.visible && !layer.locked,
 		);
 	}
 
@@ -4851,10 +4727,10 @@ export class EditorState {
 			};
 		});
 		const previewDoc: PixelDoc = { ...this.doc, layers };
-		return compositeFrame(previewDoc, frame, true);
+		return compositeFrame(previewDoc, frame);
 	}
 
-	/** Tight bounds of painted pixels across all frames and normal layers. */
+	/** Tight bounds of painted pixels across all frames and layers. */
 	findContentBounds(): PixelBounds | null {
 		return contentBoundsOf(this.doc);
 	}
@@ -5218,7 +5094,7 @@ export class EditorState {
 				let pixels: Uint32Array = sourceCel
 					? new Uint32Array(sourceCel)
 					: new Uint32Array(width * height);
-				if (layer.role !== "reference") pixels = this.#indexedPixels(pixels);
+				pixels = this.#indexedPixels(pixels);
 				layer.cels.splice(target, 0, pixels);
 			}
 		}
@@ -5503,14 +5379,10 @@ export class EditorState {
 		this.doc.frames.splice(index, 0, frame);
 		for (const layer of this.doc.layers) {
 			if (isGroupLayer(layer)) continue;
-			// A static reference should stay visible on a newly inserted frame,
-			// and a continuous layer links its new cel to the active frame so the
-			// two stay in sync.
-			const continuous = layer.continuous === true && layer.role !== "reference";
-			const source =
-				layer.role === "reference" || continuous
-					? layer.cels[sourceIndex]
-					: undefined;
+			// A continuous layer links its new cel to the active frame so the two
+			// stay in sync.
+			const continuous = layer.continuous === true;
+			const source = continuous ? layer.cels[sourceIndex] : undefined;
 			layer.cels.splice(
 				index,
 				0,

@@ -368,7 +368,6 @@
 			const pixels = compositeFrameCachedIncremental(
 				doc,
 				frame,
-				true,
 				editor.structureRevision,
 				editor.layerAppearanceRevision,
 				editor.activeLayerId,

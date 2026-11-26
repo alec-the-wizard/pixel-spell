@@ -26,6 +26,7 @@
 		animationFrameIndices,
 		downloadBlob,
 		exportBaseName,
+		exportDocForLayers,
 		exportFileName,
 		exportFormatSupportsGrayscale,
 		exportFormatSupportsIndexed,
@@ -39,6 +40,7 @@
 		videoFormatInfo,
 		type ExportBackground,
 		type ExportFormat,
+		type ExportLayerScope,
 		type ExportTabId,
 		type IconFormat,
 		type SheetLayout,
@@ -68,6 +70,7 @@
 	const PREVIEW_MAX_HEIGHT = 132;
 
 	let activeTab = $state<ExportTabId>("image");
+	let layerScope = $state<ExportLayerScope>("all");
 	let exporting = $state(false);
 	let error = $state<string | null>(null);
 	let previewCanvas = $state<HTMLCanvasElement>();
@@ -132,6 +135,12 @@
 
 	let videoInfo = $derived(videoFormatInfo(videoFormat));
 	let iconInfo = $derived(iconFormatInfo(iconFormat));
+
+	let exportDoc = $derived(
+		layerScope === "selected"
+			? exportDocForLayers(editor.doc, editor.layerSelection)
+			: editor.doc,
+	);
 
 	let paletteColors = $derived(editor.activePalette.colors);
 	let paletteEmpty = $derived(paletteColors.length === 0);
@@ -219,6 +228,7 @@
 	$effect(() => {
 		if (open && !wasOpen) {
 			activeTab = "image";
+			layerScope = "all";
 			imageFrame = editor.activeFrame;
 			imageScale = 1;
 			imageFormat = "png";
@@ -373,7 +383,7 @@
 	$effect(() => {
 		if (!open || !previewCanvas) return;
 		const canvas = previewCanvas;
-		const doc = editor.doc;
+		const doc = exportDoc;
 		editor.revision;
 		const tab = activeTab;
 
@@ -521,7 +531,7 @@
 		const signal = abortController.signal;
 		await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-		const doc = editor.doc;
+		const doc = exportDoc;
 		try {
 			if (activeTab === "image") {
 				const blob = await exportFrameImage(doc, {
@@ -696,6 +706,48 @@
 					{EXPORT_TAB_LABELS[tab]}
 				</button>
 			{/each}
+		</div>
+
+		<div class="flex flex-wrap items-center gap-2">
+			<span class="text-xs font-medium">Layers</span>
+			<div
+				role="group"
+				aria-label="Layers to export"
+				class="inline-flex items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5"
+			>
+				<button
+					type="button"
+					aria-pressed={layerScope === "all"}
+					class={cn(
+						"rounded-md px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+						layerScope === "all"
+							? "bg-background text-foreground shadow-sm ring-1 ring-border/60"
+							: "text-muted-foreground hover:text-foreground",
+					)}
+					onclick={() => (layerScope = "all")}
+				>
+					All layers
+				</button>
+				<button
+					type="button"
+					aria-pressed={layerScope === "selected"}
+					title={`${editor.selectedLayerCount} selected ${
+						editor.selectedLayerCount === 1 ? "layer" : "layers"
+					}`}
+					class={cn(
+						"rounded-md px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+						layerScope === "selected"
+							? "bg-background text-foreground shadow-sm ring-1 ring-border/60"
+							: "text-muted-foreground hover:text-foreground",
+					)}
+					onclick={() => (layerScope = "selected")}
+				>
+					Selected layers
+					<span class="ml-1 text-[10px] tabular-nums opacity-70">
+						{editor.selectedLayerCount}
+					</span>
+				</button>
+			</div>
 		</div>
 
 		<div class="grid gap-2">

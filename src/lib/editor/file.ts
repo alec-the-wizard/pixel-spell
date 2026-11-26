@@ -54,7 +54,6 @@ interface ProjectMeta {
 		visible: boolean;
 		locked: boolean;
 		opacity: number;
-		role?: "reference";
 		color?: string;
 		isGroup?: boolean;
 		parentId?: string;
@@ -263,7 +262,6 @@ export function serializeProject(
 			visible: layer.visible,
 			locked: layer.locked,
 			opacity: layer.opacity,
-			...(layer.role ? { role: layer.role } : {}),
 			...(layer.color ? { color: layer.color } : {}),
 			...(layer.isGroup ? { isGroup: true } : {}),
 			...(layer.parentId ? { parentId: layer.parentId } : {}),
@@ -550,7 +548,6 @@ function parseProjectBinary(bytes: Uint8Array): LoadedProject | null {
 			locked: rawLayer.locked === true,
 			opacity: clamp(Number(rawLayer.opacity ?? 1), 0, 1),
 			cels,
-			...(rawLayer.role === "reference" ? { role: "reference" as const } : {}),
 			...(color ? { color } : {}),
 			...(isGroup ? { isGroup: true } : {}),
 			...(parentId ? { parentId } : {}),

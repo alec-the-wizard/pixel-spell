@@ -55,7 +55,6 @@
 			doc,
 			editor.activeFrame,
 			editor.revision,
-			true,
 		);
 		const offsetX = Math.round((width - doc.width) * anchorX);
 		const offsetY = Math.round((height - doc.height) * anchorY);

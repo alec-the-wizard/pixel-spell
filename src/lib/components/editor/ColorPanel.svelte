@@ -408,7 +408,7 @@
 							<DropdownMenu.Item
 								disabled={!paletteEditable}
 								title={paletteEditable
-									? "Remove colors that no frame or normal layer uses"
+									? "Remove colors that no frame or layer uses"
 									: activePalette.builtin
 										? "The default palette cannot be modified"
 										: "Unlock the palette to edit colors"}

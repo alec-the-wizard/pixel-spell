@@ -181,14 +181,12 @@ export function snapRegionToPalette(
 
 /**
  * Snaps every distinct cel buffer of a document to the palette in place. Linked
- * cels share one buffer, so mutating in place keeps links intact. Reference
- * layers are skipped: they are locked tracing images, not artwork. Returns the
+ * cels share one buffer, so mutating in place keeps links intact. Returns the
  * number of changed pixels.
  */
 export function snapDocToPalette(
 	doc: PixelDoc,
 	colors: readonly string[],
-	options: { includeReferences?: boolean } = {},
 ): number {
 	const matcher = createPaletteMatcher(colors);
 	if (matcher.empty) return 0;
@@ -197,9 +195,6 @@ export function snapDocToPalette(
 	let changed = 0;
 
 	for (const layer of doc.layers) {
-		if (layer.role === "reference" && options.includeReferences !== true) {
-			continue;
-		}
 		for (const cel of layer.cels) {
 			if (!cel || seen.has(cel)) continue;
 			seen.add(cel);

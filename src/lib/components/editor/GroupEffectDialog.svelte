@@ -148,7 +148,7 @@
 		);
 		let count = 0;
 		for (const layer of editor.doc.layers) {
-			if (layer.id === group.id || layer.isGroup || layer.role === "reference") {
+			if (layer.id === group.id || layer.isGroup) {
 				continue;
 			}
 			let parentId = layer.parentId;

@@ -11,7 +11,7 @@ export function paletteColorKey(hex: string): number {
 
 export interface PaletteUsageEntry {
 	color: string;
-	/** Number of painted pixels using this color across every normal layer. */
+	/** Number of painted pixels using this color across every layer. */
 	count: number;
 	/** `count` divided by the document's total painted pixel count. */
 	share: number;
@@ -36,7 +36,7 @@ export interface PaletteCoverage {
 	/** Distinct palette entries with at least one painted pixel. */
 	usedColors: number;
 	unusedColors: number;
-	/** Non-transparent pixels across every normal layer and frame. */
+	/** Non-transparent pixels across every layer and frame. */
 	paintedPixels: number;
 	/** Painted pixels whose RGB matches a palette entry. */
 	matchedPixels: number;
@@ -68,9 +68,8 @@ function isPainted(value: number): boolean {
 }
 
 /**
- * Returns the palette entries that no normal layer uses in any frame.
- * Reference layers are intentionally ignored, matching every other usage
- * scan in the editor. Preserves palette order and skips duplicates.
+ * Returns the palette entries that no layer uses in any frame. Preserves
+ * palette order and skips duplicates.
  */
 export function unusedPaletteColors(
 	doc: PixelDoc,
@@ -84,7 +83,6 @@ export function unusedPaletteColors(
 	if (remaining.size === 0) return [];
 
 	for (const layer of doc.layers) {
-		if (layer.role === "reference") continue;
 		for (const cel of layer.cels) {
 			if (!cel) continue;
 			for (let index = 0; index < cel.length; index++) {
@@ -107,8 +105,8 @@ export function unusedPaletteColors(
 
 /**
  * Measures how much of the document's painted pixels use the palette and how
- * evenly the palette spans hue and brightness. The scan touches every normal
- * layer cel once; reference layers are ignored.
+ * evenly the palette spans hue and brightness. The scan touches every layer
+ * cel once.
  */
 export function analyzePaletteCoverage(
 	doc: PixelDoc,
@@ -127,7 +125,6 @@ export function analyzePaletteCoverage(
 	const offPaletteCounts = new Map<number, number>();
 
 	for (const layer of doc.layers) {
-		if (layer.role === "reference") continue;
 		for (const cel of layer.cels) {
 			if (!cel) continue;
 			for (let index = 0; index < cel.length; index++) {

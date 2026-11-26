@@ -60,9 +60,6 @@ export interface Frame {
 	tag?: string;
 }
 
-/** Reference layers are visible in the viewport but are never exported. */
-export type LayerRole = "reference";
-
 /** Non-destructive effects that can be attached to a group node. */
 export type GroupEffectKind =
 	| "outline"
@@ -159,8 +156,6 @@ export interface Layer {
 	opacity: number;
 	/** One pixel buffer per animation frame. Empty for group nodes. */
 	cels: Uint32Array[];
-	/** Missing means a normal paint layer. */
-	role?: LayerRole;
 	/** Optional timeline identity tint, stored as a normalized `#rrggbb` hex. */
 	color?: string;
 	/** True when this node is a group container rather than a paint layer. */
@@ -188,8 +183,8 @@ export interface CelProps {
 }
 
 /**
- * An image on the project-level reference board. Unlike a reference layer,
- * this is independent of layers and frames and can sit outside the canvas.
+ * An image on the project-level reference board. Board images are independent
+ * of layers and frames and can sit outside the canvas.
  */
 export interface ReferenceImage {
 	id: string;

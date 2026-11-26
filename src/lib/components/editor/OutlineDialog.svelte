@@ -267,8 +267,8 @@
 				>
 					<span class="text-xs font-medium text-foreground">How it works</span>
 					<span>
-						Only the active frame is affected. Reference layers, hidden layers,
-						and locked layers are never modified.
+						Only the active frame is affected. Hidden layers and locked layers
+						are never modified.
 					</span>
 					<span>
 						{#if editor.hasSelection}

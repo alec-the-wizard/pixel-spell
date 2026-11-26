@@ -32,46 +32,6 @@ export function cropPixelsToCanvas(
 	return output;
 }
 
-/**
- * Fits an image inside the canvas, preserving the aspect ratio and centering
- * it. Used for reference-layer imports.
- */
-export function fitPixelsToCanvas(
-	source: Uint32Array,
-	sourceWidth: number,
-	sourceHeight: number,
-	targetWidth: number,
-	targetHeight: number,
-): Uint32Array {
-	const output = new Uint32Array(targetWidth * targetHeight);
-	if (
-		sourceWidth <= 0 ||
-		sourceHeight <= 0 ||
-		targetWidth <= 0 ||
-		targetHeight <= 0
-	) {
-		return output;
-	}
-
-	const scale = Math.min(targetWidth / sourceWidth, targetHeight / sourceHeight);
-	const width = Math.max(1, Math.min(targetWidth, Math.round(sourceWidth * scale)));
-	const height = Math.max(1, Math.min(targetHeight, Math.round(sourceHeight * scale)));
-	const offsetX = Math.floor((targetWidth - width) / 2);
-	const offsetY = Math.floor((targetHeight - height) / 2);
-
-	for (let y = 0; y < height; y++) {
-		const sourceY = Math.min(sourceHeight - 1, Math.floor((y * sourceHeight) / height));
-		const sourceRow = sourceY * sourceWidth;
-		const targetRow = (offsetY + y) * targetWidth + offsetX;
-		for (let x = 0; x < width; x++) {
-			const sourceX = Math.min(sourceWidth - 1, Math.floor((x * sourceWidth) / width));
-			output[targetRow + x] = source[sourceRow + sourceX] ?? 0;
-		}
-	}
-
-	return output;
-}
-
 /** A sensible default display size and position for a new board reference. */
 export function defaultReferencePlacement(
 	docWidth: number,

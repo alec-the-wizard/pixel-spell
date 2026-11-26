@@ -41,7 +41,6 @@
 			const source = compositeFrameCachedIncremental(
 				doc,
 				frame,
-				false,
 				editor.structureRevision,
 				editor.layerAppearanceRevision,
 				editor.activeLayerId,

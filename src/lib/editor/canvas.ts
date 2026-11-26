@@ -94,9 +94,8 @@ export function resizePixels(
 }
 
 /**
- * Tight bounds of every non-transparent pixel across all frames and normal
- * layers. Reference layers are tracing aids and are deliberately ignored, as
- * are reference-board images, which are not part of the cel composite.
+ * Tight bounds of every non-transparent pixel across all frames and layers.
+ * Reference-board images are not part of the cel composite and are ignored.
  */
 export function contentBoundsOf(doc: PixelDoc): PixelBounds | null {
 	let minX = doc.width;
@@ -105,7 +104,6 @@ export function contentBoundsOf(doc: PixelDoc): PixelBounds | null {
 	let maxY = -1;
 
 	for (const layer of doc.layers) {
-		if (layer.role === "reference") continue;
 		for (let frame = 0; frame < doc.frames.length; frame++) {
 			const cel = layer.cels[frame];
 			if (!cel) continue;
