@@ -100,8 +100,11 @@ for (let py = 0; py < SIZE; py++) {
 
 		for (let sy = 0; sy < SCALE; sy++) {
 			for (let sx = 0; sx < SCALE; sx++) {
-				const x = px * SCALE + sx + 0.5;
-				const y = py * SCALE + sy + 0.5;
+				// Sample in the 512 px authoring space; only the buffer itself is
+				// supersampled. Using the raw supersampled coordinates here would
+				// draw the mark at 1/SCALE size in the top-left corner.
+				const x = (px * SCALE + sx + 0.5) / SCALE;
+				const y = (py * SCALE + sy + 0.5) / SCALE;
 				if (!rounded(x, y, 38, 38, 474, 474, 112)) continue;
 
 				// Sky-blue vertical gradient.
@@ -139,7 +142,30 @@ for (let py = 0; py < SIZE; py++) {
 	}
 }
 
+// Guard against accidental coordinate-space regressions: the rounded square
+// should fill most of the canvas, not shrink into one corner.
+let minX = SIZE;
+let minY = SIZE;
+let maxX = -1;
+let maxY = -1;
+for (let y = 0; y < SIZE; y++) {
+	for (let x = 0; x < SIZE; x++) {
+		if (rgba[(y * SIZE + x) * 4 + 3] === 0) continue;
+		if (x < minX) minX = x;
+		if (x > maxX) maxX = x;
+		if (y < minY) minY = y;
+		if (y > maxY) maxY = y;
+	}
+}
+if (maxX - minX < SIZE * 0.8 || maxY - minY < SIZE * 0.8) {
+	throw new Error(
+		`Icon content is only ${maxX - minX + 1}×${maxY - minY + 1}px inside a ${SIZE}px canvas.`,
+	);
+}
+
 const output = path.join(root, "build", "icon.png");
 mkdirSync(path.dirname(output), { recursive: true });
 writeFileSync(output, png(rgba, SIZE, SIZE));
-console.log(`Wrote ${path.relative(root, output)} (${SIZE}×${SIZE})`);
+console.log(
+	`Wrote ${path.relative(root, output)} (${SIZE}×${SIZE}, content ${maxX - minX + 1}×${maxY - minY + 1})`,
+);
