@@ -5,7 +5,10 @@
   "version": "0.1.0",
   "type": "module",
   "main": "dist-electron/main.js",
-  "author": "Alec",
+  "author": {
+    "name": "Alec Santos",
+    "email": "alecsantos96@gmail.com"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -78,7 +81,11 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "artifactName": "PixelSpell-${version}-windows-${arch}-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "PixelSpell-${version}-windows-${arch}-portable.${ext}"
     },
     "mac": {
       "target": [
@@ -86,7 +93,8 @@
         "zip"
       ],
       "category": "public.app-category.graphics-design",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "artifactName": "PixelSpell-${version}-macos-${arch}.${ext}"
     },
     "linux": {
       "target": [
@@ -94,7 +102,9 @@
         "deb"
       ],
       "category": "Graphics",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "maintainer": "Alec Santos <alecsantos96@gmail.com>",
+      "artifactName": "PixelSpell-${version}-linux-${arch}.${ext}"
     }
   }
 }
