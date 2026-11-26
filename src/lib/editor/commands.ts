@@ -31,6 +31,7 @@ export interface CommandHost {
 	openDither: () => void;
 	openGradientMap: () => void;
 	openGrayscale: () => void;
+	openCustomShader: () => void;
 	openShortcuts: () => void;
 	openAbout: () => void;
 	openCommandPalette: () => void;
@@ -52,6 +53,7 @@ const NOOP_HOST: CommandHost = {
 	openDither: () => {},
 	openGradientMap: () => {},
 	openGrayscale: () => {},
+	openCustomShader: () => {},
 	openShortcuts: () => {},
 	openAbout: () => {},
 	openCommandPalette: () => {},
@@ -458,6 +460,14 @@ const ACTION_COMMANDS: CommandDef[] = [
 		group: "Effects",
 		keywords: "monochrome gray greyscale luminance 1-bit 2-bit 4-bit 8-bit bits",
 		run: () => host.openGrayscale(),
+	},
+	{
+		id: "effects.custom-shader",
+		label: "Custom shader…",
+		group: "Effects",
+		keywords:
+			"webgl glsl gl fragment shader gpu custom filter scanlines posterize vignette",
+		run: () => host.openCustomShader(),
 	},
 	{
 		id: "brush.new-from-selection",

@@ -6,6 +6,7 @@
 	import Check from "@lucide/svelte/icons/check";
 	import ChevronDown from "@lucide/svelte/icons/chevron-down";
 	import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste";
+	import CodeXml from "@lucide/svelte/icons/code-xml";
 	import Contrast from "@lucide/svelte/icons/contrast";
 	import Copy from "@lucide/svelte/icons/copy";
 	import Crop from "@lucide/svelte/icons/crop";
@@ -38,6 +39,7 @@
 	import ScanEye from "@lucide/svelte/icons/scan-eye";
 	import Search from "@lucide/svelte/icons/search";
 	import Settings2 from "@lucide/svelte/icons/settings-2";
+	import Sparkles from "@lucide/svelte/icons/sparkles";
 	import SquareDashed from "@lucide/svelte/icons/square-dashed";
 	import Sun from "@lucide/svelte/icons/sun";
 	import Trash2 from "@lucide/svelte/icons/trash-2";
@@ -78,6 +80,7 @@
 		onDither,
 		onGradientMap,
 		onGrayscale,
+		onCustomShader,
 		onHistory,
 	}: {
 		onNew: () => void;
@@ -98,6 +101,7 @@
 		onDither: () => void;
 		onGradientMap: () => void;
 		onGrayscale: () => void;
+		onCustomShader: () => void;
 		onHistory: () => void;
 	} = $props();
 
@@ -366,30 +370,50 @@
 				Effects
 			</DropdownMenu.Trigger>
 			<DropdownMenu.Content class="w-60">
-				<DropdownMenu.Item onSelect={onOutline}>
-					<SquareDashed class="size-4" />
-					Outline…
-				</DropdownMenu.Item>
-				<DropdownMenu.Item onSelect={onDropShadow}>
-					<Layers2 class="size-4" />
-					Drop shadow…
-				</DropdownMenu.Item>
+				<DropdownMenu.Sub>
+					<DropdownMenu.SubTrigger title="Effects that build or shift pixels geometrically.">
+						<Sparkles class="size-4" />
+						Procedural
+					</DropdownMenu.SubTrigger>
+					<DropdownMenu.SubContent class="w-52">
+						<DropdownMenu.Item onSelect={onOutline}>
+							<SquareDashed class="size-4" />
+							Outline…
+						</DropdownMenu.Item>
+						<DropdownMenu.Item onSelect={onDropShadow}>
+							<Layers2 class="size-4" />
+							Drop shadow…
+						</DropdownMenu.Item>
+					</DropdownMenu.SubContent>
+				</DropdownMenu.Sub>
+				<DropdownMenu.Sub>
+					<DropdownMenu.SubTrigger title="Effects that remap colors and tone.">
+						<Palette class="size-4" />
+						Color
+					</DropdownMenu.SubTrigger>
+					<DropdownMenu.SubContent class="w-52">
+						<DropdownMenu.Item onSelect={onColorReplace}>
+							<Replace class="size-4" />
+							Color replace…
+						</DropdownMenu.Item>
+						<DropdownMenu.Item onSelect={onDither}>
+							<Grid2x2 class="size-4" />
+							Dither…
+						</DropdownMenu.Item>
+						<DropdownMenu.Item onSelect={onGradientMap}>
+							<Blend class="size-4" />
+							Gradient map…
+						</DropdownMenu.Item>
+						<DropdownMenu.Item onSelect={onGrayscale}>
+							<Contrast class="size-4" />
+							Grayscale…
+						</DropdownMenu.Item>
+					</DropdownMenu.SubContent>
+				</DropdownMenu.Sub>
 				<DropdownMenu.Separator />
-				<DropdownMenu.Item onSelect={onColorReplace}>
-					<Replace class="size-4" />
-					Color replace…
-				</DropdownMenu.Item>
-				<DropdownMenu.Item onSelect={onDither}>
-					<Grid2x2 class="size-4" />
-					Dither…
-				</DropdownMenu.Item>
-				<DropdownMenu.Item onSelect={onGradientMap}>
-					<Blend class="size-4" />
-					Gradient map…
-				</DropdownMenu.Item>
-				<DropdownMenu.Item onSelect={onGrayscale}>
-					<Contrast class="size-4" />
-					Grayscale…
+				<DropdownMenu.Item onSelect={onCustomShader}>
+					<CodeXml class="size-4" />
+					Custom shader…
 				</DropdownMenu.Item>
 			</DropdownMenu.Content>
 		</DropdownMenu.Root>

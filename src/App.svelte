@@ -5,6 +5,7 @@
 	import AboutDialog from "$lib/components/editor/AboutDialog.svelte";
 	import ColorReplaceDialog from "$lib/components/editor/ColorReplaceDialog.svelte";
 	import CommandPalette from "$lib/components/editor/CommandPalette.svelte";
+	import CustomShaderDialog from "$lib/components/editor/CustomShaderDialog.svelte";
 	import DropShadowDialog from "$lib/components/editor/DropShadowDialog.svelte";
 	import DitherDialog from "$lib/components/editor/DitherDialog.svelte";
 	import GradientMapDialog from "$lib/components/editor/GradientMapDialog.svelte";
@@ -442,6 +443,7 @@
 		openDither: () => (editor.effectDitherOpen = true),
 		openGradientMap: () => (editor.effectGradientMapOpen = true),
 		openGrayscale: () => (editor.effectGrayscaleOpen = true),
+		openCustomShader: () => (editor.effectCustomShaderOpen = true),
 		openShortcuts: () => (shortcutsOpen = true),
 		openAbout: () => (aboutOpen = true),
 		openCommandPalette: () => (commandPaletteOpen = true),
@@ -510,6 +512,7 @@
 			onDither={() => (editor.effectDitherOpen = true)}
 			onGradientMap={() => (editor.effectGradientMapOpen = true)}
 			onGrayscale={() => (editor.effectGrayscaleOpen = true)}
+			onCustomShader={() => (editor.effectCustomShaderOpen = true)}
 			onHistory={() => (editor.historyOpen = true)}
 		/>
 
@@ -541,6 +544,7 @@
 	<DitherDialog bind:open={editor.effectDitherOpen} />
 	<GradientMapDialog bind:open={editor.effectGradientMapOpen} />
 	<GrayscaleDialog bind:open={editor.effectGrayscaleOpen} />
+	<CustomShaderDialog bind:open={editor.effectCustomShaderOpen} />
 	<HistoryDialog bind:open={editor.historyOpen} />
 	<RecoveryDialog
 		bind:open={recoveryOpen}

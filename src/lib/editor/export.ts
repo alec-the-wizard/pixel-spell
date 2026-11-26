@@ -1624,6 +1624,16 @@ function gifWorkerPayload(doc: PixelDoc): { doc: PixelDoc; buffers: ArrayBuffer[
 	return { doc: clone, buffers };
 }
 
+/** True when the doc's composite needs a WebGL context to render. */
+function hasGpuGroupEffect(doc: PixelDoc): boolean {
+	return doc.layers.some(
+		(layer) =>
+			layer.effects?.some(
+				(effect) => effect.enabled && effect.kind === "custom-shader",
+			) ?? false,
+	);
+}
+
 /**
  * Runs GIF encoding on a worker thread so large animations do not block the
  * UI. Falls back to the synchronous encoder when workers are unavailable or
@@ -1641,6 +1651,14 @@ export function exportGifInWorker(
 				reject(error);
 			}
 		};
+
+		// Custom shader group effects need a WebGL context, which workers do
+		// not have here. Encode on the main thread so the export matches the
+		// canvas instead of silently skipping the effect.
+		if (hasGpuGroupEffect(doc)) {
+			runSync();
+			return;
+		}
 
 		if (typeof Worker === "undefined") {
 			runSync();

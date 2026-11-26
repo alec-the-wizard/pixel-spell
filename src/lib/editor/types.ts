@@ -70,7 +70,8 @@ export type GroupEffectKind =
 	| "color-replace"
 	| "dither"
 	| "gradient-map"
-	| "grayscale";
+	| "grayscale"
+	| "custom-shader";
 
 /** One color stop in a gradient map; position is 0..1. */
 export interface GradientStop {
@@ -116,6 +117,9 @@ export interface GroupEffectOptions {
 	// Grayscale
 	/** Bits per pixel color: 1, 2, 4, or 8. */
 	bits?: number;
+	// Custom shader
+	/** Complete WebGL 2 fragment shader source. */
+	shader?: string;
 }
 
 /**

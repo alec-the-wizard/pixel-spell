@@ -7,6 +7,7 @@
 	import Blend from "@lucide/svelte/icons/blend";
 	import ChevronDown from "@lucide/svelte/icons/chevron-down";
 	import ChevronRight from "@lucide/svelte/icons/chevron-right";
+	import CodeXml from "@lucide/svelte/icons/code-xml";
 	import Contrast from "@lucide/svelte/icons/contrast";
 	import Ellipsis from "@lucide/svelte/icons/ellipsis";
 	import Eye from "@lucide/svelte/icons/eye";
@@ -22,10 +23,12 @@
 	import Lock from "@lucide/svelte/icons/lock";
 	import LockOpen from "@lucide/svelte/icons/lock-open";
 	import Opacity from "@lucide/svelte/icons/opacity";
+	import Palette from "@lucide/svelte/icons/palette";
 	import Pencil from "@lucide/svelte/icons/pencil";
 	import Replace from "@lucide/svelte/icons/replace";
 	import ScanEye from "@lucide/svelte/icons/scan-eye";
 	import Scissors from "@lucide/svelte/icons/scissors";
+	import Sparkles from "@lucide/svelte/icons/sparkles";
 	import SquareDashed from "@lucide/svelte/icons/square-dashed";
 	import Trash2 from "@lucide/svelte/icons/trash-2";
 	import { Button } from "$lib/components/ui/button/index.js";
@@ -34,6 +37,7 @@
 	import { isGroupLayer } from "$lib/editor/doc.js";
 	import { editor } from "$lib/editor/editor.svelte.js";
 	import {
+		GROUP_EFFECT_CATEGORIES,
 		GROUP_EFFECT_KINDS,
 		GROUP_EFFECT_LABELS,
 		groupEffectSummary,
@@ -98,6 +102,16 @@
 	let isGroup = $derived(isGroupLayer(layer));
 	let isReference = $derived(layer.role === "reference");
 	let activeRow = $derived(layer.id === editor.activeLayerId);
+
+	const effectSections = GROUP_EFFECT_CATEGORIES.map((category) => ({
+		...category,
+		effects: GROUP_EFFECT_KINDS.filter(
+			(option) => option.category === category.id,
+		),
+	}));
+	const ungroupedEffects = GROUP_EFFECT_KINDS.filter(
+		(option) => option.category === null,
+	);
 	let selectedRow = $derived(editor.isLayerSelected(layer.id));
 
 	let visibleFrames = $derived(
@@ -266,6 +280,8 @@
 		<Grid2x2 class={className} />
 	{:else if kind === "gradient-map"}
 		<Blend class={className} />
+	{:else if kind === "custom-shader"}
+		<CodeXml class={className} />
 	{:else}
 		<Contrast class={className} />
 	{/if}
@@ -366,12 +382,35 @@
 			</DropdownMenu.Trigger>
 			<DropdownMenu.Content class="w-44" align="start">
 				<DropdownMenu.Label>Add effect block</DropdownMenu.Label>
-				{#each GROUP_EFFECT_KINDS as option (option.id)}
-					<DropdownMenu.Item onSelect={() => addEffect(option.id)}>
-						{@render effectIcon(option.id, "size-3.5 text-muted-foreground")}
-						{option.label}
-					</DropdownMenu.Item>
+				{#each effectSections as category (category.id)}
+					<DropdownMenu.Sub>
+						<DropdownMenu.SubTrigger>
+							{#if category.id === "procedural"}
+								<Sparkles class="size-3.5 text-muted-foreground" />
+							{:else}
+								<Palette class="size-3.5 text-muted-foreground" />
+							{/if}
+							{category.label}
+						</DropdownMenu.SubTrigger>
+						<DropdownMenu.SubContent class="w-44">
+							{#each category.effects as option (option.id)}
+								<DropdownMenu.Item onSelect={() => addEffect(option.id)}>
+									{@render effectIcon(option.id, "size-3.5 text-muted-foreground")}
+									{option.label}
+								</DropdownMenu.Item>
+							{/each}
+						</DropdownMenu.SubContent>
+					</DropdownMenu.Sub>
 				{/each}
+				{#if ungroupedEffects.length > 0}
+					<DropdownMenu.Separator />
+					{#each ungroupedEffects as option (option.id)}
+						<DropdownMenu.Item onSelect={() => addEffect(option.id)}>
+							{@render effectIcon(option.id, "size-3.5 text-muted-foreground")}
+							{option.label}
+						</DropdownMenu.Item>
+					{/each}
+				{/if}
 			</DropdownMenu.Content>
 		</DropdownMenu.Root>
 	</div>

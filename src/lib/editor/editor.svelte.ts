@@ -410,6 +410,7 @@ export class EditorState {
 	effectDitherOpen = $state(false);
 	effectGradientMapOpen = $state(false);
 	effectGrayscaleOpen = $state(false);
+	effectCustomShaderOpen = $state(false);
 	/** Shared brush/pattern library dialog. */
 	maskLibraryOpen = $state(false);
 	maskLibraryTab = $state<"brush" | "pattern">("brush");

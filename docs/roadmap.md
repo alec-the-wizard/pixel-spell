@@ -46,6 +46,7 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Linked cels / continuous layers | 8 | 5 | 1.60 | | Implemented: cels can be linked so editing one writes through to all linked copies. Select a contiguous range of cels, right-click it, and choose **Link cels** to share one buffer across the selected frames of every selected layer; **Unlink cels** gives each selected cel its own copy. **Link cels** is disabled for a single selected frame, while **Unlink cels** also works on a single cel. A **continuous** layer toggle (a `link-2`/`link-2-off` button beside the lock) auto-links each newly added cel to the active frame, keeping a chain in sync. Linked cels share one pixel buffer and render a blue connector line between the cels in the timeline. Links and the continuous flag survive save/open, undo/redo, canvas transforms, and project switches. |
 | Per-cel opacity (and z-index) | 6 | 5 | 1.20 | | Implemented as **Cel properties** (double-click a cel, or use its right-click menu): a per-cel opacity slider and a z-index number input. Opacity multiplies the layer opacity during compositing on every render/export path, and z-index reorders cels within a frame. Cels carrying a custom opacity or z-index show a small indicator icon in the timeline, and both values persist with the project. |
 | Outline, drop shadow, and color-replace filters | 8 | 4 | 2.00 | | Implemented as a new **Effects** menu between Project and View. **Outline** grows a 1–8 px border outside the silhouette (or recolors its inside edge) with optional diagonal corners. **Drop shadow** offsets and spreads a colored shadow behind the silhouette. **Color replace** swaps a color with an optional RGB tolerance and alpha preservation. Each dialog previews the composited active frame, targets the active cel or all visible unlocked layers, respects the pixel selection, skips reference/hidden/locked layers, and applies as one undoable cel patch. The pure filters live in `filters.ts` and are covered by the core benchmarks. |
+| Custom shader effect (WebGL 2 filters) | 8 | 6 | 1.33 | ★ | Implemented as **Effects → Custom shader…** and an uncategorized **Custom shader** group block. Users edit a complete GLSL ES 3.00 fragment shader in a plain textarea with pass-through, posterize, scanline, and vignette presets; compile errors report GLSL line numbers before applying. `shader.ts` owns an offscreen WebGL 2 canvas, program caching, validation, and nearest-neighbor texture upload/readback, forming the foundation for future GPU filters. The remaining CPU filters stay deterministic and cheap on small sprites. GIF export falls back to the main thread when a shader block is present so the GPU result is included. |
 | Undo history panel | 7 | 4 | 1.75 | | Implemented as **Edit → History…** (also in the command palette). Every undo entry now carries a label and optional context (the tool or operation plus layer/frame), and the dialog lists states from the earliest retained step through the redoable steps. Clicking an entry jumps through the existing undo/redo path, so selections, thumbnails, and dirty state stay consistent. Cel-patch entries remain compact; the footer reports undoable/redoable counts and approximate history memory. |
 | Dithering patterns and pattern brushes | 8 | 3 | 2.67 | | Implemented as live **Dither ink** on pencil, eraser, and fill, backed by a tileable pattern library: checker, 25%/75% densities, horizontal/vertical lines, diagonal, Bayer 4×4/8×8 at 50%, and custom masks. The picker offers canvas- or brush-aligned phase and X/Y offsets, and a custom footprint plus a tiled pattern provides pattern-brush behavior without a second tool. **Effects → Dither…** converts a frame to two colors or the active palette with ordered Bayer or Floyd–Steinberg error diffusion, serpentine scanning, a live preview, selection-limited writes, and one undo step. Shared mask editing and `localStorage` persistence keep the UI compact. |
 | Custom brushes (shapes, patterns, textured) | 8 | 5 | 1.60 | | Implemented with 1-bit masks: built-in square, circle, diamond, and ring presets plus custom masks created from the selection, an imported image, or the pixel mask editor. The **Brushes & dither patterns** library supports search, duplicate, edit, delete, and per-brush default size/opacity. Brushes apply to pencil, eraser, line, curve, and shape outlines, honour symmetry, selections, alpha lock, and ink opacity, show a footprint outline on the canvas, and persist in `localStorage` without touching project files or history. |
@@ -71,7 +72,6 @@ Features that are deliberately **not planned** (contradicting the client-only, l
 | Recent files / project library | 6 | 4 | 1.50 | | A local project browser backed by IndexedDB/File System Access API, with thumbnails and recent projects. Complements autosave and is the offline prerequisite for any later cloud sync. |
 | Isometric / seamless tiled drawing | 7 | 5 | 1.40 | | Wrap drawing across canvas edges and add an isometric tile mode. Requires careful coordinate wrapping in every drawing tool and preview. |
 | Sprite atlas packing (MaxRects) | 7 | 5 | 1.40 | | Pack frames or tagged animations into an atlas with padding, trim, and rotation options. Build on the sprite-sheet geometry code. |
-| WebGL shader filters | 8 | 6 | 1.33 | ★ | Real-time fragment-shader filters (scanlines, glow, palette posterize, outline) previewed on the canvas, user-loadable. Pixelorama ships Godot shaders; a WebGL path is a strong browser-native differentiator. |
 | Tweening (position/scale/rotation/opacity, easing) | 8 | 6 | 1.33 | | Interpolate between frames with easing curves to generate in-betweens. One of the most-requested Aseprite features (v1.4 plan #96); a browser editor can ship it as a non-destructive “tween layer” or baked frames. |
 | Version snapshots / named checkpoints | 6 | 5 | 1.20 | | Save named project snapshots locally with thumbnails and restore/diff. Complements undo and autosave without a backend. |
 | Animated brushes | 6 | 5 | 1.20 | | Brushes that cycle through multiple cells as you stamp, producing an animated effect (sparkle, flame) in one gesture. Pro Motion's “AnimPainting”; a genuinely rare feature. |
@@ -151,7 +151,7 @@ This phase closes the biggest gaps versus Aseprite and Photoshop-style workflows
 3. MCP server for AI-agent workflows
 4. Aseprite `.aseprite` import/export
 5. Desktop app (Electron) with native file access and autosave — done
-6. WebGL shader filters
+6. WebGL shader filters — done (custom GLSL effect and group block)
 7. Timelapse / process replay — done
 8. Shareable live preview links
 
@@ -229,14 +229,14 @@ This is a strong differentiator because it lets an AI agent inspect and edit a r
 
 ### WebGL shader filters
 
-A browser-native path to real-time, non-destructive preview effects:
+Shipped as **Effects → Custom shader…** plus an uncategorized **Custom shader** group block:
 
-1. Composite the document to a texture and run a user-selectable fragment shader per effect (scanlines, glow, palette posterize, outline, quantization).
-2. Keep the shader stack viewport-only (never exported) unless the user bakes a result into pixels.
-3. Ship a small built-in library and accept custom GLSL in a sandbox, mirroring Pixelorama's loadable Godot shaders.
-4. Use a `requestAnimationFrame`-coalesced draw so previews stay cheap even while painting.
-
-The appeal is that no desktop competitor offers the same discoverability and zero-install sharing; it pairs well with the shareable-links and timelapse features.
+1. `shader.ts` owns an offscreen WebGL 2 canvas, a vertex/fragment pair, program compilation and caching, texture upload with nearest-neighbor sampling, and packed-RGBA readback. New GPU filters can reuse `renderShaderPixels` with a bundled source string.
+2. Users edit a complete GLSL ES 3.00 fragment shader in a plain textarea. The provided uniforms are `u_image`, `u_resolution`, and `u_time`; the result is written to `outColor`. Pass-through, posterize, scanline, and vignette presets are included as starting points.
+3. Compile and link failures surface the driver's GLSL line numbers under the editor, and applying is blocked until the shader compiles. The editor deliberately stays a textarea: presets, reset, and Tab indentation, with no IDE surface.
+4. The destructive dialog previews the composited active frame and applies to the active cel or every visible unlocked layer as one undoable step. The group block runs on the group's composite, can be reordered or disabled, is exported with the document, and bakes across every frame through the normal group-effect path.
+5. Existing outline/shadow/color CPU filters were not converted: neighborhood operations are deterministic and cheap at sprite sizes, and GPU readback would add latency to every thumbnail. The shader module is the shared foundation for future per-pixel GPU filters instead.
+6. GIF export falls back to the main thread when a shader group block is enabled, because export workers have no WebGL context.
 
 ### Timelapse / process replay
 

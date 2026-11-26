@@ -3,6 +3,7 @@
 	import { Button } from "$lib/components/ui/button/index.js";
 	import CanvasTransformPreview from "$lib/components/editor/CanvasTransformPreview.svelte";
 	import GradientMapEditor from "$lib/components/editor/GradientMapEditor.svelte";
+	import ShaderEditor from "$lib/components/editor/ShaderEditor.svelte";
 	import * as Dialog from "$lib/components/ui/dialog/index.js";
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
@@ -42,6 +43,10 @@
 		normalizeGrayscaleBits,
 		type GrayscaleBits,
 	} from "$lib/editor/grayscale.js";
+	import {
+		DEFAULT_SHADER_SOURCE,
+		validateShaderSource,
+	} from "$lib/editor/shader.js";
 	import type {
 		GradientStop,
 		GroupEffect,
@@ -114,9 +119,14 @@
 	let gradientInvert = $state(false);
 
 	let grayscaleBits = $state<GrayscaleBits>(8);
+	let shaderSource = $state(DEFAULT_SHADER_SOURCE);
 
 	let feedback = $state("");
 	let loadedKey = "";
+
+	let shaderError = $derived(
+		kind === "custom-shader" ? validateShaderSource(shaderSource) : null,
+	);
 
 	let thickness = $derived(
 		clampInt(thicknessText, MIN_EFFECT_THICKNESS, MAX_EFFECT_THICKNESS, 1),
@@ -218,6 +228,7 @@
 		gradientSource = normalizeGradientSource(options.gradientSource);
 		gradientInvert = options.gradientInvert === true;
 		grayscaleBits = normalizeGrayscaleBits(options.bits);
+		shaderSource = options.shader ?? DEFAULT_SHADER_SOURCE;
 		feedback = "";
 	}
 
@@ -267,6 +278,8 @@
 				};
 			case "grayscale":
 				return { bits: grayscaleBits };
+			case "custom-shader":
+				return { shader: shaderSource };
 		}
 	}
 
@@ -295,12 +308,20 @@
 
 	function apply(): void {
 		if (!activeEffect || !layerId) return;
+		if (shaderError) {
+			feedback = "Fix the shader errors before applying.";
+			return;
+		}
 		editor.updateGroupEffect(layerId, activeEffect.id, currentOptions());
 		open = false;
 	}
 
 	function bake(): void {
 		if (!activeEffect || !layerId) return;
+		if (shaderError) {
+			feedback = "Fix the shader errors before baking.";
+			return;
+		}
 		if (bakeableLayers === 0) {
 			feedback =
 				"Add a visible paint layer to the group before baking this effect.";
@@ -383,7 +404,12 @@
 			label={`${title} preview`}
 		/>
 
-		<div class="grid gap-4 sm:grid-cols-2">
+		<div
+			class={cn(
+				"grid gap-4",
+				kind === "custom-shader" ? "sm:grid-cols-1" : "sm:grid-cols-2",
+			)}
+		>
 			<div class="grid content-start gap-3">
 				{#if kind === "outline"}
 					<div class="grid gap-1.5">
@@ -690,7 +716,7 @@
 						</span>
 						<Switch bind:checked={gradientInvert} />
 					</label>
-				{:else}
+				{:else if kind === "grayscale"}
 					<div class="grid gap-1.5">
 						<Label>Bit depth</Label>
 						{@render segmented(
@@ -715,6 +741,16 @@
 							Each pixel becomes 0.2126·R + 0.7152·G + 0.0722·B, then snaps to
 							the nearest ramp value. Alpha and transparency are preserved.
 						</span>
+					</div>
+				{:else}
+					<div class="grid gap-1.5">
+						<Label for="group-effect-shader">GLSL source</Label>
+						<ShaderEditor
+							id="group-effect-shader"
+							bind:source={shaderSource}
+							error={shaderError}
+							minHeight="16rem"
+						/>
 					</div>
 				{/if}
 			</div>

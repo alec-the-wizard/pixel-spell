@@ -206,13 +206,24 @@ function template(): MenuItemConstructorOptions[] {
 		{
 			label: "Effects",
 			submenu: [
-				command("effects.outline", "Outline…"),
-				command("effects.drop-shadow", "Drop Shadow…"),
+				{
+					label: "Procedural",
+					submenu: [
+						command("effects.outline", "Outline…"),
+						command("effects.drop-shadow", "Drop Shadow…"),
+					],
+				},
+				{
+					label: "Color",
+					submenu: [
+						command("effects.color-replace", "Color Replace…"),
+						command("effects.dither", "Dither…"),
+						command("effects.gradient-map", "Gradient Map…"),
+						command("effects.grayscale", "Grayscale…"),
+					],
+				},
 				{ type: "separator" },
-				command("effects.color-replace", "Color Replace…"),
-				command("effects.dither", "Dither…"),
-				command("effects.gradient-map", "Gradient Map…"),
-				command("effects.grayscale", "Grayscale…"),
+				command("effects.custom-shader", "Custom Shader…"),
 			],
 		},
 		{

@@ -27,19 +27,42 @@ import {
 	normalizeGrayscaleBits,
 	type GrayscaleBits,
 } from "./grayscale.js";
+import {
+	DEFAULT_SHADER_SOURCE,
+	MAX_SHADER_SOURCE_LENGTH,
+	renderShaderPixels,
+} from "./shader.js";
 import type {
 	GroupEffect,
 	GroupEffectKind,
 	GroupEffectOptions,
 } from "./types.js";
 
-export const GROUP_EFFECT_KINDS: { id: GroupEffectKind; label: string }[] = [
-	{ id: "outline", label: "Outline" },
-	{ id: "drop-shadow", label: "Drop shadow" },
-	{ id: "color-replace", label: "Color replace" },
-	{ id: "dither", label: "Dither" },
-	{ id: "gradient-map", label: "Gradient map" },
-	{ id: "grayscale", label: "Grayscale" },
+export type GroupEffectCategory = "procedural" | "color";
+
+export interface GroupEffectKindDefinition {
+	id: GroupEffectKind;
+	label: string;
+	/** Menu grouping; `null` keeps the effect at the top level. */
+	category: GroupEffectCategory | null;
+}
+
+export const GROUP_EFFECT_CATEGORIES: {
+	id: GroupEffectCategory;
+	label: string;
+}[] = [
+	{ id: "procedural", label: "Procedural" },
+	{ id: "color", label: "Color" },
+];
+
+export const GROUP_EFFECT_KINDS: GroupEffectKindDefinition[] = [
+	{ id: "outline", label: "Outline", category: "procedural" },
+	{ id: "drop-shadow", label: "Drop shadow", category: "procedural" },
+	{ id: "color-replace", label: "Color replace", category: "color" },
+	{ id: "dither", label: "Dither", category: "color" },
+	{ id: "gradient-map", label: "Gradient map", category: "color" },
+	{ id: "grayscale", label: "Grayscale", category: "color" },
+	{ id: "custom-shader", label: "Custom shader", category: null },
 ];
 
 export const GROUP_EFFECT_LABELS: Record<GroupEffectKind, string> = {
@@ -49,6 +72,7 @@ export const GROUP_EFFECT_LABELS: Record<GroupEffectKind, string> = {
 	dither: "Dither",
 	"gradient-map": "Gradient map",
 	grayscale: "Grayscale",
+	"custom-shader": "Custom shader",
 };
 
 export const MAX_GROUP_EFFECTS = 32;
@@ -136,6 +160,8 @@ export function defaultGroupEffectOptions(
 			};
 		case "grayscale":
 			return { bits: 8 };
+		case "custom-shader":
+			return { shader: DEFAULT_SHADER_SOURCE };
 	}
 }
 
@@ -258,6 +284,13 @@ export function normalizeGroupEffectOptions(
 			};
 		case "grayscale":
 			return { bits: normalizeGrayscaleBits(raw.bits) };
+		case "custom-shader": {
+			const shader =
+				typeof raw.shader === "string" && raw.shader.trim()
+					? raw.shader.slice(0, MAX_SHADER_SOURCE_LENGTH)
+					: defaults.shader ?? DEFAULT_SHADER_SOURCE;
+			return { shader };
+		}
 	}
 }
 
@@ -367,6 +400,15 @@ export function applyGroupEffect(
 			return grayscalePixels(pixels, width, height, {
 				bits: normalizeGrayscaleBits(options.bits),
 			});
+		case "custom-shader": {
+			const result = renderShaderPixels(
+				pixels,
+				width,
+				height,
+				options.shader ?? DEFAULT_SHADER_SOURCE,
+			);
+			return result.pixels ?? pixels;
+		}
 	}
 }
 
@@ -408,6 +450,11 @@ export function groupEffectSummary(effect: GroupEffect): string {
 		case "grayscale": {
 			const bits: GrayscaleBits = normalizeGrayscaleBits(options.bits);
 			return `${bits}-bit · ${1 << bits} levels`;
+		}
+		case "custom-shader": {
+			const source = options.shader ?? DEFAULT_SHADER_SOURCE;
+			const lines = Math.max(1, source.split("\n").length);
+			return `WebGL 2 · ${lines} lines`;
 		}
 	}
 }
